@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.modbussim.app",
   "build": {
+    "beforeBuildCommand": "npm --prefix ../../frontend run build",
+    "beforeDevCommand": "npm --prefix ../../frontend run dev",
     "frontendDist": "../../frontend/dist"
   },
   "app": {
