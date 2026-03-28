@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, watch, computed, type Ref } from 'vue'
+import { ref, inject, watch, computed, nextTick, provide, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
@@ -16,7 +16,7 @@ interface Register {
 }
 
 const emit = defineEmits<{
-  (e: 'register-select', reg: { address: number; register_type: string; value: number } | null): void
+  (e: 'register-select', regs: { address: number; register_type: string; value: number }[]): void
 }>()
 
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
@@ -24,18 +24,51 @@ const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const selectedRegisterType = inject<Ref<string | null>>('selectedRegisterType')!
 
 const registers = ref<Register[]>([])
-const selectedRow = ref<Register | null>(null)
+const selectedRows = ref<Register[]>([])
+const lastClickedIndex = ref<number>(-1)
 const registerValues = ref<Record<string, number>>({})
 const editingCell = ref<{ address: number; register_type: string } | null>(null)
 const editValue = ref('')
 const isLoading = ref(false)
 const error = ref<string | null>(null)
+const searchQuery = ref('')
 const contextMenu = ref({ show: false, x: 0, y: 0, reg: null as Register | null })
+const scrollContainer = ref<HTMLDivElement | null>(null)
+const addrMode = ref<'hex' | 'dec'>('hex')
+provide('addrMode', addrMode)
 
-// Filter registers by selected type
+// Filter registers by selected type + search query
 const filteredRegisters = computed(() => {
-  if (!selectedRegisterType.value) return registers.value
-  return registers.value.filter(r => r.register_type === selectedRegisterType.value)
+  let result = registers.value
+  if (selectedRegisterType.value) {
+    result = result.filter(r => r.register_type === selectedRegisterType.value)
+  }
+  const q = searchQuery.value.trim()
+  if (!q) return result
+  if (q.startsWith('0x') || q.startsWith('0X')) {
+    const hexPart = q.slice(2).toUpperCase()
+    if (!hexPart) return result
+    return result.filter(r => {
+      const addrHex = r.address.toString(16).toUpperCase().padStart(4, '0')
+      return addrHex.includes(hexPart)
+    })
+  }
+  if (/^\d+$/.test(q)) {
+    const num = Number(q)
+    const hexPart = q.toUpperCase()
+    return result.filter(r => {
+      if (r.address === num) return true
+      const addrHex = r.address.toString(16).toUpperCase().padStart(4, '0')
+      return addrHex.includes(hexPart)
+    })
+  }
+  const lower = q.toLowerCase()
+  return result.filter(r => r.name.toLowerCase().includes(lower))
+})
+
+// Clear selection when search changes
+watch(searchQuery, () => {
+  clearSelection()
 })
 
 async function loadRegisters() {
@@ -53,26 +86,15 @@ async function loadRegisters() {
     })
     registers.value = defs
 
-    // Load values for non-bool types
     const values: Record<string, number> = {}
     for (const reg of defs) {
-      if (reg.register_type !== 'coil' && reg.register_type !== 'discrete_input') {
-        const result = await invoke<{ address: number; value: number }>('read_register', {
-          connectionId: selectedConnectionId.value,
-          slaveId: selectedSlaveId.value,
-          registerType: reg.register_type,
-          address: reg.address,
-        })
-        values[`${reg.register_type}-${reg.address}`] = result.value
-      } else {
-        const result = await invoke<{ address: number; value: number }>('read_register', {
-          connectionId: selectedConnectionId.value,
-          slaveId: selectedSlaveId.value,
-          registerType: reg.register_type,
-          address: reg.address,
-        })
-        values[`${reg.register_type}-${reg.address}`] = result.value
-      }
+      const result = await invoke<{ address: number; value: number }>('read_register', {
+        connectionId: selectedConnectionId.value,
+        slaveId: selectedSlaveId.value,
+        registerType: reg.register_type,
+        address: reg.address,
+      })
+      values[`${reg.register_type}-${reg.address}`] = result.value
     }
     registerValues.value = values
   } catch (e) {
@@ -82,19 +104,99 @@ async function loadRegisters() {
 }
 
 watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], () => {
-  selectedRow.value = null
-  emit('register-select', null)
+  clearSelection()
   loadRegisters()
 })
+
+function clearSelection() {
+  selectedRows.value = []
+  lastClickedIndex.value = -1
+  emitSelection()
+}
 
 function getValue(reg: Register): number {
   return registerValues.value[`${reg.register_type}-${reg.address}`] ?? 0
 }
 
-function selectRow(reg: Register) {
-  selectedRow.value = reg
-  const val = getValue(reg)
-  emit('register-select', { address: reg.address, register_type: reg.register_type, value: val })
+function isSelected(reg: Register): boolean {
+  return selectedRows.value.some(r => r.address === reg.address && r.register_type === reg.register_type)
+}
+
+function selectRow(e: MouseEvent, reg: Register) {
+  const list = filteredRegisters.value
+  const idx = list.indexOf(reg)
+  const isCtrl = e.ctrlKey || e.metaKey
+
+  if (e.shiftKey && lastClickedIndex.value >= 0) {
+    // Shift+click: range select
+    const start = Math.min(lastClickedIndex.value, idx)
+    const end = Math.max(lastClickedIndex.value, idx)
+    selectedRows.value = list.slice(start, end + 1)
+  } else if (isCtrl) {
+    // Ctrl/Cmd+click: toggle
+    if (isSelected(reg)) {
+      selectedRows.value = selectedRows.value.filter(r => !(r.address === reg.address && r.register_type === reg.register_type))
+    } else {
+      selectedRows.value = [...selectedRows.value, reg]
+    }
+    lastClickedIndex.value = idx
+  } else {
+    // Normal click: replace
+    selectedRows.value = [reg]
+    lastClickedIndex.value = idx
+  }
+
+  emitSelection()
+}
+
+function emitSelection() {
+  const regs = selectedRows.value.map(r => ({
+    address: r.address,
+    register_type: r.register_type,
+    value: getValue(r),
+  }))
+  emit('register-select', regs)
+}
+
+function handleTableKeydown(e: KeyboardEvent) {
+  // If editing, let the edit input handle keys
+  if (editingCell.value) return
+
+  const list = filteredRegisters.value
+  if (list.length === 0) return
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    // Find current position based on the last single-selected row
+    let currentIdx = -1
+    if (selectedRows.value.length > 0) {
+      const last = selectedRows.value[selectedRows.value.length - 1]
+      currentIdx = list.findIndex(r => r.address === last.address && r.register_type === last.register_type)
+    }
+
+    let nextIdx: number
+    if (e.key === 'ArrowDown') {
+      nextIdx = currentIdx < list.length - 1 ? currentIdx + 1 : currentIdx
+    } else {
+      nextIdx = currentIdx > 0 ? currentIdx - 1 : 0
+    }
+
+    if (nextIdx >= 0 && nextIdx < list.length) {
+      selectedRows.value = [list[nextIdx]]
+      lastClickedIndex.value = nextIdx
+      emitSelection()
+
+      // Scroll into view
+      nextTick(() => {
+        const container = scrollContainer.value
+        if (!container) return
+        const rows = container.querySelectorAll('tbody tr')
+        if (rows[nextIdx]) {
+          rows[nextIdx].scrollIntoView({ block: 'nearest' })
+        }
+      })
+    }
+  }
 }
 
 function startEdit(reg: Register) {
@@ -119,11 +221,7 @@ async function commitEdit() {
       }
     })
     registerValues.value[`${register_type}-${address}`] = register_type === 'coil' || register_type === 'discrete_input' ? (value !== 0 ? 1 : 0) : value
-
-    // Update selected row value if it was the one edited
-    if (selectedRow.value && selectedRow.value.address === address && selectedRow.value.register_type === register_type) {
-      emit('register-select', { address, register_type, value: registerValues.value[`${register_type}-${address}`] })
-    }
+    emitSelection()
   } catch (e) {
     await showAlert(String(e))
   }
@@ -134,7 +232,7 @@ function cancelEdit() {
   editingCell.value = null
 }
 
-function handleKeydown(e: KeyboardEvent) {
+function handleEditKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter') {
     commitEdit()
   } else if (e.key === 'Escape') {
@@ -162,9 +260,9 @@ async function deleteRegister() {
       address: reg.address,
       registerType: reg.register_type,
     })
-    if (selectedRow.value && selectedRow.value.address === reg.address) {
-      selectedRow.value = null
-      emit('register-select', null)
+    if (isSelected(reg)) {
+      selectedRows.value = selectedRows.value.filter(r => !(r.address === reg.address && r.register_type === reg.register_type))
+      emitSelection()
     }
     await loadRegisters()
   } catch (e) {
@@ -173,7 +271,12 @@ async function deleteRegister() {
 }
 
 function formatAddress(reg: Register): string {
+  if (addrMode.value === 'dec') return reg.address.toString()
   return '0x' + reg.address.toString(16).toUpperCase().padStart(4, '0')
+}
+
+function toggleAddrMode() {
+  addrMode.value = addrMode.value === 'hex' ? 'dec' : 'hex'
 }
 
 function formatRegType(type: string): string {
@@ -193,6 +296,15 @@ function formatRegType(type: string): string {
       <span class="table-title">
         {{ selectedRegisterType ? formatRegType(selectedRegisterType) : '全部寄存器' }}
       </span>
+      <input
+        v-model="searchQuery"
+        class="search-input"
+        type="text"
+        placeholder="搜索地址/名称..."
+      />
+      <button class="addr-mode-btn" @click="toggleAddrMode" :title="addrMode === 'hex' ? '切换为十进制' : '切换为十六进制'">
+        {{ addrMode === 'hex' ? 'HEX' : 'DEC' }}
+      </button>
       <span class="table-count">{{ filteredRegisters.length }} 个寄存器</span>
     </div>
 
@@ -204,7 +316,13 @@ function formatRegType(type: string): string {
       暂无寄存器
     </div>
 
-    <template v-else>
+    <div
+      v-else
+      ref="scrollContainer"
+      class="table-scroll-container"
+      tabindex="0"
+      @keydown="handleTableKeydown"
+    >
       <table class="table">
         <thead>
           <tr>
@@ -218,8 +336,8 @@ function formatRegType(type: string): string {
           <tr
             v-for="reg in filteredRegisters"
             :key="`${reg.register_type}-${reg.address}`"
-            :class="{ selected: selectedRow === reg }"
-            @click="selectRow(reg)"
+            :class="{ selected: isSelected(reg) }"
+            @click="selectRow($event, reg)"
           >
             <td class="col-addr">{{ formatAddress(reg) }}</td>
             <td class="col-name">{{ reg.name || '-' }}</td>
@@ -231,7 +349,7 @@ function formatRegType(type: string): string {
                   type="number"
                   autofocus
                   @blur="commitEdit"
-                  @keydown="handleKeydown"
+                  @keydown="handleEditKeydown"
                   @click.stop
                 />
               </template>
@@ -251,7 +369,7 @@ function formatRegType(type: string): string {
           </tr>
         </tbody>
       </table>
-    </template>
+    </div>
 
     <!-- Context Menu -->
     <div
@@ -275,8 +393,8 @@ function formatRegType(type: string): string {
 
 .table-header-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid #313244;
   flex-shrink: 0;
@@ -286,11 +404,49 @@ function formatRegType(type: string): string {
   font-size: 12px;
   font-weight: 600;
   color: #cdd6f4;
+  white-space: nowrap;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 12px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: #89b4fa;
+}
+
+.search-input::placeholder {
+  color: #6c7086;
+}
+
+.addr-mode-btn {
+  padding: 2px 8px;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.addr-mode-btn:hover {
+  background: #45475a;
 }
 
 .table-count {
   font-size: 11px;
   color: #6c7086;
+  white-space: nowrap;
 }
 
 .table-loading,
@@ -303,12 +459,16 @@ function formatRegType(type: string): string {
   font-size: 13px;
 }
 
+.table-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  outline: none;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  flex: 1;
-  overflow-y: auto;
 }
 
 .table thead {

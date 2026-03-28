@@ -13,7 +13,7 @@ const selectedConnectionId = ref<string | null>(null)
 const selectedConnectionState = ref<string>('Stopped')
 const selectedSlaveId = ref<number | null>(null)
 const selectedRegisterType = ref<string | null>(null)
-const selectedRegister = ref<{ address: number; register_type: string; value: number } | null>(null)
+const selectedRegister = ref<{ address: number; register_type: string; value: number }[]>([])
 const logExpanded = ref(false)
 
 // Provide shared state to children
@@ -39,25 +39,25 @@ function handleConnectionSelect(id: string, state: string) {
   selectedConnectionState.value = state
   selectedSlaveId.value = null
   selectedRegisterType.value = null
-  selectedRegister.value = null
+  selectedRegister.value = []
 }
 
 function handleSlaveSelect(connectionId: string, slaveId: number) {
   selectedConnectionId.value = connectionId
   selectedSlaveId.value = slaveId
   selectedRegisterType.value = null
-  selectedRegister.value = null
+  selectedRegister.value = []
 }
 
 function handleGroupSelect(connectionId: string, slaveId: number, regType: string) {
   selectedConnectionId.value = connectionId
   selectedSlaveId.value = slaveId
   selectedRegisterType.value = regType
-  selectedRegister.value = null
+  selectedRegister.value = []
 }
 
-function handleRegisterSelect(reg: { address: number; register_type: string; value: number } | null) {
-  selectedRegister.value = reg
+function handleRegisterSelect(regs: { address: number; register_type: string; value: number }[]) {
+  selectedRegister.value = regs
 }
 
 function toggleLog() {

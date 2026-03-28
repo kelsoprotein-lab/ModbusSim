@@ -1,69 +1,105 @@
 <script setup lang="ts">
-import { inject, computed, ref, watch, type Ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { inject, computed, ref, type Ref } from 'vue'
 
-const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
-const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
-const selectedRegister = inject<Ref<{ address: number; register_type: string; value: number } | null>>('selectedRegister')!
+interface SelectedReg {
+  address: number
+  register_type: string
+  value: number
+}
 
-const neighborValues = ref<number[]>([])
+const selectedRegister = inject<Ref<SelectedReg[]>>('selectedRegister')!
+const addrMode = inject<Ref<'hex' | 'dec'>>('addrMode', ref('hex') as any)
 
-const isBoolType = computed(() => {
-  if (!selectedRegister.value) return false
-  return selectedRegister.value.register_type === 'coil' || selectedRegister.value.register_type === 'discrete_input'
+const hasSelection = computed(() => selectedRegister.value.length > 0)
+
+// Sort selected registers by address
+const sortedRegs = computed(() => {
+  return [...selectedRegister.value].sort((a, b) => a.address - b.address)
 })
 
+const firstReg = computed(() => sortedRegs.value[0] ?? null)
+
+const isBoolType = computed(() => {
+  if (!firstReg.value) return false
+  return firstReg.value.register_type === 'coil' || firstReg.value.register_type === 'discrete_input'
+})
+
+// All selected regs are same type?
+const allSameType = computed(() => {
+  if (sortedRegs.value.length <= 1) return true
+  const t = sortedRegs.value[0].register_type
+  return sortedRegs.value.every(r => r.register_type === t)
+})
+
+const selCount = computed(() => sortedRegs.value.length)
+
+function fmtAddress(addr: number): string {
+  if (addrMode.value === 'dec') return addr.toString()
+  return '0x' + addr.toString(16).toUpperCase().padStart(4, '0')
+}
+
+// Panel title
 const panelTitle = computed(() => {
-  if (!selectedRegister.value) return ''
-  const reg = selectedRegister.value
+  if (!firstReg.value) return ''
   const prefixMap: Record<string, string> = {
     coil: '0x Coil',
     discrete_input: '1x Discrete Input',
     input_register: '3x Input Register',
     holding_register: '4x Holding Register',
   }
-  const prefix = prefixMap[reg.register_type] || reg.register_type
-  return `${prefix} @ 0x${reg.address.toString(16).toUpperCase().padStart(4, '0')}`
+  const prefix = prefixMap[firstReg.value.register_type] || firstReg.value.register_type
+  const fmtAddr = (addr: number) => addrMode.value === 'dec' ? addr.toString() : '0x' + addr.toString(16).toUpperCase().padStart(4, '0')
+
+  if (selCount.value === 1) {
+    return `${prefix} @ ${fmtAddr(firstReg.value.address)}`
+  }
+  const last = sortedRegs.value[sortedRegs.value.length - 1]
+  return `${prefix} @ ${fmtAddr(firstReg.value.address)}~${fmtAddr(last.address)}`
 })
 
-// 16-bit interpretations
+// 16-bit interpretations (first selected register)
 const signed16 = computed(() => {
-  if (!selectedRegister.value) return 0
-  const v = selectedRegister.value.value & 0xFFFF
+  if (!firstReg.value) return 0
+  const v = firstReg.value.value & 0xFFFF
   return v >= 0x8000 ? v - 0x10000 : v
 })
 
 const unsigned16 = computed(() => {
-  if (!selectedRegister.value) return 0
-  return selectedRegister.value.value & 0xFFFF
+  if (!firstReg.value) return 0
+  return firstReg.value.value & 0xFFFF
 })
 
 const hex16 = computed(() => {
-  if (!selectedRegister.value) return '0x0000'
-  return '0x' + (selectedRegister.value.value & 0xFFFF).toString(16).toUpperCase().padStart(4, '0')
+  if (!firstReg.value) return '0x0000'
+  return '0x' + (firstReg.value.value & 0xFFFF).toString(16).toUpperCase().padStart(4, '0')
 })
 
 const binary16 = computed(() => {
-  if (!selectedRegister.value) return '0000 0000 0000 0000'
-  const b = (selectedRegister.value.value & 0xFFFF).toString(2).padStart(16, '0')
+  if (!firstReg.value) return '0000 0000 0000 0000'
+  const b = (firstReg.value.value & 0xFFFF).toString(2).padStart(16, '0')
   return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12, 16)}`
 })
 
-// 32-bit interpretations (need neighbor register)
-const has32bit = computed(() => neighborValues.value.length >= 2)
+// 32-bit: available when 2+ same-type non-bool regs selected
+const show32bit = computed(() => {
+  return selCount.value >= 2 && allSameType.value && !isBoolType.value
+})
+
+const reg32Values = computed(() => {
+  if (!show32bit.value) return [0, 0]
+  return [sortedRegs.value[0].value & 0xFFFF, sortedRegs.value[1].value & 0xFFFF]
+})
 
 const longABCD = computed(() => {
-  if (!has32bit.value) return '-'
-  const [hi, lo] = neighborValues.value
-  const val = ((hi << 16) | lo) >>> 0
-  return val.toString()
+  if (!show32bit.value) return '-'
+  const [hi, lo] = reg32Values.value
+  return (((hi << 16) | lo) >>> 0).toString()
 })
 
 const longCDAB = computed(() => {
-  if (!has32bit.value) return '-'
-  const [hi, lo] = neighborValues.value
-  const val = ((lo << 16) | hi) >>> 0
-  return val.toString()
+  if (!show32bit.value) return '-'
+  const [hi, lo] = reg32Values.value
+  return (((lo << 16) | hi) >>> 0).toString()
 })
 
 function toFloat32(hi: number, lo: number): string {
@@ -75,85 +111,56 @@ function toFloat32(hi: number, lo: number): string {
 }
 
 const floatABCD = computed(() => {
-  if (!has32bit.value) return '-'
-  return toFloat32(neighborValues.value[0], neighborValues.value[1])
+  if (!show32bit.value) return '-'
+  return toFloat32(reg32Values.value[0], reg32Values.value[1])
 })
 
 const floatCDAB = computed(() => {
-  if (!has32bit.value) return '-'
-  return toFloat32(neighborValues.value[1], neighborValues.value[0])
+  if (!show32bit.value) return '-'
+  return toFloat32(reg32Values.value[1], reg32Values.value[0])
 })
 
-// 64-bit interpretation (need 4 consecutive registers)
-const has64bit = computed(() => neighborValues.value.length >= 4)
+// 64-bit: available when 4+ same-type non-bool regs selected
+const show64bit = computed(() => {
+  return selCount.value >= 4 && allSameType.value && !isBoolType.value
+})
 
 const doubleValue = computed(() => {
-  if (!has64bit.value) return '-'
+  if (!show64bit.value) return '-'
   const buf = new ArrayBuffer(8)
   const view = new DataView(buf)
   for (let i = 0; i < 4; i++) {
-    view.setUint16(i * 2, neighborValues.value[i])
+    view.setUint16(i * 2, sortedRegs.value[i].value & 0xFFFF)
   }
   return view.getFloat64(0).toPrecision(15)
 })
-
-// Load neighbor registers when selection changes
-watch(selectedRegister, async (reg) => {
-  if (!reg || !selectedConnectionId.value || selectedSlaveId.value === null) {
-    neighborValues.value = []
-    return
-  }
-  if (isBoolType.value) {
-    neighborValues.value = []
-    return
-  }
-  try {
-    // Read 4 consecutive registers starting from selected address
-    const values: number[] = []
-    for (let i = 0; i < 4; i++) {
-      const addr = reg.address + i
-      if (addr > 65535) break
-      const result = await invoke<{ address: number; value: number }>('read_register', {
-        connectionId: selectedConnectionId.value,
-        slaveId: selectedSlaveId.value,
-        registerType: reg.register_type,
-        address: addr,
-      })
-      values.push(result.value)
-    }
-    neighborValues.value = values
-  } catch {
-    neighborValues.value = [reg.value]
-  }
-}, { immediate: true })
 </script>
 
 <template>
   <div class="value-panel">
     <div class="panel-header">值解析</div>
 
-    <div v-if="!selectedRegister" class="empty-state">
+    <div v-if="!hasSelection" class="empty-state">
       选择一个寄存器查看详情
     </div>
 
     <template v-else>
       <div class="panel-title">{{ panelTitle }}</div>
+      <div v-if="selCount > 1 && !allSameType" class="panel-hint">
+        选中了不同类型的寄存器，无法组合解析
+      </div>
 
       <!-- Bool type -->
       <template v-if="isBoolType">
         <div class="value-section">
-          <div class="value-row">
-            <span class="value-label">Value</span>
-            <span class="value-data">{{ selectedRegister.value !== 0 ? 'true (1)' : 'false (0)' }}</span>
-          </div>
-          <div class="value-row">
-            <span class="value-label">Hex</span>
-            <span class="value-data mono">{{ hex16 }}</span>
+          <div v-for="reg in sortedRegs" :key="`${reg.register_type}-${reg.address}`" class="value-row">
+            <span class="value-label">{{ fmtAddress(reg.address) }}</span>
+            <span class="value-data">{{ reg.value !== 0 ? 'true (1)' : 'false (0)' }}</span>
           </div>
         </div>
       </template>
 
-      <!-- 16-bit register -->
+      <!-- Numeric register(s) -->
       <template v-else>
         <div class="value-section">
           <div class="section-title">16-bit</div>
@@ -175,8 +182,8 @@ watch(selectedRegister, async (reg) => {
           </div>
         </div>
 
-        <div v-if="has32bit" class="value-section">
-          <div class="section-title">32-bit</div>
+        <div v-if="show32bit" class="value-section">
+          <div class="section-title">32-bit ({{ selCount >= 2 ? sortedRegs.slice(0, 2).map(r => fmtAddress(r.address)).join(' + ') : '' }})</div>
           <div class="value-row">
             <span class="value-label">Long AB CD</span>
             <span class="value-data mono">{{ longABCD }}</span>
@@ -195,8 +202,8 @@ watch(selectedRegister, async (reg) => {
           </div>
         </div>
 
-        <div v-if="has64bit" class="value-section">
-          <div class="section-title">64-bit</div>
+        <div v-if="show64bit" class="value-section">
+          <div class="section-title">64-bit ({{ sortedRegs.slice(0, 4).map(r => fmtAddress(r.address)).join(' + ') }})</div>
           <div class="value-row">
             <span class="value-label">Double</span>
             <span class="value-data mono">{{ doubleValue }}</span>
@@ -235,6 +242,12 @@ watch(selectedRegister, async (reg) => {
   color: #89b4fa;
   border-bottom: 1px solid #313244;
   margin-bottom: 4px;
+}
+
+.panel-hint {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #fab387;
 }
 
 .value-section {
