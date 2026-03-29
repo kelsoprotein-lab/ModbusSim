@@ -32,6 +32,16 @@ function refreshTree() {
 }
 
 provide('refreshTree', refreshTree)
+
+// Register refresh trigger (for ValuePanel → RegisterTable sync)
+const registerRefreshKey = ref(0)
+provide('registerRefreshKey', registerRefreshKey)
+
+function refreshRegisters() {
+  registerRefreshKey.value++
+}
+
+provide('refreshRegisters', refreshRegisters)
 provide(dialogKey, { showAlert, showConfirm, showPrompt })
 
 function handleConnectionSelect(id: string, state: string) {

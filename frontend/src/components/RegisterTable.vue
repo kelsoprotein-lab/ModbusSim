@@ -22,6 +22,7 @@ const emit = defineEmits<{
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const selectedRegisterType = inject<Ref<string | null>>('selectedRegisterType')!
+const registerRefreshKey = inject<Ref<number>>('registerRefreshKey')!
 
 const registers = ref<Register[]>([])
 const selectedRows = ref<Register[]>([])
@@ -106,6 +107,11 @@ async function loadRegisters() {
 watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], () => {
   clearSelection()
   loadRegisters()
+})
+
+watch(registerRefreshKey, async () => {
+  await loadRegisters()
+  emitSelection()
 })
 
 function clearSelection() {
