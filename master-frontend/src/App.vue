@@ -1,0 +1,164 @@
+<script setup lang="ts">
+import { ref, provide } from 'vue'
+import Toolbar from './components/Toolbar.vue'
+import ConnectionTree from './components/ConnectionTree.vue'
+import DataTable from './components/DataTable.vue'
+import ValuePanel from './components/ValuePanel.vue'
+import LogPanel from './components/LogPanel.vue'
+import AppDialog from './components/AppDialog.vue'
+import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
+import type { ScanGroupInfo, RegisterValueDto } from './types'
+
+// Shared state
+const selectedConnectionId = ref<string | null>(null)
+const selectedConnectionState = ref<string>('Disconnected')
+const selectedScanGroup = ref<ScanGroupInfo | null>(null)
+const selectedRegisters = ref<RegisterValueDto[]>([])
+const logExpanded = ref(false)
+const addrMode = ref<'hex' | 'dec'>('hex')
+
+// Provide shared state to children
+provide('selectedConnectionId', selectedConnectionId)
+provide('selectedConnectionState', selectedConnectionState)
+provide('selectedScanGroup', selectedScanGroup)
+provide('selectedRegisters', selectedRegisters)
+provide('addrMode', addrMode)
+
+// Tree refresh trigger
+const treeRefreshKey = ref(0)
+provide('treeRefreshKey', treeRefreshKey)
+
+function refreshTree() {
+  treeRefreshKey.value++
+}
+provide('refreshTree', refreshTree)
+
+// Data refresh trigger
+const dataRefreshKey = ref(0)
+provide('dataRefreshKey', dataRefreshKey)
+
+function refreshData() {
+  dataRefreshKey.value++
+}
+provide('refreshData', refreshData)
+
+provide(dialogKey, { showAlert, showConfirm, showPrompt })
+
+function handleConnectionSelect(id: string, state: string) {
+  selectedConnectionId.value = id
+  selectedConnectionState.value = state
+  selectedScanGroup.value = null
+  selectedRegisters.value = []
+}
+
+function handleScanGroupSelect(connectionId: string, group: ScanGroupInfo) {
+  selectedConnectionId.value = connectionId
+  selectedScanGroup.value = group
+  selectedRegisters.value = []
+}
+
+function handleRegisterSelect(regs: RegisterValueDto[]) {
+  selectedRegisters.value = regs
+}
+
+function toggleLog() {
+  logExpanded.value = !logExpanded.value
+}
+</script>
+
+<template>
+  <div :class="['app-layout', { 'log-expanded': logExpanded }]">
+    <header class="toolbar-area">
+      <Toolbar />
+    </header>
+
+    <aside class="tree-area">
+      <ConnectionTree
+        @connection-select="handleConnectionSelect"
+        @scan-group-select="handleScanGroupSelect"
+      />
+    </aside>
+    <main class="content-area">
+      <DataTable
+        @register-select="handleRegisterSelect"
+      />
+    </main>
+    <aside class="panel-area">
+      <ValuePanel />
+    </aside>
+
+    <footer class="log-area">
+      <LogPanel :expanded="logExpanded" @toggle="toggleLog" />
+    </footer>
+    <AppDialog />
+  </div>
+</template>
+
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #11111b;
+  color: #cdd6f4;
+}
+
+.app-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 280px;
+  grid-template-rows: 42px 1fr 32px;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "tree content panel"
+    "log log log";
+  height: 100vh;
+  width: 100vw;
+}
+
+.app-layout.log-expanded {
+  grid-template-rows: 42px 1fr 200px;
+}
+
+.toolbar-area {
+  grid-area: toolbar;
+  background: #1e1e2e;
+  border-bottom: 1px solid #313244;
+}
+
+.tree-area {
+  grid-area: tree;
+  background: #181825;
+  border-right: 1px solid #313244;
+  overflow-y: auto;
+}
+
+.content-area {
+  grid-area: content;
+  background: #11111b;
+  overflow: hidden;
+}
+
+.panel-area {
+  grid-area: panel;
+  background: #181825;
+  border-left: 1px solid #313244;
+  overflow-y: auto;
+}
+
+.log-area {
+  grid-area: log;
+  background: #1e1e2e;
+  border-top: 1px solid #313244;
+  overflow: hidden;
+}
+</style>

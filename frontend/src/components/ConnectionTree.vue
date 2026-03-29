@@ -33,11 +33,22 @@ interface TreeDevice {
 }
 
 const REGISTER_GROUPS = [
-  { type: 'coil', label: '0x Coils' },
-  { type: 'discrete_input', label: '1x Discrete Inputs' },
-  { type: 'input_register', label: '3x Input Registers' },
-  { type: 'holding_register', label: '4x Holding Registers' },
+  { type: 'coil', label: 'FC01 Coils', desc: '线圈 (读写, 1-bit, 功能码 01/05/15)' },
+  { type: 'discrete_input', label: 'FC02 Discrete Inputs', desc: '离散输入 (只读, 1-bit, 功能码 02)' },
+  { type: 'input_register', label: 'FC04 Input Registers', desc: '输入寄存器 (只读, 16-bit, 功能码 04)' },
+  { type: 'holding_register', label: 'FC03 Holding Registers', desc: '保持寄存器 (读写, 16-bit, 功能码 03/06/16)' },
 ]
+
+const helpTooltip = ref<{ type: string; x: number; y: number } | null>(null)
+
+function showHelpTooltip(e: MouseEvent, type: string) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  helpTooltip.value = { type, x: rect.right + 8, y: rect.top + rect.height / 2 }
+}
+
+function hideHelpTooltip() {
+  helpTooltip.value = null
+}
 
 const emit = defineEmits<{
   (e: 'connection-select', id: string, state: string): void
@@ -207,6 +218,7 @@ async function ctxDeleteSlave() {
               @click.stop="selectGroup(tc, td, group.type)"
             >
               <span class="node-label">{{ group.label }}</span>
+              <span class="help-icon" @mouseenter="showHelpTooltip($event, group.type)" @mouseleave="hideHelpTooltip">?</span>
             </div>
           </template>
         </div>
@@ -237,6 +249,17 @@ async function ctxDeleteSlave() {
         <div class="context-menu-item danger" @click="ctxDeleteSlave">删除从站</div>
       </template>
     </div>
+
+    <!-- Help Tooltip (fixed position, avoids clipping) -->
+    <Teleport to="body">
+      <div
+        v-if="helpTooltip"
+        class="help-tooltip"
+        :style="{ left: helpTooltip.x + 'px', top: helpTooltip.y + 'px' }"
+      >
+        {{ REGISTER_GROUPS.find(g => g.type === helpTooltip!.type)?.desc }}
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -288,6 +311,47 @@ async function ctxDeleteSlave() {
 
 .group-node {
   padding-left: 44px;
+}
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #45475a;
+  color: #a6adc8;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.help-icon:hover {
+  background: #585b70;
+  color: #cdd6f4;
+}
+
+.tree-node.selected .help-icon {
+  background: rgba(0, 0, 0, 0.2);
+  color: #1e1e2e;
+}
+
+:global(.help-tooltip) {
+  position: fixed;
+  z-index: 10000;
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .node-arrow {

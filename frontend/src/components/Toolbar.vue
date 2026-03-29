@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, inject, type Ref } from 'vue'
+import { ref, inject, watch, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm, showPrompt as ShowPrompt } from '../composables/useDialog'
 
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
+const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const refreshTree = inject<() => void>('refreshTree')!
+const refreshRegisters = inject<() => void>('refreshRegisters')!
 const { showAlert, showConfirm } = inject<{ showAlert: typeof ShowAlert; showConfirm: typeof ShowConfirm; showPrompt: typeof ShowPrompt }>(dialogKey)!
 
 // --- New Connection Modal ---
@@ -109,6 +111,73 @@ async function closeConnection() {
 async function openTools() {
   await showAlert('工具面板（待实现）')
 }
+
+// --- Random Mutation ---
+const mutationActive = ref(false)
+const mutationRate = ref(1000)
+const mutationTypes = ref<Record<string, boolean>>({
+  coil: true,
+  discrete_input: false,
+  holding_register: true,
+  input_register: false,
+})
+let mutationTimer: number | null = null
+
+function toggleMutation() {
+  if (mutationActive.value) {
+    stopMutation()
+  } else {
+    startMutation()
+  }
+}
+
+function startMutation() {
+  if (!selectedConnectionId.value || selectedSlaveId.value === null) return
+  mutationActive.value = true
+  scheduleMutation()
+}
+
+function stopMutation() {
+  mutationActive.value = false
+  if (mutationTimer !== null) {
+    clearTimeout(mutationTimer)
+    mutationTimer = null
+  }
+}
+
+function scheduleMutation() {
+  if (!mutationActive.value) return
+  mutationTimer = window.setTimeout(async () => {
+    if (!mutationActive.value || !selectedConnectionId.value || selectedSlaveId.value === null) {
+      stopMutation()
+      return
+    }
+    const types = Object.entries(mutationTypes.value)
+      .filter(([, v]) => v)
+      .map(([k]) => k)
+    if (types.length > 0) {
+      try {
+        await invoke('random_mutate_registers', {
+          request: {
+            connection_id: selectedConnectionId.value,
+            slave_id: selectedSlaveId.value,
+            register_types: types,
+          }
+        })
+        refreshRegisters()
+      } catch (e) { console.error('mutation failed:', e) }
+    }
+    scheduleMutation()
+  }, mutationRate.value)
+}
+
+watch([selectedConnectionId, selectedSlaveId], () => {
+  if (mutationActive.value) stopMutation()
+})
+
+onUnmounted(() => {
+  if (mutationTimer !== null) clearTimeout(mutationTimer)
+})
 </script>
 
 <template>
@@ -154,6 +223,31 @@ async function openTools() {
       >
         <span class="toolbar-label">关闭</span>
       </button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group mutation-group">
+      <button
+        :class="['toolbar-btn', { 'btn-mutation-active': mutationActive }]"
+        @click="toggleMutation"
+        :disabled="!selectedConnectionId || selectedSlaveId === null"
+        title="随机变位"
+      >
+        <span class="toolbar-label">{{ mutationActive ? '停止变位' : '随机变位' }}</span>
+      </button>
+      <input
+        type="range"
+        class="rate-slider"
+        min="100"
+        max="5000"
+        step="100"
+        v-model.number="mutationRate"
+        title="变位间隔 (ms)"
+      />
+      <span class="rate-label">{{ mutationRate }}ms</span>
+      <label v-for="(label, key) in { coil: '线圈', discrete_input: '离散输入', holding_register: '保持寄存器', input_register: '输入寄存器' }" :key="key" class="mutation-type-label">
+        <input type="checkbox" v-model="mutationTypes[key]" />
+        {{ label }}
+      </label>
     </div>
     <div class="toolbar-divider"></div>
     <div class="toolbar-group">
@@ -293,6 +387,48 @@ async function openTools() {
 .toolbar-icon {
   font-weight: bold;
   font-size: 14px;
+}
+
+.toolbar-btn.btn-mutation-active {
+  background: #a6e3a1;
+  color: #1e1e2e;
+  font-weight: 600;
+}
+
+.toolbar-btn.btn-mutation-active:hover {
+  background: #94e2d5;
+}
+
+.mutation-group {
+  align-items: center;
+}
+
+.rate-slider {
+  width: 80px;
+  height: 4px;
+  accent-color: #89b4fa;
+  cursor: pointer;
+}
+
+.rate-label {
+  font-size: 10px;
+  color: #6c7086;
+  min-width: 42px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.mutation-type-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #a6adc8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mutation-type-label input[type="checkbox"] {
+  accent-color: #89b4fa;
 }
 
 .toolbar-title {

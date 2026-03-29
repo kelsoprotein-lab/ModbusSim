@@ -1,17 +1,20 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ModbusSlave",
+  "productName": "ModbusMaster",
   "version": "0.1.0",
-  "identifier": "com.modbusslave.dev",
+  "identifier": "com.modbusmaster.dev",
   "build": {
-    "devUrl": "http://localhost:5175",
-    "beforeDevCommand": { "script": "npm run dev", "cwd": "../../frontend" },
-    "frontendDist": "../../frontend/dist"
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../../master-frontend"
+    },
+    "frontendDist": "../../master-frontend/dist"
   },
   "app": {
     "windows": [
       {
-        "title": "ModbusSlave - Modbus TCP Simulator",
+        "title": "ModbusMaster - Modbus TCP Master",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

@@ -10,6 +10,7 @@ use modbussim_core::log_entry::LogEntry;
 use modbussim_core::register::{DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
 use modbussim_core::tools;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -284,6 +285,7 @@ pub struct AddRegisterRequest {
     pub address: u16,
     pub register_type: String,
     pub data_type: String,
+    pub endian: Option<String>,
     pub name: Option<String>,
     pub comment: Option<String>,
 }
@@ -305,6 +307,16 @@ fn parse_register_type(s: &str) -> Result<RegisterType, String> {
         "input_register" => Ok(RegisterType::InputRegister),
         "holding_register" => Ok(RegisterType::HoldingRegister),
         _ => Err(format!("unknown register type: {}", s)),
+    }
+}
+
+fn parse_endian(s: &str) -> Result<Endian, String> {
+    match s {
+        "big" => Ok(Endian::Big),
+        "little" => Ok(Endian::Little),
+        "mid_big" => Ok(Endian::MidBig),
+        "mid_little" => Ok(Endian::MidLittle),
+        _ => Err(format!("unknown endian: {}", s)),
     }
 }
 
@@ -332,12 +344,16 @@ pub async fn add_register(
 
     let register_type = parse_register_type(&request.register_type)?;
     let data_type = parse_data_type(&request.data_type)?;
+    let endian = match &request.endian {
+        Some(s) => parse_endian(s)?,
+        None => Endian::Big,
+    };
 
     let def = RegisterDef {
         address: request.address,
         register_type,
         data_type,
-        endian: Endian::Big,
+        endian,
         name: request.name.unwrap_or_default(),
         comment: request.comment.unwrap_or_default(),
     };
@@ -425,8 +441,9 @@ pub async fn write_register(
 
     match reg_type {
         RegisterType::Coil => device.register_map.write_coil(request.address, request.value != 0),
+        RegisterType::DiscreteInput => { device.register_map.discrete_inputs.insert(request.address, request.value != 0); },
         RegisterType::HoldingRegister => device.register_map.write_holding_register(request.address, request.value),
-        _ => return Err(format!("cannot write to register type: {:?}", reg_type)),
+        RegisterType::InputRegister => { device.register_map.input_registers.insert(request.address, request.value); },
     }
 
     let event = RegisterValueEvent {
@@ -751,4 +768,76 @@ pub async fn clear_app_state(
     state.slave_connections.write().await.clear();
     *state.next_slave_id.write().await = 0;
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RandomMutateRequest {
+    pub connection_id: String,
+    pub slave_id: u8,
+    pub register_types: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn random_mutate_registers(
+    state: State<'_, AppState>,
+    request: RandomMutateRequest,
+) -> Result<u32, String> {
+    let connections = state.slave_connections.read().await;
+    let conn = connections
+        .get(&request.connection_id)
+        .ok_or_else(|| format!("connection {} not found", request.connection_id))?;
+
+    let mut devices = conn.connection.devices.write().await;
+    let device = devices
+        .get_mut(&request.slave_id)
+        .ok_or_else(|| format!("slave {} not found", request.slave_id))?;
+
+    let mut rng = rand::rng();
+    let mut mutated = 0u32;
+
+    for rt_str in &request.register_types {
+        let reg_type = parse_register_type(rt_str)?;
+        let addrs: Vec<u16> = device.register_defs.iter()
+            .filter(|d| d.register_type == reg_type)
+            .map(|d| d.address)
+            .collect();
+        if addrs.is_empty() { continue; }
+
+        // Mutate ~30% of registers of this type, at least 3
+        let count = (addrs.len() * 30 / 100).max(3).min(addrs.len());
+        // Shuffle and take first `count`
+        let mut pick = addrs.clone();
+        for i in (1..pick.len()).rev() {
+            let j = rng.random_range(0..=i);
+            pick.swap(i, j);
+        }
+        for &addr in &pick[..count] {
+            match reg_type {
+                RegisterType::Coil => {
+                    let cur = device.register_map.coils.get(&addr).copied().unwrap_or(false);
+                    device.register_map.write_coil(addr, !cur);
+                }
+                RegisterType::DiscreteInput => {
+                    let cur = device.register_map.discrete_inputs.get(&addr).copied().unwrap_or(false);
+                    device.register_map.discrete_inputs.insert(addr, !cur);
+                }
+                RegisterType::HoldingRegister => {
+                    let cur = device.register_map.holding_registers.get(&addr).copied().unwrap_or(0);
+                    let delta: i32 = rng.random_range(-100..=100);
+                    let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
+                    device.register_map.write_holding_register(addr, new_val);
+                }
+                RegisterType::InputRegister => {
+                    let cur = device.register_map.input_registers.get(&addr).copied().unwrap_or(0);
+                    let delta: i32 = rng.random_range(-100..=100);
+                    let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
+                    device.register_map.input_registers.insert(addr, new_val);
+                }
+            }
+            mutated += 1;
+        }
+    }
+
+    Ok(mutated)
 }

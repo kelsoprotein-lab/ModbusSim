@@ -3,6 +3,8 @@ import { ref, inject, watch, computed, nextTick, provide, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import RegisterModal from './RegisterModal.vue'
+import BatchAddModal from './BatchAddModal.vue'
 
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
@@ -37,6 +39,12 @@ const contextMenu = ref({ show: false, x: 0, y: 0, reg: null as Register | null 
 const scrollContainer = ref<HTMLDivElement | null>(null)
 const addrMode = ref<'hex' | 'dec'>('hex')
 provide('addrMode', addrMode)
+const showAddModal = ref(false)
+const showBatchModal = ref(false)
+
+function onRegisterSaved() {
+  registerRefreshKey.value++
+}
 
 // Filter registers by selected type + search query
 const filteredRegisters = computed(() => {
@@ -110,7 +118,18 @@ watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], () => {
 })
 
 watch(registerRefreshKey, async () => {
-  await loadRegisters()
+  if (!selectedConnectionId.value || selectedSlaveId.value === null) return
+  for (const reg of registers.value) {
+    try {
+      const result = await invoke<{ address: number; value: number }>('read_register', {
+        connectionId: selectedConnectionId.value,
+        slaveId: selectedSlaveId.value,
+        registerType: reg.register_type,
+        address: reg.address,
+      })
+      registerValues.value[`${reg.register_type}-${reg.address}`] = result.value
+    } catch { /* skip */ }
+  }
   emitSelection()
 })
 
@@ -311,6 +330,18 @@ function formatRegType(type: string): string {
       <button class="addr-mode-btn" @click="toggleAddrMode" :title="addrMode === 'hex' ? '切换为十进制' : '切换为十六进制'">
         {{ addrMode === 'hex' ? 'HEX' : 'DEC' }}
       </button>
+      <button
+        class="add-reg-btn"
+        :disabled="!selectedConnectionId || selectedSlaveId === null"
+        @click="showAddModal = true"
+        title="添加寄存器"
+      >+</button>
+      <button
+        class="add-reg-btn batch"
+        :disabled="!selectedConnectionId || selectedSlaveId === null"
+        @click="showBatchModal = true"
+        title="批量添加寄存器"
+      >批量</button>
       <span class="table-count">{{ filteredRegisters.length }} 个寄存器</span>
     </div>
 
@@ -386,6 +417,27 @@ function formatRegType(type: string): string {
     >
       <div class="context-menu-item danger" @click="deleteRegister">删除寄存器</div>
     </div>
+
+    <!-- Add Register Modal -->
+    <RegisterModal
+      :show="showAddModal"
+      mode="add"
+      :existing-registers="registers"
+      :connection-id="selectedConnectionId ?? ''"
+      :slave-id="selectedSlaveId ?? 0"
+      @close="showAddModal = false"
+      @saved="onRegisterSaved"
+    />
+
+    <!-- Batch Add Modal -->
+    <BatchAddModal
+      :show="showBatchModal"
+      :existing-registers="registers"
+      :connection-id="selectedConnectionId ?? ''"
+      :slave-id="selectedSlaveId ?? 0"
+      @close="showBatchModal = false"
+      @saved="onRegisterSaved"
+    />
   </div>
 </template>
 
@@ -447,6 +499,33 @@ function formatRegType(type: string): string {
 
 .addr-mode-btn:hover {
   background: #45475a;
+}
+
+.add-reg-btn {
+  padding: 2px 8px;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #a6e3a1;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.add-reg-btn.batch {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.add-reg-btn:hover:not(:disabled) {
+  background: #45475a;
+}
+
+.add-reg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .table-count {

@@ -1,6 +1,7 @@
 use crate::log_collector::LogCollector;
 use crate::log_entry::{Direction, FunctionCode, LogEntry};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +40,7 @@ impl Default for MasterConfig {
 pub enum MasterState {
     Disconnected,
     Connected,
+    Error,
 }
 
 /// Which read function code to use.
@@ -81,13 +83,30 @@ pub struct PollConfig {
     pub interval_ms: u64,
 }
 
+/// A named group of registers to scan periodically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanGroup {
+    pub id: String,
+    pub name: String,
+    pub function: ReadFunction,
+    pub start_address: u16,
+    pub quantity: u16,
+    pub interval_ms: u64,
+    pub enabled: bool,
+}
+
+/// Handle for a running poll task.
+struct PollTaskHandle {
+    shutdown_tx: oneshot::Sender<()>,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
 /// A master connection that connects to a Modbus TCP slave.
 pub struct MasterConnection {
     pub config: MasterConfig,
     state: MasterState,
     ctx: Option<Arc<Mutex<client::Context>>>,
-    poll_shutdown: Option<oneshot::Sender<()>>,
-    poll_handle: Option<tokio::task::JoinHandle<()>>,
+    poll_tasks: HashMap<String, PollTaskHandle>,
     log_collector: Option<Arc<LogCollector>>,
 }
 
@@ -97,8 +116,7 @@ impl MasterConnection {
             config,
             state: MasterState::Disconnected,
             ctx: None,
-            poll_shutdown: None,
-            poll_handle: None,
+            poll_tasks: HashMap::new(),
             log_collector: None,
         }
     }
@@ -143,8 +161,8 @@ impl MasterConnection {
             return Err(MasterError::NotConnected);
         }
 
-        // Stop polling first if active
-        self.stop_poll().await.ok();
+        // Stop all polling first
+        self.stop_all_scans().await;
 
         if let Some(ctx) = self.ctx.take() {
             let mut ctx = ctx.lock().await;
@@ -152,6 +170,12 @@ impl MasterConnection {
         }
         self.state = MasterState::Disconnected;
         Ok(())
+    }
+
+    /// Reconnect: disconnect then connect again.
+    pub async fn reconnect(&mut self) -> Result<(), MasterError> {
+        let _ = self.disconnect().await;
+        self.connect().await
     }
 
     fn get_ctx(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
@@ -171,17 +195,17 @@ impl MasterConnection {
         }
     }
 
-    fn log_tx(&self, fc: FunctionCode, detail: &str) {
+    async fn log_tx(&self, fc: FunctionCode, detail: &str) {
         if let Some(collector) = &self.log_collector {
             let entry = LogEntry::new(Direction::Tx, fc, detail);
-            collector.add_blocking(entry);
+            collector.add(entry).await;
         }
     }
 
-    fn log_rx(&self, fc: FunctionCode, detail: &str) {
+    async fn log_rx(&self, fc: FunctionCode, detail: &str) {
         if let Some(collector) = &self.log_collector {
             let entry = LogEntry::new(Direction::Rx, fc, detail);
-            collector.add_blocking(entry);
+            collector.add(entry).await;
         }
     }
 
@@ -198,7 +222,7 @@ impl MasterConnection {
         let fc = Self::to_function_code(function);
 
         // Log TX
-        self.log_tx(fc, &format!("R {} x{}", start_address, quantity));
+        self.log_tx(fc, &format!("R {} x{}", start_address, quantity)).await;
 
         let result = match function {
             ReadFunction::ReadCoils => {
@@ -251,7 +275,7 @@ impl MasterConnection {
             ReadResult::HoldingRegisters(vals) => format!("{:?}", vals),
             ReadResult::InputRegisters(vals) => format!("{:?}", vals),
         };
-        self.log_rx(fc, &detail);
+        self.log_rx(fc, &detail).await;
 
         Ok(result)
     }
@@ -264,7 +288,7 @@ impl MasterConnection {
     ) -> Result<(), MasterError> {
         let ctx = self.get_ctx()?;
         let mut ctx = ctx.lock().await;
-        self.log_tx(FunctionCode::WriteSingleCoil, &format!("W {} = {}", address, value));
+        self.log_tx(FunctionCode::WriteSingleCoil, &format!("W {} = {}", address, value)).await;
         tokio::time::timeout(self.timeout_duration(), ctx.write_single_coil(address, value))
             .await
             .map_err(|_| MasterError::Timeout("Write single coil timed out".into()))?
@@ -281,7 +305,7 @@ impl MasterConnection {
     ) -> Result<(), MasterError> {
         let ctx = self.get_ctx()?;
         let mut ctx = ctx.lock().await;
-        self.log_tx(FunctionCode::WriteSingleRegister, &format!("W {} = {:#06x}", address, value));
+        self.log_tx(FunctionCode::WriteSingleRegister, &format!("W {} = {:#06x}", address, value)).await;
         tokio::time::timeout(
             self.timeout_duration(),
             ctx.write_single_register(address, value),
@@ -301,7 +325,7 @@ impl MasterConnection {
     ) -> Result<(), MasterError> {
         let ctx = self.get_ctx()?;
         let mut ctx = ctx.lock().await;
-        self.log_tx(FunctionCode::WriteMultipleCoils, &format!("W {} x{}", address, values.len()));
+        self.log_tx(FunctionCode::WriteMultipleCoils, &format!("W {} x{}", address, values.len())).await;
         tokio::time::timeout(
             self.timeout_duration(),
             ctx.write_multiple_coils(address, values),
@@ -321,7 +345,7 @@ impl MasterConnection {
     ) -> Result<(), MasterError> {
         let ctx = self.get_ctx()?;
         let mut ctx = ctx.lock().await;
-        self.log_tx(FunctionCode::WriteMultipleRegisters, &format!("W {} x{}", address, values.len()));
+        self.log_tx(FunctionCode::WriteMultipleRegisters, &format!("W {} x{}", address, values.len())).await;
         tokio::time::timeout(
             self.timeout_duration(),
             ctx.write_multiple_registers(address, values),
@@ -333,23 +357,59 @@ impl MasterConnection {
         Ok(())
     }
 
-    /// Start polling with the given configuration.
+    /// Start polling with the given configuration (legacy single-poll API).
     /// Returns a receiver for poll events.
     pub async fn start_poll(
         &mut self,
         poll_config: PollConfig,
     ) -> Result<mpsc::Receiver<PollEvent>, MasterError> {
-        if self.poll_handle.is_some() {
-            self.stop_poll().await?;
-        }
+        let group = ScanGroup {
+            id: "__legacy_poll__".to_string(),
+            name: "Legacy Poll".to_string(),
+            function: poll_config.function,
+            start_address: poll_config.start_address,
+            quantity: poll_config.quantity,
+            interval_ms: poll_config.interval_ms,
+            enabled: true,
+        };
+        self.start_scan_group(&group).await
+    }
+
+    /// Stop the legacy single polling task.
+    pub async fn stop_poll(&mut self) -> Result<(), MasterError> {
+        self.stop_scan_group("__legacy_poll__").await
+    }
+
+    /// Whether any polling is currently active.
+    pub fn is_polling(&self) -> bool {
+        !self.poll_tasks.is_empty()
+    }
+
+    /// Whether a specific scan group is actively polling.
+    pub fn is_scan_active(&self, group_id: &str) -> bool {
+        self.poll_tasks.contains_key(group_id)
+    }
+
+    /// Start polling for a scan group.
+    /// Returns a receiver for poll events from this group.
+    pub async fn start_scan_group(
+        &mut self,
+        group: &ScanGroup,
+    ) -> Result<mpsc::Receiver<PollEvent>, MasterError> {
+        // Stop existing poll for this group if any
+        self.stop_scan_group(&group.id).await.ok();
 
         let ctx = self.get_ctx()?;
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
         let (event_tx, event_rx) = mpsc::channel::<PollEvent>(100);
         let timeout = self.timeout_duration();
+        let function = group.function;
+        let start_address = group.start_address;
+        let quantity = group.quantity;
+        let interval_ms = group.interval_ms;
 
         let handle = tokio::spawn(async move {
-            let interval = Duration::from_millis(poll_config.interval_ms);
+            let interval = Duration::from_millis(interval_ms);
             loop {
                 // Check for shutdown
                 if shutdown_rx.try_recv().is_ok() {
@@ -358,7 +418,7 @@ impl MasterConnection {
 
                 let result = {
                     let mut ctx = ctx.lock().await;
-                    execute_read(&mut ctx, poll_config.function, poll_config.start_address, poll_config.quantity, timeout).await
+                    execute_read(&mut ctx, function, start_address, quantity, timeout).await
                 };
 
                 let event = match result {
@@ -374,25 +434,33 @@ impl MasterConnection {
             }
         });
 
-        self.poll_shutdown = Some(shutdown_tx);
-        self.poll_handle = Some(handle);
+        self.poll_tasks.insert(
+            group.id.clone(),
+            PollTaskHandle {
+                shutdown_tx,
+                join_handle: handle,
+            },
+        );
+
         Ok(event_rx)
     }
 
-    /// Stop the active polling task.
-    pub async fn stop_poll(&mut self) -> Result<(), MasterError> {
-        if let Some(tx) = self.poll_shutdown.take() {
-            let _ = tx.send(());
-        }
-        if let Some(handle) = self.poll_handle.take() {
-            let _ = handle.await;
+    /// Stop a specific scan group's polling task.
+    pub async fn stop_scan_group(&mut self, group_id: &str) -> Result<(), MasterError> {
+        if let Some(handle) = self.poll_tasks.remove(group_id) {
+            let _ = handle.shutdown_tx.send(());
+            let _ = handle.join_handle.await;
         }
         Ok(())
     }
 
-    /// Whether polling is currently active.
-    pub fn is_polling(&self) -> bool {
-        self.poll_handle.is_some()
+    /// Stop all active scan groups.
+    pub async fn stop_all_scans(&mut self) {
+        let tasks: Vec<(String, PollTaskHandle)> = self.poll_tasks.drain().collect();
+        for (_, handle) in tasks {
+            let _ = handle.shutdown_tx.send(());
+            let _ = handle.join_handle.await;
+        }
     }
 }
 
@@ -519,5 +587,22 @@ mod tests {
         let err = MasterError::Exception(ExceptionCode::IllegalDataAddress);
         let msg = err.to_string();
         assert!(msg.contains("IllegalDataAddress") || msg.contains("Illegal"));
+    }
+
+    #[test]
+    fn test_scan_group_serde() {
+        let group = ScanGroup {
+            id: "sg1".to_string(),
+            name: "Test Group".to_string(),
+            function: ReadFunction::ReadHoldingRegisters,
+            start_address: 0,
+            quantity: 10,
+            interval_ms: 1000,
+            enabled: true,
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        let parsed: ScanGroup = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "sg1");
+        assert_eq!(parsed.quantity, 10);
     }
 }

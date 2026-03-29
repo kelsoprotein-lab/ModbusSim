@@ -8,24 +8,29 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
-            // Slave connection commands
-            commands::create_slave_connection,
-            commands::start_slave_connection,
-            commands::stop_slave_connection,
-            commands::delete_slave_connection,
-            commands::list_slave_connections,
-            // Slave device commands
-            commands::add_slave_device,
-            commands::remove_slave_device,
-            commands::list_slave_devices,
-            // Register commands
-            commands::add_register,
-            commands::remove_register,
-            commands::read_register,
-            commands::write_register,
-            commands::list_registers,
-            commands::export_registers,
-            commands::import_registers,
+            // Connection commands
+            commands::create_master_connection,
+            commands::connect_master,
+            commands::disconnect_master,
+            commands::delete_master_connection,
+            commands::list_master_connections,
+            // Scan group commands
+            commands::add_scan_group,
+            commands::update_scan_group,
+            commands::remove_scan_group,
+            commands::list_scan_groups,
+            // Polling commands
+            commands::start_polling,
+            commands::stop_polling,
+            commands::start_all_polling,
+            commands::stop_all_polling,
+            commands::get_poll_data,
+            // Read/Write commands
+            commands::read_once,
+            commands::write_single_register,
+            commands::write_single_coil,
+            commands::write_multiple_registers,
+            commands::write_multiple_coils,
             // Log commands
             commands::get_communication_logs,
             commands::clear_communication_logs,
@@ -36,12 +41,6 @@ pub fn run() {
             commands::calculate_crc16,
             commands::calculate_lrc,
             commands::parse_hex,
-            // State persistence commands
-            commands::export_app_state,
-            commands::import_app_state,
-            commands::clear_app_state,
-            // Simulation commands
-            commands::random_mutate_registers,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
