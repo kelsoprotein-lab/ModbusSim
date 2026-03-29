@@ -96,6 +96,11 @@ const binary16 = computed(() => {
   return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12, 16)}`
 })
 
+// Byte swap within a 16-bit word: 0xAABB → 0xBBAA
+function swapBytes16(v: number): number {
+  return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)
+}
+
 // 32-bit
 const show32bit = computed(() => {
   return selCount.value >= 2 && allSameType.value && !isBoolType.value
@@ -118,6 +123,18 @@ const longCDAB = computed(() => {
   return (((lo << 16) | hi) >>> 0).toString()
 })
 
+const longBADC = computed(() => {
+  if (!show32bit.value) return '-'
+  const [hi, lo] = reg32Values.value
+  return (((swapBytes16(hi) << 16) | swapBytes16(lo)) >>> 0).toString()
+})
+
+const longDCBA = computed(() => {
+  if (!show32bit.value) return '-'
+  const [hi, lo] = reg32Values.value
+  return (((swapBytes16(lo) << 16) | swapBytes16(hi)) >>> 0).toString()
+})
+
 function toFloat32(hi: number, lo: number): string {
   const buf = new ArrayBuffer(4)
   const view = new DataView(buf)
@@ -134,6 +151,16 @@ const floatABCD = computed(() => {
 const floatCDAB = computed(() => {
   if (!show32bit.value) return '-'
   return toFloat32(reg32Values.value[1], reg32Values.value[0])
+})
+
+const floatBADC = computed(() => {
+  if (!show32bit.value) return '-'
+  return toFloat32(swapBytes16(reg32Values.value[0]), swapBytes16(reg32Values.value[1]))
+})
+
+const floatDCBA = computed(() => {
+  if (!show32bit.value) return '-'
+  return toFloat32(swapBytes16(reg32Values.value[1]), swapBytes16(reg32Values.value[0]))
 })
 
 // 64-bit
@@ -157,6 +184,26 @@ const doubleReversed = computed(() => {
   const view = new DataView(buf)
   for (let i = 0; i < 4; i++) {
     view.setUint16(i * 2, sortedRegs.value[3 - i].value & 0xFFFF)
+  }
+  return view.getFloat64(0).toPrecision(15)
+})
+
+const doubleByteSwap = computed(() => {
+  if (!show64bit.value) return '-'
+  const buf = new ArrayBuffer(8)
+  const view = new DataView(buf)
+  for (let i = 0; i < 4; i++) {
+    view.setUint16(i * 2, swapBytes16(sortedRegs.value[i].value & 0xFFFF))
+  }
+  return view.getFloat64(0).toPrecision(15)
+})
+
+const doubleLittleEndian = computed(() => {
+  if (!show64bit.value) return '-'
+  const buf = new ArrayBuffer(8)
+  const view = new DataView(buf)
+  for (let i = 0; i < 4; i++) {
+    view.setUint16(i * 2, swapBytes16(sortedRegs.value[3 - i].value & 0xFFFF))
   }
   return view.getFloat64(0).toPrecision(15)
 })
@@ -204,27 +251,28 @@ function reverseParseField(field: string, input: string): { address: number; reg
     return [{ address: regs[0].address, register_type: regs[0].register_type, value: n & 0xFFFF }]
   }
 
-  // 32-bit
-  if (field === 'longABCD' || field === 'longCDAB') {
+  // 32-bit Long
+  if (field === 'longABCD' || field === 'longCDAB' || field === 'longBADC' || field === 'longDCBA') {
     if (regs.length < 2) return null
     const n = Number(input)
     if (isNaN(n)) return null
     const u = n >>> 0
     const hi = (u >>> 16) & 0xFFFF
     const lo = u & 0xFFFF
-    if (field === 'longABCD') {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: hi },
-        { address: regs[1].address, register_type: regs[1].register_type, value: lo },
-      ]
-    } else {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: lo },
-        { address: regs[1].address, register_type: regs[1].register_type, value: hi },
-      ]
+    const map: Record<string, [number, number]> = {
+      longABCD: [hi, lo],
+      longCDAB: [lo, hi],
+      longBADC: [swapBytes16(hi), swapBytes16(lo)],
+      longDCBA: [swapBytes16(lo), swapBytes16(hi)],
     }
+    const [r0, r1] = map[field]
+    return [
+      { address: regs[0].address, register_type: regs[0].register_type, value: r0 },
+      { address: regs[1].address, register_type: regs[1].register_type, value: r1 },
+    ]
   }
-  if (field === 'floatABCD' || field === 'floatCDAB') {
+  // 32-bit Float
+  if (field === 'floatABCD' || field === 'floatCDAB' || field === 'floatBADC' || field === 'floatDCBA') {
     if (regs.length < 2) return null
     const n = parseFloat(input)
     if (isNaN(n)) return null
@@ -233,42 +281,39 @@ function reverseParseField(field: string, input: string): { address: number; reg
     view.setFloat32(0, n)
     const w0 = view.getUint16(0)
     const w1 = view.getUint16(2)
-    if (field === 'floatABCD') {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: w0 },
-        { address: regs[1].address, register_type: regs[1].register_type, value: w1 },
-      ]
-    } else {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: w1 },
-        { address: regs[1].address, register_type: regs[1].register_type, value: w0 },
-      ]
+    const map: Record<string, [number, number]> = {
+      floatABCD: [w0, w1],
+      floatCDAB: [w1, w0],
+      floatBADC: [swapBytes16(w0), swapBytes16(w1)],
+      floatDCBA: [swapBytes16(w1), swapBytes16(w0)],
     }
+    const [r0, r1] = map[field]
+    return [
+      { address: regs[0].address, register_type: regs[0].register_type, value: r0 },
+      { address: regs[1].address, register_type: regs[1].register_type, value: r1 },
+    ]
   }
 
   // 64-bit
-  if (field === 'double' || field === 'doubleReversed') {
+  if (field === 'double' || field === 'doubleReversed' || field === 'doubleByteSwap' || field === 'doubleLittleEndian') {
     if (regs.length < 4) return null
     const n = parseFloat(input)
     if (isNaN(n)) return null
     const buf = new ArrayBuffer(8)
     const view = new DataView(buf)
     view.setFloat64(0, n)
+    const w = [view.getUint16(0), view.getUint16(2), view.getUint16(4), view.getUint16(6)]
+    let vals: number[]
     if (field === 'double') {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: view.getUint16(0) },
-        { address: regs[1].address, register_type: regs[1].register_type, value: view.getUint16(2) },
-        { address: regs[2].address, register_type: regs[2].register_type, value: view.getUint16(4) },
-        { address: regs[3].address, register_type: regs[3].register_type, value: view.getUint16(6) },
-      ]
+      vals = [w[0], w[1], w[2], w[3]]
+    } else if (field === 'doubleReversed') {
+      vals = [w[3], w[2], w[1], w[0]]
+    } else if (field === 'doubleByteSwap') {
+      vals = [swapBytes16(w[0]), swapBytes16(w[1]), swapBytes16(w[2]), swapBytes16(w[3])]
     } else {
-      return [
-        { address: regs[0].address, register_type: regs[0].register_type, value: view.getUint16(6) },
-        { address: regs[1].address, register_type: regs[1].register_type, value: view.getUint16(4) },
-        { address: regs[2].address, register_type: regs[2].register_type, value: view.getUint16(2) },
-        { address: regs[3].address, register_type: regs[3].register_type, value: view.getUint16(0) },
-      ]
+      vals = [swapBytes16(w[3]), swapBytes16(w[2]), swapBytes16(w[1]), swapBytes16(w[0])]
     }
+    return vals.map((v, i) => ({ address: regs[i].address, register_type: regs[i].register_type, value: v }))
   }
 
   return null
@@ -400,6 +445,26 @@ async function handleEditKeydown(e: KeyboardEvent) {
             <input v-if="editingField === 'floatCDAB'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
             <span v-else class="value-data mono editable" @click="startEdit('floatCDAB', floatCDAB)">{{ floatCDAB }}</span>
           </div>
+          <div class="value-row">
+            <span class="value-label">Long BA DC</span>
+            <input v-if="editingField === 'longBADC'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('longBADC', longBADC)">{{ longBADC }}</span>
+          </div>
+          <div class="value-row">
+            <span class="value-label">Long DC BA</span>
+            <input v-if="editingField === 'longDCBA'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('longDCBA', longDCBA)">{{ longDCBA }}</span>
+          </div>
+          <div class="value-row">
+            <span class="value-label">Float BA DC</span>
+            <input v-if="editingField === 'floatBADC'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('floatBADC', floatBADC)">{{ floatBADC }}</span>
+          </div>
+          <div class="value-row">
+            <span class="value-label">Float DC BA</span>
+            <input v-if="editingField === 'floatDCBA'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('floatDCBA', floatDCBA)">{{ floatDCBA }}</span>
+          </div>
         </div>
 
         <div v-if="show64bit" class="value-section">
@@ -413,6 +478,16 @@ async function handleEditKeydown(e: KeyboardEvent) {
             <span class="value-label">Double GH EF CD AB</span>
             <input v-if="editingField === 'doubleReversed'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
             <span v-else class="value-data mono editable" @click="startEdit('doubleReversed', doubleReversed)">{{ doubleReversed }}</span>
+          </div>
+          <div class="value-row">
+            <span class="value-label">Double BA DC FE HG</span>
+            <input v-if="editingField === 'doubleByteSwap'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('doubleByteSwap', doubleByteSwap)">{{ doubleByteSwap }}</span>
+          </div>
+          <div class="value-row">
+            <span class="value-label">Double HG FE DC BA</span>
+            <input v-if="editingField === 'doubleLittleEndian'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else class="value-data mono editable" @click="startEdit('doubleLittleEndian', doubleLittleEndian)">{{ doubleLittleEndian }}</span>
           </div>
         </div>
       </template>

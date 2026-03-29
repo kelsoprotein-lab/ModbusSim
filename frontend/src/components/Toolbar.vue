@@ -161,7 +161,7 @@ async function openTools() {
         <span class="toolbar-label">工具</span>
       </button>
     </div>
-    <div class="toolbar-title">ModbusSim</div>
+    <div class="toolbar-title">ModbusSlave</div>
   </div>
 
   <!-- New Connection Modal -->

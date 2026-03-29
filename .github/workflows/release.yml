@@ -53,7 +53,7 @@ jobs:
         with:
           projectPath: crates/modbussim-app
           tagName: ${{ github.ref_name }}
-          releaseName: 'ModbusSim ${{ github.ref_name }}'
+          releaseName: 'ModbusSlave ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download for your platform.'
           releaseDraft: false
           prerelease: false

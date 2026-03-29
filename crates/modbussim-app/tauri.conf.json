@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ModbusSim",
+  "productName": "ModbusSlave",
   "version": "0.1.0",
-  "identifier": "com.modbussim.app",
+  "identifier": "com.modbusslave.dev",
   "build": {
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "ModbusSim - Modbus TCP Simulator",
+        "title": "ModbusSlave - Modbus TCP Simulator",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
