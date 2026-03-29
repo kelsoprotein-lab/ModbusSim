@@ -1,18 +1,41 @@
 # ModbusSim
 
-A cross-platform Modbus TCP slave simulator built with Tauri, Rust, and Vue 3.
+Cross-platform Modbus TCP simulation suite — includes **ModbusSlave** (从站模拟器) and **ModbusMaster** (主站工具), built with Tauri, Rust, and Vue 3.
+
+## Download
+
+Download the latest release for your platform:
+
+**[Latest Release](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
+
+| Platform | ModbusSlave | ModbusMaster |
+|----------|------------|--------------|
+| macOS (Apple Silicon) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_aarch64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_aarch64.dmg) |
+| macOS (Intel) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64.dmg) |
+| Windows | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64_en-US.msi) | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64_en-US.msi) |
+| Linux | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave-0.1.0-1.x86_64.rpm) | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster-0.1.0-1.x86_64.rpm) |
 
 ## Features
 
+### ModbusSlave — 从站模拟器
+
 - **Modbus TCP Slave Simulation** — Create slave connections on any port, add multiple slave devices per connection
-- **Four Register Types** — Full support for Coils (FC1), Discrete Inputs (FC2), Input Registers (FC4), and Holding Registers (FC3)
-- **Tree Navigation** — Hierarchical view: Connection > Slave Device > Register Group
-- **Register Table** — Scrollable table with address search/filter, inline value editing, Ctrl/Shift multi-select
-- **Value Panel** — Multi-format interpretation: Signed/Unsigned/Hex/Binary (16-bit), Long/Float (32-bit), Double (64-bit)
-- **Random Initialization** — Option to fill registers with random values on creation for quick testing
-- **Address Display** — Toggle between hexadecimal and decimal address display
-- **Communication Log** — Real-time Modbus request/response logging with CSV export
+- **Four Register Types** — Coils (FC01), Discrete Inputs (FC02), Holding Registers (FC03), Input Registers (FC04)
+- **Register Table** — Address search/filter, inline value editing, Ctrl/Shift multi-select
+- **Value Panel** — Multi-format display: Signed/Unsigned/Hex/Binary (16-bit), Long/Float (32-bit), Double (64-bit)
+- **Value Format Toggle** — Switch register display between U16, I16, HEX, BIN
+- **Random Initialization** — Fill registers with random values for quick testing
+- **Communication Log** — Real-time request/response logging with CSV export
 - **Config Persistence** — Export/import application state as JSON
+
+### ModbusMaster — 主站工具
+
+- **Modbus TCP Master** — Connect to multiple Modbus TCP slave devices simultaneously
+- **Scan Groups** — Configure periodic polling with custom intervals per register group
+- **Multi-format Data View** — Unsigned, Signed, Hex, Binary, Float32 (AB CD / CD AB)
+- **Communication Log** — TX/RX logging per connection with function code display
+- **Auto-refresh** — Real-time data updates with event-driven and timer-based refresh
+- **Connection State Tracking** — Live connection status with auto-reconnect detection
 
 ## Tech Stack
 
@@ -25,12 +48,11 @@ A cross-platform Modbus TCP slave simulator built with Tauri, Rust, and Vue 3.
 ```
 ModbusSim/
 ├── crates/
-│   ├── modbussim-core/     # Core Modbus library (slave, register, tools)
-│   └── modbussim-app/      # Tauri app (commands, state)
-└── frontend/               # Vue 3 frontend
-    └── src/
-        ├── components/     # UI components
-        └── composables/    # Shared logic
+│   ├── modbussim-core/      # Core Modbus library (slave, master, register, log)
+│   ├── modbussim-app/       # Tauri app — ModbusSlave
+│   └── modbusmaster-app/    # Tauri app — ModbusMaster
+├── frontend/                # Vue 3 frontend — ModbusSlave
+└── master-frontend/         # Vue 3 frontend — ModbusMaster
 ```
 
 ## Development
@@ -44,14 +66,20 @@ ModbusSim/
 ### Setup
 
 ```bash
-# Install frontend dependencies
+# ModbusSlave
 cd frontend && npm install && cd ..
+cargo tauri dev -p modbussim-app
 
-# Run in development mode
-cargo tauri dev
+# ModbusMaster
+cd master-frontend && npm install && cd ..
+cargo tauri dev -p modbusmaster-app
+```
 
-# Build for production
-cargo tauri build
+### Build
+
+```bash
+cargo tauri build -p modbussim-app
+cargo tauri build -p modbusmaster-app
 ```
 
 ### Run Tests
