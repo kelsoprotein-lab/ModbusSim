@@ -1,10 +1,10 @@
 # ModbusSim
 
-Cross-platform Modbus TCP simulation suite — includes **ModbusSlave** (从站模拟器) and **ModbusMaster** (主站工具), built with Tauri, Rust, and Vue 3.
+Cross-platform Modbus TCP simulation suite — includes **ModbusSlave** and **ModbusMaster**, built with Tauri, Rust, and Vue 3.
+
+[中文文档](README_CN.md)
 
 ## Download
-
-Download the latest release for your platform:
 
 **[Latest Release](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
 
@@ -17,7 +17,7 @@ Download the latest release for your platform:
 
 ## Features
 
-### ModbusSlave — 从站模拟器
+### ModbusSlave — Slave Simulator
 
 - **Modbus TCP Slave Simulation** — Create slave connections on any port, add multiple slave devices per connection
 - **Four Register Types** — Coils (FC01), Discrete Inputs (FC02), Holding Registers (FC03), Input Registers (FC04)
@@ -28,7 +28,7 @@ Download the latest release for your platform:
 - **Communication Log** — Real-time request/response logging with CSV export
 - **Config Persistence** — Export/import application state as JSON
 
-### ModbusMaster — 主站工具
+### ModbusMaster — Master Tool
 
 - **Modbus TCP Master** — Connect to multiple Modbus TCP slave devices simultaneously
 - **Scan Groups** — Configure periodic polling with custom intervals per register group
