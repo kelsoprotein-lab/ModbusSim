@@ -42,19 +42,50 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Install and build frontend
+      # --- ModbusSlave ---
+      - name: Install and build slave frontend
         working-directory: frontend
         run: npm install && npm run build
 
-      - name: Build and release
+      - name: Build and release ModbusSlave
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: crates/modbussim-app
           tagName: ${{ github.ref_name }}
-          releaseName: 'ModbusSlave ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download for your platform.'
+          releaseName: 'ModbusSim ${{ github.ref_name }}'
+          releaseBody: |
+            ## Downloads
+
+            **ModbusSlave** - Modbus TCP 从站模拟器
+            **ModbusMaster** - Modbus TCP 主站工具
+
+            See the assets below to download for your platform.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # --- ModbusMaster ---
+      - name: Install and build master frontend
+        working-directory: master-frontend
+        run: npm install && npm run build
+
+      - name: Build and release ModbusMaster
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/modbusmaster-app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'ModbusSim ${{ github.ref_name }}'
+          releaseBody: |
+            ## Downloads
+
+            **ModbusSlave** - Modbus TCP 从站模拟器
+            **ModbusMaster** - Modbus TCP 主站工具
+
+            See the assets below to download for your platform.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

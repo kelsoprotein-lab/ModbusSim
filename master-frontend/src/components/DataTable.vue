@@ -19,11 +19,23 @@ const searchFilter = ref('')
 const lastUpdated = ref('')
 const errorMsg = ref('')
 
+// Display format for register values
+type DisplayFormat = 'unsigned' | 'signed' | 'hex' | 'binary' | 'float32_abcd' | 'float32_cdab'
+const displayFormat = ref<DisplayFormat>('unsigned')
+
+const formatOptions: { value: DisplayFormat; label: string }[] = [
+  { value: 'unsigned', label: 'Unsigned' },
+  { value: 'signed', label: 'Signed' },
+  { value: 'hex', label: 'Hex' },
+  { value: 'binary', label: 'Binary' },
+  { value: 'float32_abcd', label: 'Float AB CD' },
+  { value: 'float32_cdab', label: 'Float CD AB' },
+]
+
 let unlisten: (() => void) | null = null
 let unlistenError: (() => void) | null = null
 let pollTimer: number | null = null
 
-// Subscribe to poll data events
 async function setupListeners() {
   if (unlisten) { unlisten(); unlisten = null }
   if (unlistenError) { unlistenError(); unlistenError = null }
@@ -54,7 +66,6 @@ async function setupListeners() {
   })
 }
 
-// Timer-based fallback: periodically fetch cached data
 function startPollTimer() {
   stopPollTimer()
   pollTimer = window.setInterval(async () => {
@@ -63,10 +74,7 @@ function startPollTimer() {
 }
 
 function stopPollTimer() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
 async function fetchCachedData() {
@@ -81,22 +89,12 @@ async function fetchCachedData() {
       lastUpdated.value = data.timestamp
       errorMsg.value = ''
     }
-  } catch (_e) {
-    // ignore fetch errors
-  }
+  } catch (_e) { /* ignore */ }
 }
 
-onMounted(async () => {
-  await setupListeners()
-})
+onMounted(async () => { await setupListeners() })
+onUnmounted(() => { unlisten?.(); unlistenError?.(); stopPollTimer() })
 
-onUnmounted(() => {
-  unlisten?.()
-  unlistenError?.()
-  stopPollTimer()
-})
-
-// When scan group changes, reload data + restart timer
 watch([selectedConnectionId, selectedScanGroup], async () => {
   selectedIndices.value.clear()
   values.value = []
@@ -104,17 +102,121 @@ watch([selectedConnectionId, selectedScanGroup], async () => {
   errorMsg.value = ''
   emit('register-select', [])
   stopPollTimer()
-
   if (!selectedConnectionId.value || !selectedScanGroup.value) return
-
-  // Immediately fetch cached data
   await fetchCachedData()
-
-  // Start periodic refresh as fallback
   startPollTimer()
 }, { immediate: true })
 
-// Filtered values
+// --- Format helpers ---
+
+function fmtSigned(v: number): string {
+  const n = v & 0xFFFF
+  return (n >= 0x8000 ? n - 0x10000 : n).toString()
+}
+
+function fmtHex(v: number): string {
+  return '0x' + (v & 0xFFFF).toString(16).toUpperCase().padStart(4, '0')
+}
+
+function fmtBinary(v: number): string {
+  const b = (v & 0xFFFF).toString(2).padStart(16, '0')
+  return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12)}`
+}
+
+function toFloat32(hi: number, lo: number): string {
+  const buf = new ArrayBuffer(4)
+  const view = new DataView(buf)
+  view.setUint16(0, hi & 0xFFFF)
+  view.setUint16(2, lo & 0xFFFF)
+  return view.getFloat32(0).toPrecision(7)
+}
+
+const isBoolScanGroup = computed(() => {
+  if (!selectedScanGroup.value) return false
+  return selectedScanGroup.value.function === 'read_coils' || selectedScanGroup.value.function === 'read_discrete_inputs'
+})
+
+const isFloat = computed(() => displayFormat.value === 'float32_abcd' || displayFormat.value === 'float32_cdab')
+
+// Build display rows: for float32 formats, merge consecutive register pairs
+interface DisplayRow {
+  address: number
+  rawDisplay: string
+  valueDisplay: string
+  is_bool: boolean
+  raw_value: number
+  // original indices for selection
+  sourceIndices: number[]
+}
+
+const displayRows = computed<DisplayRow[]>(() => {
+  const src = filteredValues.value
+  if (src.length === 0) return []
+
+  if (isBoolScanGroup.value) {
+    return src.map((v, i) => ({
+      address: v.address,
+      rawDisplay: '',
+      valueDisplay: '',
+      is_bool: true,
+      raw_value: Number(v.raw_value),
+      sourceIndices: [i],
+    }))
+  }
+
+  const fmt = displayFormat.value
+
+  if (fmt === 'float32_abcd' || fmt === 'float32_cdab') {
+    const rows: DisplayRow[] = []
+    for (let i = 0; i < src.length - 1; i += 2) {
+      const hi = Number(src[i].raw_value)
+      const lo = Number(src[i + 1].raw_value)
+      const fv = fmt === 'float32_abcd' ? toFloat32(hi, lo) : toFloat32(lo, hi)
+      rows.push({
+        address: src[i].address,
+        rawDisplay: `${fmtHex(hi)} ${fmtHex(lo)}`,
+        valueDisplay: fv,
+        is_bool: false,
+        raw_value: hi,
+        sourceIndices: [i, i + 1],
+      })
+    }
+    // odd last register
+    if (src.length % 2 !== 0) {
+      const last = src[src.length - 1]
+      rows.push({
+        address: last.address,
+        rawDisplay: fmtHex(Number(last.raw_value)),
+        valueDisplay: '-',
+        is_bool: false,
+        raw_value: Number(last.raw_value),
+        sourceIndices: [src.length - 1],
+      })
+    }
+    return rows
+  }
+
+  return src.map((v, i) => {
+    const raw = Number(v.raw_value)
+    let valueDisplay: string
+    switch (fmt) {
+      case 'signed': valueDisplay = fmtSigned(raw); break
+      case 'hex': valueDisplay = fmtHex(raw); break
+      case 'binary': valueDisplay = fmtBinary(raw); break
+      default: valueDisplay = raw.toString(); break
+    }
+    return {
+      address: v.address,
+      rawDisplay: raw.toString(),
+      valueDisplay,
+      is_bool: false,
+      raw_value: raw,
+      sourceIndices: [i],
+    }
+  })
+})
+
+// Filtered values (before display format transform)
 const filteredValues = computed(() => {
   if (!searchFilter.value) return values.value
   const q = searchFilter.value.toLowerCase()
@@ -157,7 +259,18 @@ function handleRowClick(index: number, event: MouseEvent) {
 }
 
 function emitSelection() {
-  const selected = filteredValues.value.filter((_, i) => selectedIndices.value.has(i))
+  // Map display row selection back to original values
+  const selected: RegisterValueDto[] = []
+  for (const idx of selectedIndices.value) {
+    const row = displayRows.value[idx]
+    if (row) {
+      for (const si of row.sourceIndices) {
+        if (filteredValues.value[si]) {
+          selected.push(filteredValues.value[si])
+        }
+      }
+    }
+  }
   emit('register-select', selected)
 }
 
@@ -171,6 +284,20 @@ const fcLabel = computed(() => {
   }
   return map[selectedScanGroup.value.function] || selectedScanGroup.value.function
 })
+
+// Column header for value
+const valueColumnLabel = computed(() => {
+  if (isBoolScanGroup.value) return '值'
+  const map: Record<string, string> = {
+    unsigned: 'Unsigned',
+    signed: 'Signed',
+    hex: 'Hex',
+    binary: 'Binary',
+    float32_abcd: 'Float AB CD',
+    float32_cdab: 'Float CD AB',
+  }
+  return map[displayFormat.value] || '值'
+})
 </script>
 
 <template>
@@ -183,6 +310,12 @@ const fcLabel = computed(() => {
       <div class="table-header">
         <span class="header-title">{{ selectedScanGroup.name }} - {{ fcLabel }}</span>
         <span v-if="errorMsg" class="error-badge" :title="errorMsg">ERR</span>
+
+        <!-- Format selector (only for register types, not booleans) -->
+        <select v-if="!isBoolScanGroup" v-model="displayFormat" class="format-select">
+          <option v-for="opt in formatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+
         <input
           v-model="searchFilter"
           class="search-input"
@@ -201,9 +334,7 @@ const fcLabel = computed(() => {
       </div>
 
       <div v-else-if="errorMsg && values.length === 0" class="empty-state">
-        <div>
-          <div class="error-text">{{ errorMsg }}</div>
-        </div>
+        <div class="error-text">{{ errorMsg }}</div>
       </div>
 
       <div v-else class="table-scroll">
@@ -211,27 +342,34 @@ const fcLabel = computed(() => {
           <thead>
             <tr>
               <th class="col-addr">地址</th>
-              <th class="col-raw">原始值</th>
-              <th class="col-display">显示值</th>
+              <th v-if="!isBoolScanGroup && !isFloat" class="col-raw">原始值</th>
+              <th v-if="isFloat" class="col-raw">原始字节</th>
+              <th class="col-display">{{ valueColumnLabel }}</th>
             </tr>
           </thead>
           <tbody>
             <tr
-              v-for="(val, index) in filteredValues"
-              :key="val.address"
+              v-for="(row, index) in displayRows"
+              :key="row.address"
               :class="{ selected: selectedIndices.has(index) }"
               @click="handleRowClick(index, $event)"
             >
-              <td class="col-addr">{{ fmtAddress(val.address) }}</td>
-              <td class="col-raw">
-                <template v-if="val.is_bool">
-                  <span :class="['bool-value', val.raw_value !== 0 ? 'on' : 'off']">
-                    {{ val.raw_value !== 0 ? 'ON' : 'OFF' }}
+              <td class="col-addr">{{ fmtAddress(row.address) }}</td>
+
+              <!-- Bool -->
+              <template v-if="row.is_bool">
+                <td class="col-display">
+                  <span :class="['bool-value', row.raw_value !== 0 ? 'on' : 'off']">
+                    {{ row.raw_value !== 0 ? 'ON' : 'OFF' }}
                   </span>
-                </template>
-                <template v-else>{{ val.raw_value }}</template>
-              </td>
-              <td class="col-display">{{ val.display_value }}</td>
+                </td>
+              </template>
+
+              <!-- Register -->
+              <template v-else>
+                <td class="col-raw">{{ row.rawDisplay }}</td>
+                <td class="col-display">{{ row.valueDisplay }}</td>
+              </template>
             </tr>
           </tbody>
         </table>
@@ -295,9 +433,24 @@ const fcLabel = computed(() => {
   white-space: nowrap;
 }
 
+.format-select {
+  padding: 2px 6px;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.format-select:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
 .search-input {
   flex: 1;
-  max-width: 200px;
+  max-width: 160px;
   padding: 3px 8px;
   background: #313244;
   border: 1px solid #45475a;
@@ -386,11 +539,12 @@ const fcLabel = computed(() => {
 
 .col-raw {
   font-family: monospace;
-  width: 100px;
+  width: 120px;
+  color: #6c7086;
 }
 
 .col-display {
-  font-family: monospace;
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .bool-value {

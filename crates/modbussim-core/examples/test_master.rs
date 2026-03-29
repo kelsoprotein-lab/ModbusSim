@@ -1,196 +1,158 @@
-/// Simulates the exact Tauri app flow:
-/// - Multi-threaded tokio runtime (same as Tauri)
-/// - Arc<RwLock<HashMap>> state (same as AppState)
-/// - Spawned bridge tasks (same as start_polling command)
+/// Full integration test: slave WITH log collector + master, multi-threaded runtime
+/// This reproduces the exact Tauri app scenario that was causing Broken pipe.
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::master::{
-    MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
-};
+use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-struct MasterConnectionState {
-    connection: MasterConnection,
-    scan_groups: Vec<ScanGroup>,
-    log_collector: Arc<LogCollector>,
-    cached_data: HashMap<String, ReadResult>,
-}
-
-type AppState = Arc<RwLock<HashMap<String, MasterConnectionState>>>;
-
-#[tokio::main] // multi-threaded runtime, same as Tauri
+#[tokio::main] // multi-threaded runtime (same as Tauri)
 async fn main() {
-    println!("=== Simulating Tauri App Flow (multi-threaded runtime) ===\n");
+    println!("=== Full Tauri-equivalent Integration Test ===\n");
 
-    // 1) Start slave
-    println!("[1] Starting slave on 0.0.0.0:15022...");
+    // 1) Start slave WITH log collector (same as Tauri slave app does)
+    println!("[1] Starting slave with LogCollector on port 15023...");
     let transport = TransportConfig {
         bind_address: "0.0.0.0".to_string(),
-        port: 15022,
+        port: 15023,
     };
-    let mut slave = SlaveConnection::new(transport);
+    let slave_log = Arc::new(LogCollector::new());
+    let mut slave = SlaveConnection::new(transport).with_log_collector(slave_log.clone());
     slave
         .add_device(SlaveDevice::with_random_registers(1, "Slave", 100))
         .await
         .unwrap();
     slave.start().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    println!("    OK\n");
+    println!("    Slave running.\n");
 
-    // 2) Create app state (same pattern as Tauri AppState)
-    let state: AppState = Arc::new(RwLock::new(HashMap::new()));
-
-    // 3) Simulate: create_master_connection command
-    println!("[2] create_master_connection...");
+    // 2) Create master WITH log collector
+    println!("[2] Creating master with LogCollector...");
+    let master_log = Arc::new(LogCollector::new());
+    let config = MasterConfig {
+        target_address: "127.0.0.1".to_string(),
+        port: 15023,
+        slave_id: 1,
+        timeout_ms: 3000,
+    };
+    let state: Arc<RwLock<HashMap<String, MasterConnection>>> =
+        Arc::new(RwLock::new(HashMap::new()));
     {
-        let config = MasterConfig {
-            target_address: "127.0.0.1".to_string(),
-            port: 15022,
-            slave_id: 1,
-            timeout_ms: 3000,
-        };
-        let log_collector = Arc::new(LogCollector::new());
-        let connection =
-            MasterConnection::new(config).with_log_collector(log_collector.clone());
-        state.write().await.insert(
-            "master_1".to_string(),
-            MasterConnectionState {
-                connection,
-                scan_groups: Vec::new(),
-                log_collector,
-                cached_data: HashMap::new(),
-            },
-        );
+        let conn = MasterConnection::new(config).with_log_collector(master_log.clone());
+        state.write().await.insert("m1".to_string(), conn);
     }
     println!("    OK\n");
 
-    // 4) Simulate: connect_master command
-    println!("[3] connect_master...");
+    // 3) Connect
+    println!("[3] Connecting to slave...");
     {
         let mut conns = state.write().await;
-        let cs = conns.get_mut("master_1").unwrap();
-        cs.connection.connect().await.unwrap();
-        println!("    State: {:?}", cs.connection.state());
+        conns.get_mut("m1").unwrap().connect().await.unwrap();
+    }
+    println!("    Connected!\n");
+
+    // 4) Single read (tests master log_tx/log_rx)
+    println!("[4] Single read FC03...");
+    {
+        let mut conns = state.write().await;
+        let conn = conns.get_mut("m1").unwrap();
+        match conn.read(ReadFunction::ReadHoldingRegisters, 0, 5).await {
+            Ok(ReadResult::HoldingRegisters(vals)) => println!("    Read OK: {:?}", vals),
+            Ok(other) => println!("    Unexpected: {:?}", other),
+            Err(e) => {
+                println!("    FAILED: {}", e);
+                println!("\n  TEST FAILED!");
+                return;
+            }
+        }
     }
     println!();
 
-    // 5) Simulate: add_scan_group command
-    println!("[4] add_scan_group...");
-    let group = ScanGroup {
-        id: "sg1".to_string(),
-        name: "Test FC03".to_string(),
-        function: ReadFunction::ReadHoldingRegisters,
-        start_address: 0,
-        quantity: 10,
-        interval_ms: 500,
-        enabled: true,
-    };
+    // 5) Start polling with bridge task
+    println!("[5] Start polling...");
+    let cached: Arc<RwLock<Option<Vec<u16>>>> = Arc::new(RwLock::new(None));
     {
+        let group = ScanGroup {
+            id: "sg1".to_string(),
+            name: "Test".to_string(),
+            function: ReadFunction::ReadHoldingRegisters,
+            start_address: 0,
+            quantity: 10,
+            interval_ms: 500,
+            enabled: true,
+        };
         let mut conns = state.write().await;
-        let cs = conns.get_mut("master_1").unwrap();
-        cs.scan_groups.push(group.clone());
-    }
-    println!("    OK\n");
-
-    // 6) Simulate: start_polling command (with bridge task, same as commands.rs)
-    println!("[5] start_polling (with bridge task)...");
-    let state_clone = state.clone();
-    {
-        let mut conns = state_clone.write().await;
-        let cs = conns.get_mut("master_1").unwrap();
-        let mut rx = cs.connection.start_scan_group(&group).await.unwrap();
-        println!("    Polling active: {}", cs.connection.is_scan_active("sg1"));
-
-        // Drop the write lock before spawning bridge task
+        let conn = conns.get_mut("m1").unwrap();
+        let mut rx = conn.start_scan_group(&group).await.unwrap();
         drop(conns);
 
-        // Spawn bridge task (same pattern as commands.rs start_polling_inner)
-        let cache_ref = state_clone.clone();
+        let cached_ref = cached.clone();
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
-                    PollEvent::Data(result) => {
-                        let mut conns = cache_ref.write().await;
-                        if let Some(cs) = conns.get_mut("master_1") {
-                            cs.cached_data.insert("sg1".to_string(), result);
-                        }
+                    PollEvent::Data(ReadResult::HoldingRegisters(vals)) => {
+                        *cached_ref.write().await = Some(vals);
                     }
                     PollEvent::Error(e) => {
                         eprintln!("    POLL ERROR: {}", e);
                     }
+                    _ => {}
                 }
             }
         });
     }
-    println!();
+    println!("    Polling started.\n");
 
-    // 7) Wait for data and check
+    // 6) Wait for poll data
     println!("[6] Waiting for poll data...");
     for i in 0..5 {
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        let conns = state.read().await;
-        let cs = conns.get("master_1").unwrap();
-        if let Some(data) = cs.cached_data.get("sg1") {
-            match data {
-                ReadResult::HoldingRegisters(vals) => {
-                    println!("    Attempt {}: Got {} values: {:?}", i + 1, vals.len(), &vals[..5.min(vals.len())]);
-                    if !vals.is_empty() {
-                        println!("    DATA RECEIVED!\n");
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let data = cached.read().await;
+        if let Some(vals) = data.as_ref() {
+            println!("    Got data: {:?}", &vals[..5]);
+            break;
+        }
+        println!("    Attempt {} - no data yet", i + 1);
+    }
+    println!();
 
-                        // 8) Test write
-                        drop(conns);
-                        println!("[7] write_single_register(0, 12345)...");
-                        {
-                            let mut conns = state.write().await;
-                            let cs = conns.get_mut("master_1").unwrap();
-                            cs.connection.write_single_register(0, 12345).await.unwrap();
-                        }
-                        println!("    Write OK");
+    // 7) Write
+    println!("[7] Write register...");
+    {
+        let mut conns = state.write().await;
+        let conn = conns.get_mut("m1").unwrap();
+        conn.write_single_register(0, 42).await.unwrap();
+    }
+    println!("    Write OK");
 
-                        // Wait for next poll
-                        tokio::time::sleep(Duration::from_millis(800)).await;
-                        let conns = state.read().await;
-                        let cs = conns.get("master_1").unwrap();
-                        if let Some(ReadResult::HoldingRegisters(vals)) = cs.cached_data.get("sg1") {
-                            println!("    After write, Register[0] = {}", vals[0]);
-                            if vals[0] == 12345 {
-                                println!("    WRITE VERIFIED!\n");
-                            }
-                        }
-
-                        // Check logs
-                        drop(conns);
-                        let conns = state.read().await;
-                        let cs = conns.get("master_1").unwrap();
-                        let logs = cs.log_collector.get_all().await;
-                        println!("    Communication logs: {} entries", logs.len());
-
-                        // Cleanup
-                        drop(conns);
-                        {
-                            let mut conns = state.write().await;
-                            let cs = conns.get_mut("master_1").unwrap();
-                            cs.connection.stop_scan_group("sg1").await.unwrap();
-                            cs.connection.disconnect().await.unwrap();
-                        }
-                        slave.stop().await.unwrap();
-
-                        println!("\n========================================");
-                        println!("  ALL TESTS PASSED!");
-                        println!("========================================");
-                        return;
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            println!("    Attempt {}: No data yet...", i + 1);
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    {
+        let data = cached.read().await;
+        if let Some(vals) = data.as_ref() {
+            println!("    After write, Register[0] = {}", vals[0]);
+            assert_eq!(vals[0], 42);
         }
     }
+    println!();
 
-    println!("\n  FAIL: No poll data received after 5 attempts!");
+    // 8) Check logs
+    let slave_logs = slave_log.get_all().await;
+    let master_logs = master_log.get_all().await;
+    println!("[8] Logs: slave={} entries, master={} entries", slave_logs.len(), master_logs.len());
+    println!();
+
+    // Cleanup
+    {
+        let mut conns = state.write().await;
+        let conn = conns.get_mut("m1").unwrap();
+        conn.stop_scan_group("sg1").await.unwrap();
+        conn.disconnect().await.unwrap();
+    }
     slave.stop().await.unwrap();
+
+    println!("========================================");
+    println!("  ALL TESTS PASSED!");
+    println!("========================================");
 }

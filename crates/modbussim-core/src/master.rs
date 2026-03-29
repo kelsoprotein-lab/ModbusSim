@@ -407,19 +407,45 @@ impl MasterConnection {
         let start_address = group.start_address;
         let quantity = group.quantity;
         let interval_ms = group.interval_ms;
+        let log_collector = self.log_collector.clone();
 
         let handle = tokio::spawn(async move {
             let interval = Duration::from_millis(interval_ms);
+            let fc = match function {
+                ReadFunction::ReadCoils => FunctionCode::ReadCoils,
+                ReadFunction::ReadDiscreteInputs => FunctionCode::ReadDiscreteInputs,
+                ReadFunction::ReadHoldingRegisters => FunctionCode::ReadHoldingRegisters,
+                ReadFunction::ReadInputRegisters => FunctionCode::ReadInputRegisters,
+            };
             loop {
                 // Check for shutdown
                 if shutdown_rx.try_recv().is_ok() {
                     break;
                 }
 
+                // Log TX
+                if let Some(ref collector) = log_collector {
+                    let entry = LogEntry::new(Direction::Tx, fc, format!("R {} x{}", start_address, quantity));
+                    collector.add(entry).await;
+                }
+
                 let result = {
                     let mut ctx = ctx.lock().await;
                     execute_read(&mut ctx, function, start_address, quantity, timeout).await
                 };
+
+                // Log RX
+                if let Some(ref collector) = log_collector {
+                    let detail = match &result {
+                        Ok(ReadResult::Coils(v)) => format!("{} coils", v.len()),
+                        Ok(ReadResult::DiscreteInputs(v)) => format!("{} inputs", v.len()),
+                        Ok(ReadResult::HoldingRegisters(v)) => format!("{} regs", v.len()),
+                        Ok(ReadResult::InputRegisters(v)) => format!("{} regs", v.len()),
+                        Err(e) => format!("ERR: {}", e),
+                    };
+                    let entry = LogEntry::new(Direction::Rx, fc, detail);
+                    collector.add(entry).await;
+                }
 
                 let event = match result {
                     Ok(data) => PollEvent::Data(data),

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, inject, onMounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry, MasterConnectionInfo } from '../types'
 
@@ -11,6 +11,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'toggle'): void
 }>()
+
+const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 
 const logs = ref<LogEntry[]>([])
 const connectionList = ref<{ id: string; label: string }[]>([])
@@ -24,7 +26,10 @@ async function loadConnections() {
       id: c.id,
       label: `${c.target_address}:${c.port}`,
     }))
-    if (connectionList.value.length > 0 && !selectedConnId.value) {
+    // Auto-select: prefer the currently selected connection in the tree
+    if (selectedConnectionId.value && conns.some(c => c.id === selectedConnectionId.value)) {
+      selectedConnId.value = selectedConnectionId.value
+    } else if (connectionList.value.length > 0 && !selectedConnId.value) {
       selectedConnId.value = connectionList.value[0].id
     }
   } catch (_e) { /* ignore */ }
@@ -64,10 +69,34 @@ async function exportLogs() {
 function formatTimestamp(ts: string): string {
   try {
     const date = new Date(ts)
-    return date.toLocaleTimeString()
+    if (isNaN(date.getTime())) return ts
+    return date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)
   } catch {
     return ts
   }
+}
+
+function formatDirection(dir: string): string {
+  return dir.toUpperCase()
+}
+
+const fcNameMap: Record<string, string> = {
+  read_coils: 'FC01',
+  read_discrete_inputs: 'FC02',
+  read_holding_registers: 'FC03',
+  read_input_registers: 'FC04',
+  write_single_coil: 'FC05',
+  write_single_register: 'FC06',
+  write_multiple_coils: 'FC15',
+  write_multiple_registers: 'FC16',
+}
+
+function formatFunctionCode(fc: string): string {
+  return fcNameMap[fc] || fc
+}
+
+function dirClass(dir: string): string {
+  return dir.toLowerCase()
 }
 
 function startAutoRefresh() {
@@ -86,6 +115,13 @@ function stopAutoRefresh() {
     refreshTimer = null
   }
 }
+
+// When the selected connection in the tree changes, auto-select it in log panel
+watch(selectedConnectionId, (newId) => {
+  if (newId && connectionList.value.some(c => c.id === newId)) {
+    selectedConnId.value = newId
+  }
+})
 
 watch(() => props.expanded, (expanded) => {
   if (expanded) {
@@ -111,6 +147,7 @@ onMounted(async () => {
     <div class="log-header" @click="emit('toggle')">
       <span class="log-toggle">{{ expanded ? '▼' : '▲' }}</span>
       <span class="log-title">通信日志</span>
+      <span v-if="!expanded && logs.length > 0" class="log-count">{{ logs.length }}</span>
       <div class="log-controls" @click.stop>
         <select v-model="selectedConnId" class="conn-select" @change="loadLogs">
           <option v-for="conn in connectionList" :key="conn.id" :value="conn.id">{{ conn.label }}</option>
@@ -122,7 +159,8 @@ onMounted(async () => {
     </div>
 
     <div v-if="expanded" class="log-body">
-      <div v-if="logs.length === 0" class="log-empty">暂无日志</div>
+      <div v-if="connectionList.length === 0" class="log-empty">暂无连接</div>
+      <div v-else-if="logs.length === 0" class="log-empty">暂无日志</div>
       <table v-else class="log-table">
         <thead>
           <tr>
@@ -135,8 +173,8 @@ onMounted(async () => {
         <tbody>
           <tr v-for="(log, idx) in logs" :key="idx">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
-            <td :class="['col-dir', log.direction.toLowerCase()]">{{ log.direction }}</td>
-            <td class="col-func">{{ log.function_code }}</td>
+            <td :class="['col-dir', dirClass(log.direction)]">{{ formatDirection(log.direction) }}</td>
+            <td class="col-func">{{ formatFunctionCode(log.function_code) }}</td>
             <td class="col-detail">{{ log.detail }}</td>
           </tr>
         </tbody>
@@ -151,6 +189,7 @@ onMounted(async () => {
 .log-header { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; cursor: pointer; flex-shrink: 0; background: #1e1e2e; }
 .log-toggle { font-size: 10px; color: #6c7086; width: 16px; text-align: center; }
 .log-title { font-size: 12px; color: #6c7086; }
+.log-count { font-size: 10px; background: #89b4fa; color: #1e1e2e; padding: 0 6px; border-radius: 8px; font-weight: 600; }
 .log-controls { display: flex; gap: 4px; margin-left: auto; }
 .conn-select { padding: 2px 6px; background: #313244; border: 1px solid #45475a; border-radius: 4px; color: #cdd6f4; font-size: 11px; max-width: 160px; }
 .log-btn { padding: 2px 8px; background: transparent; border: 1px solid #45475a; border-radius: 4px; color: #cdd6f4; cursor: pointer; font-size: 11px; }
@@ -160,10 +199,10 @@ onMounted(async () => {
 .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .log-table th, .log-table td { padding: 4px 10px; text-align: left; border-bottom: 1px solid #1e1e2e; }
 .log-table th { background: #181825; color: #6c7086; font-weight: 500; position: sticky; top: 0; }
-.col-time { font-family: monospace; color: #6c7086; width: 80px; }
+.col-time { font-family: monospace; color: #6c7086; width: 100px; }
 .col-dir { font-weight: 600; width: 40px; }
 .col-dir.rx { color: #89b4fa; }
 .col-dir.tx { color: #a6e3a1; }
-.col-func { font-family: monospace; width: 70px; }
+.col-func { font-family: monospace; width: 50px; }
 .col-detail { font-family: monospace; }
 </style>

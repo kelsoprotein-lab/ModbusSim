@@ -341,7 +341,7 @@ impl SlaveService {
     fn log_if_enabled(&self, direction: Direction, fc: FunctionCode, detail: &str) {
         if let Some(collector) = &self.log_collector {
             let entry = LogEntry::new(direction, fc, detail);
-            collector.add_blocking(entry);
+            collector.try_add(entry);
         }
     }
 }

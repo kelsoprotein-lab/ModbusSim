@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, provide } from 'vue'
+import { ref, provide, onMounted, onUnmounted } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import Toolbar from './components/Toolbar.vue'
 import ConnectionTree from './components/ConnectionTree.vue'
 import DataTable from './components/DataTable.vue'
@@ -43,6 +44,28 @@ function refreshData() {
 provide('refreshData', refreshData)
 
 provide(dialogKey, { showAlert, showConfirm, showPrompt })
+
+// Listen for backend connection state events → auto-refresh tree & update state
+let unlistenConnState: (() => void) | null = null
+let unlistenPollError: (() => void) | null = null
+
+onMounted(async () => {
+  unlistenConnState = await listen<{ id: string; state: string }>('master-connection-state', (event) => {
+    const { id, state } = event.payload
+    if (selectedConnectionId.value === id) {
+      selectedConnectionState.value = state
+    }
+    refreshTree()
+  })
+  unlistenPollError = await listen<{ connection_id: string; error: string }>('master-poll-error', () => {
+    refreshTree()
+  })
+})
+
+onUnmounted(() => {
+  unlistenConnState?.()
+  unlistenPollError?.()
+})
 
 function handleConnectionSelect(id: string, state: string) {
   selectedConnectionId.value = id

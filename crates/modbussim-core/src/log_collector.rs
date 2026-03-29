@@ -40,12 +40,25 @@ impl LogCollector {
     }
 
     /// Add a log entry (blocking version).
+    /// WARNING: panics if called from within an async tokio runtime.
+    /// Use `try_add` for sync contexts within an async runtime.
     pub fn add_blocking(&self, entry: LogEntry) {
         let mut entries = self.entries.blocking_write();
         if entries.len() >= MAX_LOG_ENTRIES {
             entries.remove(0);
         }
         entries.push(entry);
+    }
+
+    /// Add a log entry (non-blocking, safe to call from sync code within async runtime).
+    /// Silently drops the entry if the lock cannot be acquired immediately.
+    pub fn try_add(&self, entry: LogEntry) {
+        if let Ok(mut entries) = self.entries.try_write() {
+            if entries.len() >= MAX_LOG_ENTRIES {
+                entries.remove(0);
+            }
+            entries.push(entry);
+        }
     }
 
     /// Get all log entries.

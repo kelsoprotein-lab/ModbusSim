@@ -42,6 +42,29 @@ provide('addrMode', addrMode)
 const showAddModal = ref(false)
 const showBatchModal = ref(false)
 
+type ValueFormat = 'dec' | 'signed' | 'hex' | 'bin'
+const valueFormat = ref<ValueFormat>('dec')
+const VALUE_FORMAT_CYCLE: ValueFormat[] = ['dec', 'signed', 'hex', 'bin']
+const VALUE_FORMAT_LABELS: Record<ValueFormat, string> = { dec: 'U16', signed: 'I16', hex: 'HEX', bin: 'BIN' }
+
+function cycleValueFormat() {
+  const idx = VALUE_FORMAT_CYCLE.indexOf(valueFormat.value)
+  valueFormat.value = VALUE_FORMAT_CYCLE[(idx + 1) % VALUE_FORMAT_CYCLE.length]
+}
+
+function formatValue(raw: number): string {
+  const v = raw & 0xFFFF
+  switch (valueFormat.value) {
+    case 'signed': return (v >= 0x8000 ? v - 0x10000 : v).toString()
+    case 'hex': return '0x' + v.toString(16).toUpperCase().padStart(4, '0')
+    case 'bin': {
+      const b = v.toString(2).padStart(16, '0')
+      return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12, 16)}`
+    }
+    default: return v.toString()
+  }
+}
+
 function onRegisterSaved() {
   registerRefreshKey.value++
 }
@@ -330,6 +353,9 @@ function formatRegType(type: string): string {
       <button class="addr-mode-btn" @click="toggleAddrMode" :title="addrMode === 'hex' ? '切换为十进制' : '切换为十六进制'">
         {{ addrMode === 'hex' ? 'HEX' : 'DEC' }}
       </button>
+      <button class="addr-mode-btn" @click="cycleValueFormat" title="切换值显示格式">
+        {{ VALUE_FORMAT_LABELS[valueFormat] }}
+      </button>
       <button
         class="add-reg-btn"
         :disabled="!selectedConnectionId || selectedSlaveId === null"
@@ -397,7 +423,7 @@ function formatRegType(type: string): string {
                 >
                   {{ getValue(reg) ? 'ON' : 'OFF' }}
                 </span>
-                <span v-else class="num-value">{{ getValue(reg) }}</span>
+                <span v-else class="num-value">{{ formatValue(getValue(reg)) }}</span>
               </template>
             </td>
             <td class="col-comment" @contextmenu.prevent="showContextMenu($event, reg)">
