@@ -133,12 +133,26 @@ const doubleReversed = computed(() => {
   return view.getFloat64(0).toPrecision(15)
 })
 
+const doubleByteSwap = computed(() => {
+  if (!show64bit.value) return '-'
+  const buf = new ArrayBuffer(8)
+  const view = new DataView(buf)
+  for (let i = 0; i < 4; i++) view.setUint16(i * 2, swapBytes16(Number(sortedRegs.value[i].raw_value) & 0xFFFF))
+  return view.getFloat64(0).toPrecision(15)
+})
+
+const doubleLittleEndian = computed(() => {
+  if (!show64bit.value) return '-'
+  const buf = new ArrayBuffer(8)
+  const view = new DataView(buf)
+  for (let i = 0; i < 4; i++) view.setUint16(i * 2, swapBytes16(Number(sortedRegs.value[3 - i].raw_value) & 0xFFFF))
+  return view.getFloat64(0).toPrecision(15)
+})
+
 // --- Editing ---
 
 function startEdit(field: string, currentValue: string) {
-  // Only allow editing for writable types (holding registers, coils)
-  const fn = selectedScanGroup.value?.function || ''
-  if (fn !== 'read_holding_registers' && fn !== 'read_coils') return
+  if (!isWritable.value) return
 
   editReady.value = false
   editingField.value = field
@@ -151,7 +165,8 @@ function cancelEdit() {
   editReady.value = false
 }
 
-watch(selectedRegisters, () => cancelEdit())
+// Only cancel edit when selected register addresses change, not on poll value updates
+watch(() => selectedRegisters.value.map(r => r.address).join(','), () => cancelEdit())
 
 function reverseParseField(field: string, input: string): { address: number; value: number }[] | null {
   const regs = sortedRegs.value
@@ -190,14 +205,29 @@ function reverseParseField(field: string, input: string): { address: number; val
     return [{ address: regs[0].address, value: r0 }, { address: regs[1].address, value: r1 }]
   }
 
+  // 64-bit Double
+  if (field === 'double' || field === 'doubleReversed' || field === 'doubleByteSwap' || field === 'doubleLittleEndian') {
+    if (regs.length < 4) return null
+    const n = parseFloat(input); if (isNaN(n)) return null
+    const buf = new ArrayBuffer(8); const view = new DataView(buf); view.setFloat64(0, n)
+    const w = [view.getUint16(0), view.getUint16(2), view.getUint16(4), view.getUint16(6)]
+    let vals: number[]
+    if (field === 'double') vals = [w[0], w[1], w[2], w[3]]
+    else if (field === 'doubleReversed') vals = [w[3], w[2], w[1], w[0]]
+    else if (field === 'doubleByteSwap') vals = [swapBytes16(w[0]), swapBytes16(w[1]), swapBytes16(w[2]), swapBytes16(w[3])]
+    else vals = [swapBytes16(w[3]), swapBytes16(w[2]), swapBytes16(w[1]), swapBytes16(w[0])]
+    return vals.map((v, i) => ({ address: regs[i].address, value: v }))
+  }
+
   return null
 }
 
 async function writeRegisters(writes: { address: number; value: number }[]) {
   if (!selectedConnectionId.value) return
-  const fn = selectedScanGroup.value?.function || ''
+  const category = writeCategory.value
+  if (!category) return
   try {
-    if (fn === 'read_holding_registers') {
+    if (category === 'register') {
       if (writes.length === 1) {
         await invoke('write_single_register', {
           connectionId: selectedConnectionId.value,
@@ -209,7 +239,7 @@ async function writeRegisters(writes: { address: number; value: number }[]) {
           request: { address: writes[0].address, values: writes.map(w => w.value) }
         })
       }
-    } else if (fn === 'read_coils') {
+    } else if (category === 'coil') {
       if (writes.length === 1) {
         await invoke('write_single_coil', {
           connectionId: selectedConnectionId.value,
@@ -255,6 +285,14 @@ async function handleEditKeydown(e: KeyboardEvent) {
 const isWritable = computed(() => {
   const fn = selectedScanGroup.value?.function || ''
   return fn === 'read_holding_registers' || fn === 'read_coils'
+      || fn === 'read_input_registers' || fn === 'read_discrete_inputs'
+})
+
+const writeCategory = computed<'register' | 'coil' | null>(() => {
+  const fn = selectedScanGroup.value?.function || ''
+  if (fn === 'read_holding_registers' || fn === 'read_input_registers') return 'register'
+  if (fn === 'read_coils' || fn === 'read_discrete_inputs') return 'coil'
+  return null
 })
 </script>
 
@@ -268,7 +306,8 @@ const isWritable = computed(() => {
 
     <template v-else>
       <div class="panel-title">{{ panelTitle }}</div>
-      <div v-if="!isWritable" class="panel-hint">只读寄存器，不可编辑</div>
+      <div v-if="selectedScanGroup?.function === 'read_input_registers'" class="panel-hint">写入将使用 FC06/FC16</div>
+      <div v-else-if="selectedScanGroup?.function === 'read_discrete_inputs'" class="panel-hint">写入将使用 FC05/FC15</div>
 
       <!-- Bool type -->
       <template v-if="isBoolType">
@@ -336,9 +375,19 @@ const isWritable = computed(() => {
         </div>
 
         <div v-if="show64bit" class="value-section">
-          <div class="section-title">64-bit</div>
-          <div class="value-row"><span class="value-label">Double AB CD EF GH</span><span class="value-data mono">{{ doubleValue }}</span></div>
-          <div class="value-row"><span class="value-label">Double GH EF CD AB</span><span class="value-data mono">{{ doubleReversed }}</span></div>
+          <div class="section-title">64-bit ({{ sortedRegs.slice(0, 4).map(r => fmtAddress(r.address)).join(' + ') }})</div>
+          <div class="value-row"><span class="value-label">Double AB CD EF GH</span>
+            <input v-if="editingField === 'double'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else :class="['value-data', 'mono', { editable: isWritable }]" @click="startEdit('double', doubleValue)">{{ doubleValue }}</span></div>
+          <div class="value-row"><span class="value-label">Double GH EF CD AB</span>
+            <input v-if="editingField === 'doubleReversed'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else :class="['value-data', 'mono', { editable: isWritable }]" @click="startEdit('doubleReversed', doubleReversed)">{{ doubleReversed }}</span></div>
+          <div class="value-row"><span class="value-label">Double BA DC FE HG</span>
+            <input v-if="editingField === 'doubleByteSwap'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else :class="['value-data', 'mono', { editable: isWritable }]" @click="startEdit('doubleByteSwap', doubleByteSwap)">{{ doubleByteSwap }}</span></div>
+          <div class="value-row"><span class="value-label">Double HG FE DC BA</span>
+            <input v-if="editingField === 'doubleLittleEndian'" v-focus v-model="editValue" class="panel-edit-input" @blur="onBlur" @keydown="handleEditKeydown" />
+            <span v-else :class="['value-data', 'mono', { editable: isWritable }]" @click="startEdit('doubleLittleEndian', doubleLittleEndian)">{{ doubleLittleEndian }}</span></div>
         </div>
       </template>
     </template>

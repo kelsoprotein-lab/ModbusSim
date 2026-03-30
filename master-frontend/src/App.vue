@@ -81,6 +81,15 @@ function handleScanGroupSelect(connectionId: string, group: ScanGroupInfo) {
 }
 
 function handleRegisterSelect(regs: RegisterValueDto[]) {
+  const prev = selectedRegisters.value
+  // Same selection (same addresses) → update values in-place to avoid disrupting active edits
+  if (regs.length === prev.length && regs.every((r, i) => r.address === prev[i].address)) {
+    for (let i = 0; i < regs.length; i++) {
+      prev[i].raw_value = regs[i].raw_value
+      prev[i].display_value = regs[i].display_value
+    }
+    return
+  }
   selectedRegisters.value = regs
 }
 

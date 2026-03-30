@@ -27,8 +27,8 @@ let refreshTimer: number | null = null
 
 async function loadConnections() {
   try {
-    const slaves = await invoke<{ id: string }[]>('list_slave_connections')
-    connectionList.value = slaves.map(s => ({ id: s.id, label: s.id }))
+    const slaves = await invoke<{ id: string; bind_address: string; port: number }[]>('list_slave_connections')
+    connectionList.value = slaves.map(s => ({ id: s.id, label: `${s.bind_address}:${s.port}` }))
     if (connectionList.value.length > 0 && !selectedConnId.value) {
       selectedConnId.value = connectionList.value[0].id
     }
@@ -109,8 +109,10 @@ function stopAutoRefresh() {
   }
 }
 
-watch(() => props.expanded, (expanded) => {
+watch(() => props.expanded, async (expanded) => {
   if (expanded) {
+    await loadConnections()
+    if (selectedConnId.value) await loadLogs()
     startAutoRefresh()
   } else {
     stopAutoRefresh()

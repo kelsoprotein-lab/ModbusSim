@@ -356,8 +356,9 @@ impl Service for SlaveService {
         let SlaveRequest { slave, request } = req;
         let devices = self.devices.clone();
 
-        // Log inbound request
-        if let Some(fc) = Self::get_function_code(&request) {
+        // Log inbound request & save fc for response log
+        let fc = Self::get_function_code(&request);
+        if let Some(fc) = fc {
             let detail = Self::format_request_detail(&request);
             self.log_if_enabled(Direction::Rx, fc, &detail);
         }
@@ -387,6 +388,15 @@ impl Service for SlaveService {
                 Err(_) => Some(Err(ExceptionCode::ServerDeviceBusy)),
             }
         };
+
+        // Log outbound response
+        if let Some(fc) = fc {
+            match &result {
+                Some(Ok(_)) => self.log_if_enabled(Direction::Tx, fc, "OK"),
+                Some(Err(exc)) => self.log_if_enabled(Direction::Tx, fc, &format!("ERR: {:?}", exc)),
+                None => {}
+            }
+        }
 
         match result {
             Some(Ok(response)) => future::ready(Ok(Some(response))),
@@ -429,26 +439,34 @@ fn handle_write(
     request: Request<'static>,
 ) -> Result<Response, ExceptionCode> {
     match request {
-        // FC05: Write Single Coil
+        // FC05: Write Single Coil (also mirror to discrete_inputs for simulator)
         Request::WriteSingleCoil(addr, value) => {
             register_map.write_coil(addr, value);
+            register_map.discrete_inputs.insert(addr, value);
             Ok(Response::WriteSingleCoil(addr, value))
         }
-        // FC06: Write Single Register
+        // FC06: Write Single Register (also mirror to input_registers for simulator)
         Request::WriteSingleRegister(addr, value) => {
             register_map.write_holding_register(addr, value);
+            register_map.input_registers.insert(addr, value);
             Ok(Response::WriteSingleRegister(addr, value))
         }
-        // FC15: Write Multiple Coils
+        // FC15: Write Multiple Coils (also mirror to discrete_inputs for simulator)
         Request::WriteMultipleCoils(addr, values) => {
             let quantity = values.len() as u16;
             register_map.write_coils(addr, &values);
+            for (i, &val) in values.iter().enumerate() {
+                register_map.discrete_inputs.insert(addr + i as u16, val);
+            }
             Ok(Response::WriteMultipleCoils(addr, quantity))
         }
-        // FC16: Write Multiple Registers
+        // FC16: Write Multiple Registers (also mirror to input_registers for simulator)
         Request::WriteMultipleRegisters(addr, values) => {
             let quantity = values.len() as u16;
             register_map.write_holding_registers(addr, &values);
+            for (i, &val) in values.iter().enumerate() {
+                register_map.input_registers.insert(addr + i as u16, val);
+            }
             Ok(Response::WriteMultipleRegisters(addr, quantity))
         }
         _ => Err(ExceptionCode::IllegalFunction),

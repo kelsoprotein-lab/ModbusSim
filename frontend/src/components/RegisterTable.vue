@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, watch, computed, nextTick, provide, type Ref } from 'vue'
+import { ref, inject, watch, computed, nextTick, provide, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
@@ -135,13 +135,21 @@ async function loadRegisters() {
   isLoading.value = false
 }
 
-watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], () => {
+watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], async () => {
   clearSelection()
-  loadRegisters()
+  stopAutoRefresh()
+  await loadRegisters()
+  if (registers.value.length > 0) startAutoRefresh()
 })
 
-watch(registerRefreshKey, async () => {
+watch(registerRefreshKey, () => refreshValues())
+
+// Auto-refresh register values every 2s to pick up external writes (e.g. from Master)
+let refreshTimer: number | null = null
+
+async function refreshValues() {
   if (!selectedConnectionId.value || selectedSlaveId.value === null) return
+  if (registers.value.length === 0) return
   for (const reg of registers.value) {
     try {
       const result = await invoke<{ address: number; value: number }>('read_register', {
@@ -154,7 +162,18 @@ watch(registerRefreshKey, async () => {
     } catch { /* skip */ }
   }
   emitSelection()
-})
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  refreshTimer = window.setInterval(refreshValues, 2000)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+}
+
+onUnmounted(() => stopAutoRefresh())
 
 function clearSelection() {
   selectedRows.value = []
