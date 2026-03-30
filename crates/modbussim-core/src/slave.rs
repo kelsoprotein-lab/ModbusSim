@@ -406,28 +406,61 @@ impl Service for SlaveService {
     }
 }
 
+/// Validate quantity and address overflow for read/write requests.
+fn validate_quantity(addr: u16, quantity: u16, max_quantity: u16) -> Result<(), ExceptionCode> {
+    if quantity == 0 || quantity > max_quantity {
+        return Err(ExceptionCode::IllegalDataValue);
+    }
+    if (addr as u32) + (quantity as u32) > 65536 {
+        return Err(ExceptionCode::IllegalDataAddress);
+    }
+    Ok(())
+}
+
 /// Handle read-only Modbus requests.
 fn handle_read(
     register_map: &RegisterMap,
     request: Request<'static>,
 ) -> Result<Response, ExceptionCode> {
     match request {
-        // FC01: Read Coils
+        // FC01: Read Coils (max 2000)
         Request::ReadCoils(addr, quantity) => {
+            validate_quantity(addr, quantity, 2000)?;
+            if !register_map.has_all_coils(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
             Ok(Response::ReadCoils(register_map.read_coils(addr, quantity)))
         }
-        // FC02: Read Discrete Inputs
-        Request::ReadDiscreteInputs(addr, quantity) => Ok(Response::ReadDiscreteInputs(
-            register_map.read_discrete_inputs(addr, quantity),
-        )),
-        // FC03: Read Holding Registers
-        Request::ReadHoldingRegisters(addr, quantity) => Ok(Response::ReadHoldingRegisters(
-            register_map.read_holding_registers(addr, quantity),
-        )),
-        // FC04: Read Input Registers
-        Request::ReadInputRegisters(addr, quantity) => Ok(Response::ReadInputRegisters(
-            register_map.read_input_registers(addr, quantity),
-        )),
+        // FC02: Read Discrete Inputs (max 2000)
+        Request::ReadDiscreteInputs(addr, quantity) => {
+            validate_quantity(addr, quantity, 2000)?;
+            if !register_map.has_all_discrete_inputs(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
+            Ok(Response::ReadDiscreteInputs(
+                register_map.read_discrete_inputs(addr, quantity),
+            ))
+        }
+        // FC03: Read Holding Registers (max 125)
+        Request::ReadHoldingRegisters(addr, quantity) => {
+            validate_quantity(addr, quantity, 125)?;
+            if !register_map.has_all_holding_registers(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
+            Ok(Response::ReadHoldingRegisters(
+                register_map.read_holding_registers(addr, quantity),
+            ))
+        }
+        // FC04: Read Input Registers (max 125)
+        Request::ReadInputRegisters(addr, quantity) => {
+            validate_quantity(addr, quantity, 125)?;
+            if !register_map.has_all_input_registers(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
+            Ok(Response::ReadInputRegisters(
+                register_map.read_input_registers(addr, quantity),
+            ))
+        }
         // Unsupported function codes
         _ => Err(ExceptionCode::IllegalFunction),
     }
@@ -441,28 +474,42 @@ fn handle_write(
     match request {
         // FC05: Write Single Coil (also mirror to discrete_inputs for simulator)
         Request::WriteSingleCoil(addr, value) => {
+            if !register_map.has_coil(addr) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
             register_map.write_coil(addr, value);
             register_map.discrete_inputs.insert(addr, value);
             Ok(Response::WriteSingleCoil(addr, value))
         }
         // FC06: Write Single Register (also mirror to input_registers for simulator)
         Request::WriteSingleRegister(addr, value) => {
+            if !register_map.has_holding_register(addr) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
             register_map.write_holding_register(addr, value);
             register_map.input_registers.insert(addr, value);
             Ok(Response::WriteSingleRegister(addr, value))
         }
-        // FC15: Write Multiple Coils (also mirror to discrete_inputs for simulator)
+        // FC15: Write Multiple Coils (max 1968, also mirror to discrete_inputs)
         Request::WriteMultipleCoils(addr, values) => {
             let quantity = values.len() as u16;
+            validate_quantity(addr, quantity, 1968)?;
+            if !register_map.has_all_coils(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
             register_map.write_coils(addr, &values);
             for (i, &val) in values.iter().enumerate() {
                 register_map.discrete_inputs.insert(addr + i as u16, val);
             }
             Ok(Response::WriteMultipleCoils(addr, quantity))
         }
-        // FC16: Write Multiple Registers (also mirror to input_registers for simulator)
+        // FC16: Write Multiple Registers (max 123, also mirror to input_registers)
         Request::WriteMultipleRegisters(addr, values) => {
             let quantity = values.len() as u16;
+            validate_quantity(addr, quantity, 123)?;
+            if !register_map.has_all_holding_registers(addr, quantity) {
+                return Err(ExceptionCode::IllegalDataAddress);
+            }
             register_map.write_holding_registers(addr, &values);
             for (i, &val) in values.iter().enumerate() {
                 register_map.input_registers.insert(addr + i as u16, val);

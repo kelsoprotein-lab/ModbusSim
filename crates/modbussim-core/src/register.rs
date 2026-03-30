@@ -147,6 +147,27 @@ impl RegisterMap {
             .map(|addr| self.input_registers.get(&addr).copied().unwrap_or(0))
             .collect()
     }
+
+    // --- Address validation ---
+
+    pub fn has_all_coils(&self, start: u16, count: u16) -> bool {
+        (start..start + count).all(|a| self.coils.contains_key(&a))
+    }
+
+    pub fn has_all_discrete_inputs(&self, start: u16, count: u16) -> bool {
+        (start..start + count).all(|a| self.discrete_inputs.contains_key(&a))
+    }
+
+    pub fn has_all_holding_registers(&self, start: u16, count: u16) -> bool {
+        (start..start + count).all(|a| self.holding_registers.contains_key(&a))
+    }
+
+    pub fn has_all_input_registers(&self, start: u16, count: u16) -> bool {
+        (start..start + count).all(|a| self.input_registers.contains_key(&a))
+    }
+
+    pub fn has_coil(&self, addr: u16) -> bool { self.coils.contains_key(&addr) }
+    pub fn has_holding_register(&self, addr: u16) -> bool { self.holding_registers.contains_key(&addr) }
 }
 
 // --- Data type encoding/decoding with endian support ---
