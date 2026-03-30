@@ -35,6 +35,10 @@ pub fn run() {
             commands::get_communication_logs,
             commands::clear_communication_logs,
             commands::export_logs_csv,
+            // Scan commands
+            commands::start_slave_id_scan,
+            commands::start_register_scan,
+            commands::cancel_scan,
             // Tool commands
             commands::convert_plc_to_modbus,
             commands::convert_modbus_to_plc,

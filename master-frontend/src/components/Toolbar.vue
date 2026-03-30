@@ -3,6 +3,7 @@ import { inject, ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import ScanDialog from './ScanDialog.vue'
 
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
@@ -30,6 +31,7 @@ const scanGroupForm = ref({
 
 // Write modal
 const showWriteModal = ref(false)
+const showScanDialog = ref(false)
 const writeForm = ref({
   function: 'write_single_register',
   address: 0,
@@ -206,6 +208,9 @@ const hasConnection = () => selectedConnectionId.value !== null
       <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="showWriteModal = true">
         写入
       </button>
+      <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="showScanDialog = true">
+        扫描
+      </button>
     </div>
 
     <div class="toolbar-spacer"></div>
@@ -314,6 +319,8 @@ const hasConnection = () => selectedConnectionId.value !== null
       </div>
     </div>
   </Teleport>
+
+  <ScanDialog v-if="showScanDialog" @close="showScanDialog = false" />
 </template>
 
 <style scoped>

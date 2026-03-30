@@ -1,18 +1,22 @@
 //! Tauri commands for ModbusMaster.
 
 use crate::state::{
-    AppState, CachedPollData, ConnectionStateEvent, MasterConnectionInfo, MasterConnectionState,
-    PollDataPayload, PollErrorPayload, ReadResultDto, RegisterValueDto, ScanGroupInfo,
+    AppState, CachedPollData, ConnectionStateEvent, FoundRegisterDto, MasterConnectionInfo,
+    MasterConnectionState, PollDataPayload, PollErrorPayload, ReadResultDto, RegisterScanEvent,
+    RegisterValueDto, ScanGroupInfo, SlaveIdScanEvent,
 };
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::master::{
-    MasterConfig, MasterConnection, ReadFunction, ReadResult, ScanGroup,
+    scan_registers_with_ctx, scan_slave_ids_with_ctx, MasterConfig, MasterConnection, ReadFunction,
+    ReadResult, ScanGroup,
 };
 use modbussim_core::tools;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+use tokio::sync::{mpsc, oneshot};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -279,6 +283,7 @@ pub struct AddScanGroupRequest {
     pub quantity: u16,
     pub interval_ms: u64,
     pub enabled: Option<bool>,
+    pub slave_id: Option<u8>,
 }
 
 #[tauri::command]
@@ -298,6 +303,7 @@ pub async fn add_scan_group(
         quantity: request.quantity,
         interval_ms: request.interval_ms,
         enabled: request.enabled.unwrap_or(true),
+        slave_id: request.slave_id,
     };
 
     let mut conns = state.master_connections.write().await;
@@ -314,6 +320,7 @@ pub async fn add_scan_group(
         interval_ms: group.interval_ms,
         enabled: group.enabled,
         is_polling: false,
+        slave_id: group.slave_id,
     };
 
     conn_state.scan_groups.push(group);
@@ -378,6 +385,7 @@ pub async fn update_scan_group(
         interval_ms: group.interval_ms,
         enabled: group.enabled,
         is_polling,
+        slave_id: group.slave_id,
     })
 }
 
@@ -426,6 +434,7 @@ pub async fn list_scan_groups(
             interval_ms: g.interval_ms,
             enabled: g.enabled,
             is_polling: conn_state.connection.is_scan_active(&g.id),
+            slave_id: g.slave_id,
         })
         .collect())
 }
@@ -852,6 +861,198 @@ pub fn calculate_crc16(data: Vec<u8>) -> u16 {
 #[tauri::command]
 pub fn calculate_lrc(data: Vec<u8>) -> u8 {
     tools::lrc(&data)
+}
+
+// ---------------------------------------------------------------------------
+// Scan Commands
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SlaveIdScanRequest {
+    pub start_id: Option<u8>,
+    pub end_id: Option<u8>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn start_slave_id_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+    request: SlaveIdScanRequest,
+) -> Result<(), String> {
+    let timeout_ms = request.timeout_ms.unwrap_or(500);
+    let start_id = request.start_id.unwrap_or(1);
+    let end_id = request.end_id.unwrap_or(247);
+
+    // Extract ctx handle and original slave_id (short lock)
+    let (ctx_handle, original_slave_id) = {
+        let conns = state.master_connections.read().await;
+        let cs = conns
+            .get(&connection_id)
+            .ok_or_else(|| format!("connection {} not found", connection_id))?;
+        let ctx = cs.connection.get_ctx_handle().map_err(|e| e.to_string())?;
+        (ctx, cs.connection.config.slave_id)
+    };
+
+    // Create cancel channel
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let scan_key = format!("{}:slave_scan", connection_id);
+    state.active_scans.write().await.insert(scan_key.clone(), cancel_tx);
+
+    let (progress_tx, mut progress_rx) = mpsc::channel(32);
+    let conn_id = connection_id.clone();
+    let active_scans = state.active_scans.clone();
+    let scan_key_clone = scan_key.clone();
+
+    // Spawn scan task
+    tokio::spawn(async move {
+        scan_slave_ids_with_ctx(
+            ctx_handle,
+            original_slave_id,
+            start_id,
+            end_id,
+            Duration::from_millis(timeout_ms),
+            cancel_rx,
+            progress_tx,
+        )
+        .await;
+    });
+
+    // Spawn bridge task to forward progress as Tauri events
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            let _ = app.emit(
+                "scan-slave-progress",
+                SlaveIdScanEvent {
+                    connection_id: conn_id.clone(),
+                    current_id: progress.current_id,
+                    total: progress.total,
+                    found_ids: progress.found_ids,
+                    done: progress.done,
+                    cancelled: progress.cancelled,
+                },
+            );
+            if progress.done || progress.cancelled {
+                break;
+            }
+        }
+        // Cleanup
+        active_scans.write().await.remove(&scan_key_clone);
+    });
+
+    Ok(())
+}
+
+fn parse_read_function(s: &str) -> Result<ReadFunction, String> {
+    match s {
+        "read_coils" => Ok(ReadFunction::ReadCoils),
+        "read_discrete_inputs" => Ok(ReadFunction::ReadDiscreteInputs),
+        "read_holding_registers" => Ok(ReadFunction::ReadHoldingRegisters),
+        "read_input_registers" => Ok(ReadFunction::ReadInputRegisters),
+        _ => Err(format!("unknown function: {}", s)),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterScanRequest {
+    pub function: String,
+    pub start_address: u16,
+    pub end_address: u16,
+    pub chunk_size: Option<u16>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn start_register_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+    request: RegisterScanRequest,
+) -> Result<(), String> {
+    let function = parse_read_function(&request.function)?;
+    let chunk_size = request.chunk_size.unwrap_or(10);
+    let timeout_ms = request.timeout_ms.unwrap_or(1000);
+
+    // Extract ctx handle (short lock)
+    let ctx_handle = {
+        let conns = state.master_connections.read().await;
+        let cs = conns
+            .get(&connection_id)
+            .ok_or_else(|| format!("connection {} not found", connection_id))?;
+        cs.connection.get_ctx_handle().map_err(|e| e.to_string())?
+    };
+
+    // Create cancel channel
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let scan_key = format!("{}:register_scan", connection_id);
+    state.active_scans.write().await.insert(scan_key.clone(), cancel_tx);
+
+    let (progress_tx, mut progress_rx) = mpsc::channel(32);
+    let conn_id = connection_id.clone();
+    let active_scans = state.active_scans.clone();
+    let scan_key_clone = scan_key.clone();
+    let end_address = request.end_address;
+
+    // Spawn scan task
+    tokio::spawn(async move {
+        scan_registers_with_ctx(
+            ctx_handle,
+            function,
+            request.start_address,
+            end_address,
+            chunk_size,
+            Duration::from_millis(timeout_ms),
+            cancel_rx,
+            progress_tx,
+        )
+        .await;
+    });
+
+    // Spawn bridge task
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            let _ = app.emit(
+                "scan-register-progress",
+                RegisterScanEvent {
+                    connection_id: conn_id.clone(),
+                    current_address: progress.current_address,
+                    end_address: progress.end_address,
+                    found_count: progress.found_registers.len() as u16,
+                    found_registers: progress
+                        .found_registers
+                        .iter()
+                        .map(|r| FoundRegisterDto {
+                            address: r.address,
+                            value: r.value,
+                        })
+                        .collect(),
+                    done: progress.done,
+                    cancelled: progress.cancelled,
+                },
+            );
+            if progress.done || progress.cancelled {
+                break;
+            }
+        }
+        active_scans.write().await.remove(&scan_key_clone);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_scan(
+    state: State<'_, AppState>,
+    connection_id: String,
+    scan_type: String,
+) -> Result<(), String> {
+    let scan_key = format!("{}:{}", connection_id, scan_type);
+    let sender = state.active_scans.write().await.remove(&scan_key);
+    if let Some(tx) = sender {
+        let _ = tx.send(());
+    }
+    Ok(())
 }
 
 #[tauri::command]

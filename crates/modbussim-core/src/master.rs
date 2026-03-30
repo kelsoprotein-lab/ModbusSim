@@ -93,6 +93,9 @@ pub struct ScanGroup {
     pub quantity: u16,
     pub interval_ms: u64,
     pub enabled: bool,
+    /// Optional slave ID override. If None, uses the connection's default slave_id.
+    #[serde(default)]
+    pub slave_id: Option<u8>,
 }
 
 /// Handle for a running poll task.
@@ -179,6 +182,11 @@ impl MasterConnection {
     }
 
     fn get_ctx(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
+        self.ctx.clone().ok_or(MasterError::NotConnected)
+    }
+
+    /// Get a handle to the context for external use (e.g., scanning).
+    pub fn get_ctx_handle(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
         self.ctx.clone().ok_or(MasterError::NotConnected)
     }
 
@@ -371,6 +379,7 @@ impl MasterConnection {
             quantity: poll_config.quantity,
             interval_ms: poll_config.interval_ms,
             enabled: true,
+            slave_id: None,
         };
         self.start_scan_group(&group).await
     }
@@ -408,6 +417,7 @@ impl MasterConnection {
         let quantity = group.quantity;
         let interval_ms = group.interval_ms;
         let log_collector = self.log_collector.clone();
+        let group_slave_id = group.slave_id;
 
         let handle = tokio::spawn(async move {
             let interval = Duration::from_millis(interval_ms);
@@ -431,6 +441,10 @@ impl MasterConnection {
 
                 let result = {
                     let mut ctx = ctx.lock().await;
+                    // Set slave ID if overridden for this group
+                    if let Some(sid) = group_slave_id {
+                        ctx.set_slave(Slave(sid));
+                    }
                     execute_read(&mut ctx, function, start_address, quantity, timeout).await
                 };
 
@@ -576,6 +590,198 @@ pub enum MasterError {
     Exception(ExceptionCode),
 }
 
+// ---------------------------------------------------------------------------
+// Scanning
+// ---------------------------------------------------------------------------
+
+/// Progress report for slave ID scanning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlaveIdScanProgress {
+    pub current_id: u8,
+    pub total: u16,
+    pub found_ids: Vec<u8>,
+    pub done: bool,
+    pub cancelled: bool,
+}
+
+/// A register found during address scanning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoundRegister {
+    pub address: u16,
+    pub value: u16,
+}
+
+/// Progress report for register address scanning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterScanProgress {
+    pub current_address: u16,
+    pub end_address: u16,
+    pub found_registers: Vec<FoundRegister>,
+    pub done: bool,
+    pub cancelled: bool,
+}
+
+/// Scan slave IDs 1-247 using an existing TCP context.
+/// Changes slave ID via `set_slave()`, restores original when done.
+pub async fn scan_slave_ids_with_ctx(
+    ctx: Arc<Mutex<client::Context>>,
+    original_slave_id: u8,
+    start_id: u8,
+    end_id: u8,
+    scan_timeout: Duration,
+    mut cancel_rx: oneshot::Receiver<()>,
+    progress_tx: mpsc::Sender<SlaveIdScanProgress>,
+) -> Vec<u8> {
+    let mut found_ids: Vec<u8> = Vec::new();
+    let total = end_id.saturating_sub(start_id) as u16 + 1;
+
+    for id in start_id..=end_id {
+        // Check cancellation
+        if cancel_rx.try_recv().is_ok() {
+            let _ = progress_tx.send(SlaveIdScanProgress {
+                current_id: id,
+                total,
+                found_ids: found_ids.clone(),
+                done: false,
+                cancelled: true,
+            }).await;
+            break;
+        }
+
+        // Probe this slave ID
+        let found = {
+            let mut ctx = ctx.lock().await;
+            ctx.set_slave(Slave(id));
+            match tokio::time::timeout(scan_timeout, ctx.read_holding_registers(0, 1)).await {
+                Ok(Ok(Ok(_))) => true,
+                _ => false,
+            }
+        };
+
+        if found {
+            found_ids.push(id);
+        }
+
+        let _ = progress_tx.send(SlaveIdScanProgress {
+            current_id: id,
+            total,
+            found_ids: found_ids.clone(),
+            done: id == end_id,
+            cancelled: false,
+        }).await;
+    }
+
+    // Restore original slave ID
+    {
+        let mut ctx = ctx.lock().await;
+        ctx.set_slave(Slave(original_slave_id));
+    }
+
+    // Send final done
+    let _ = progress_tx.send(SlaveIdScanProgress {
+        current_id: end_id,
+        total,
+        found_ids: found_ids.clone(),
+        done: true,
+        cancelled: false,
+    }).await;
+
+    found_ids
+}
+
+/// Scan a register address range using an existing TCP context.
+pub async fn scan_registers_with_ctx(
+    ctx: Arc<Mutex<client::Context>>,
+    function: ReadFunction,
+    start_address: u16,
+    end_address: u16,
+    chunk_size: u16,
+    scan_timeout: Duration,
+    mut cancel_rx: oneshot::Receiver<()>,
+    progress_tx: mpsc::Sender<RegisterScanProgress>,
+) -> Vec<FoundRegister> {
+    let mut found: Vec<FoundRegister> = Vec::new();
+    let mut addr = start_address;
+
+    while addr <= end_address {
+        // Check cancellation
+        if cancel_rx.try_recv().is_ok() {
+            let _ = progress_tx.send(RegisterScanProgress {
+                current_address: addr,
+                end_address,
+                found_registers: found.clone(),
+                done: false,
+                cancelled: true,
+            }).await;
+            break;
+        }
+
+        let qty = chunk_size.min(end_address - addr + 1);
+
+        let result = {
+            let mut ctx = ctx.lock().await;
+            let read_fut = match function {
+                ReadFunction::ReadCoils => {
+                    let f = ctx.read_coils(addr, qty);
+                    tokio::time::timeout(scan_timeout, f).await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|r| r.ok())
+                        .map(|vals| vals.iter().map(|&b| if b { 1u16 } else { 0u16 }).collect::<Vec<_>>())
+                }
+                ReadFunction::ReadDiscreteInputs => {
+                    let f = ctx.read_discrete_inputs(addr, qty);
+                    tokio::time::timeout(scan_timeout, f).await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|r| r.ok())
+                        .map(|vals| vals.iter().map(|&b| if b { 1u16 } else { 0u16 }).collect::<Vec<_>>())
+                }
+                ReadFunction::ReadHoldingRegisters => {
+                    let f = ctx.read_holding_registers(addr, qty);
+                    tokio::time::timeout(scan_timeout, f).await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|r| r.ok())
+                }
+                ReadFunction::ReadInputRegisters => {
+                    let f = ctx.read_input_registers(addr, qty);
+                    tokio::time::timeout(scan_timeout, f).await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|r| r.ok())
+                }
+            };
+            read_fut
+        };
+
+        if let Some(values) = result {
+            for (i, &val) in values.iter().enumerate() {
+                found.push(FoundRegister {
+                    address: addr + i as u16,
+                    value: val,
+                });
+            }
+        }
+
+        let done = addr + qty > end_address;
+        let _ = progress_tx.send(RegisterScanProgress {
+            current_address: addr + qty - 1,
+            end_address,
+            found_registers: found.clone(),
+            done,
+            cancelled: false,
+        }).await;
+
+        addr = addr.saturating_add(qty);
+        if addr == 0 && end_address == u16::MAX {
+            break; // overflow protection
+        }
+    }
+
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +831,7 @@ mod tests {
             quantity: 10,
             interval_ms: 1000,
             enabled: true,
+            slave_id: None,
         };
         let json = serde_json::to_string(&group).unwrap();
         let parsed: ScanGroup = serde_json::from_str(&json).unwrap();

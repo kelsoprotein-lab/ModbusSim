@@ -16,6 +16,7 @@ export interface ScanGroupInfo {
   interval_ms: number
   enabled: boolean
   is_polling: boolean
+  slave_id: number | null
 }
 
 export interface RegisterValueDto {
@@ -51,4 +52,28 @@ export interface LogEntry {
   direction: string
   function_code: string
   detail: string
+}
+
+export interface SlaveIdScanEvent {
+  connection_id: string
+  current_id: number
+  total: number
+  found_ids: number[]
+  done: boolean
+  cancelled: boolean
+}
+
+export interface RegisterScanEvent {
+  connection_id: string
+  current_address: number
+  end_address: number
+  found_count: number
+  found_registers: FoundRegisterDto[]
+  done: boolean
+  cancelled: boolean
+}
+
+export interface FoundRegisterDto {
+  address: number
+  value: number
 }

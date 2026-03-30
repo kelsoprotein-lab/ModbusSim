@@ -5,7 +5,7 @@ use modbussim_core::master::{MasterConnection, ReadResult, ScanGroup};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, RwLock};
 
 /// Runtime state for a single master connection.
 pub struct MasterConnectionState {
@@ -27,6 +27,8 @@ pub struct CachedPollData {
 pub struct AppState {
     pub master_connections: Arc<RwLock<HashMap<String, MasterConnectionState>>>,
     pub next_conn_id: RwLock<u32>,
+    /// Active scan cancellation handles. Key: "{connection_id}:{scan_type}"
+    pub active_scans: Arc<RwLock<HashMap<String, oneshot::Sender<()>>>>,
 }
 
 impl Default for AppState {
@@ -34,6 +36,7 @@ impl Default for AppState {
         Self {
             master_connections: Arc::new(RwLock::new(HashMap::new())),
             next_conn_id: RwLock::new(1),
+            active_scans: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -68,6 +71,7 @@ pub struct ScanGroupInfo {
     pub interval_ms: u64,
     pub enabled: bool,
     pub is_polling: bool,
+    pub slave_id: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,4 +114,31 @@ pub struct PollErrorPayload {
 pub struct ConnectionStateEvent {
     pub id: String,
     pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SlaveIdScanEvent {
+    pub connection_id: String,
+    pub current_id: u8,
+    pub total: u16,
+    pub found_ids: Vec<u8>,
+    pub done: bool,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisterScanEvent {
+    pub connection_id: String,
+    pub current_address: u16,
+    pub end_address: u16,
+    pub found_count: u16,
+    pub found_registers: Vec<FoundRegisterDto>,
+    pub done: bool,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoundRegisterDto {
+    pub address: u16,
+    pub value: u16,
 }
