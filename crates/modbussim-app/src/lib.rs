@@ -42,7 +42,11 @@ pub fn run() {
             commands::clear_app_state,
             // Simulation commands
             commands::random_mutate_registers,
+            // Project file commands
+            commands::save_project_file,
+            commands::load_project_file,
         ])
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

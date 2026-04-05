@@ -7,7 +7,10 @@ use crate::state::{
 };
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
-use modbussim_core::register::{DataType, Endian, RegisterDef, RegisterType};
+use modbussim_core::log_helpers;
+use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
+use modbussim_core::register::{Endian, RegisterDef, RegisterType};
+use modbussim_core::project::{self, ProjectFile};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
 use modbussim_core::tools;
 use rand::Rng;
@@ -300,37 +303,6 @@ pub struct WriteRegisterRequest {
     pub value: u16,
 }
 
-fn parse_register_type(s: &str) -> Result<RegisterType, String> {
-    match s {
-        "coil" => Ok(RegisterType::Coil),
-        "discrete_input" => Ok(RegisterType::DiscreteInput),
-        "input_register" => Ok(RegisterType::InputRegister),
-        "holding_register" => Ok(RegisterType::HoldingRegister),
-        _ => Err(format!("unknown register type: {}", s)),
-    }
-}
-
-fn parse_endian(s: &str) -> Result<Endian, String> {
-    match s {
-        "big" => Ok(Endian::Big),
-        "little" => Ok(Endian::Little),
-        "mid_big" => Ok(Endian::MidBig),
-        "mid_little" => Ok(Endian::MidLittle),
-        _ => Err(format!("unknown endian: {}", s)),
-    }
-}
-
-fn parse_data_type(s: &str) -> Result<DataType, String> {
-    match s {
-        "bool" => Ok(DataType::Bool),
-        "uint16" => Ok(DataType::UInt16),
-        "int16" => Ok(DataType::Int16),
-        "uint32" => Ok(DataType::UInt32),
-        "int32" => Ok(DataType::Int32),
-        "float32" => Ok(DataType::Float32),
-        _ => Err(format!("unknown data type: {}", s)),
-    }
-}
 
 #[tauri::command]
 pub async fn add_register(
@@ -544,7 +516,7 @@ pub async fn get_communication_logs(
     let conn = connections
         .get(&connection_id)
         .ok_or_else(|| format!("connection {} not found", connection_id))?;
-    Ok(conn.log_collector.get_all().await)
+    Ok(log_helpers::get_all_logs(&conn.log_collector).await)
 }
 
 #[tauri::command]
@@ -556,7 +528,7 @@ pub async fn clear_communication_logs(
     let conn = connections
         .get(&connection_id)
         .ok_or_else(|| format!("connection {} not found", connection_id))?;
-    conn.log_collector.clear().await;
+    log_helpers::clear_logs(&conn.log_collector).await;
     Ok(())
 }
 
@@ -569,7 +541,7 @@ pub async fn export_logs_csv(
     let conn = connections
         .get(&connection_id)
         .ok_or_else(|| format!("connection {} not found", connection_id))?;
-    Ok(conn.log_collector.export_csv().await)
+    Ok(log_helpers::export_csv(&conn.log_collector).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -840,4 +812,39 @@ pub async fn random_mutate_registers(
     }
 
     Ok(mutated)
+}
+
+// ---------------------------------------------------------------------------
+// Project File Commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn save_project_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let connections = state.slave_connections.read().await;
+    let mut proj = ProjectFile::new_slave();
+
+    for (id, conn_state) in connections.iter() {
+        let conn = &conn_state.connection;
+        let conn_config = project::ConnectionConfig {
+            id: id.clone(),
+            name: format!("{}:{}", conn.transport.bind_address, conn.transport.port),
+            transport: project::TransportConfig::Tcp {
+                host: conn.transport.bind_address.clone(),
+                port: conn.transport.port,
+            },
+            devices: vec![],  // Simplified for Phase 1 - register serialization will be added later
+            scan_groups: vec![],
+        };
+        proj.connections.push(conn_config);
+    }
+
+    project::save_project(&proj, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub async fn load_project_file(path: String) -> Result<ProjectFile, String> {
+    project::load_project(std::path::Path::new(&path))
 }

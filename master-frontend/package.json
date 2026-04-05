@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
-    "vue": "^3.5.30"
+    "@tauri-apps/plugin-dialog": "^2",
+    "vue": "^3.5.30",
+    "shared-frontend": "*"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",

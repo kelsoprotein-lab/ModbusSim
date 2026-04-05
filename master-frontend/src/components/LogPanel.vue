@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { LogEntry, MasterConnectionInfo } from '../types'
+import { useLogPanel } from 'shared-frontend'
+import type { MasterConnectionInfo } from '../types'
 
 interface Props {
   expanded: boolean
@@ -14,7 +15,8 @@ const emit = defineEmits<{
 
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 
-const logs = ref<LogEntry[]>([])
+const { logs, loadLogs, clearLogs, exportLogsCsv } = useLogPanel()
+
 const connectionList = ref<{ id: string; label: string }[]>([])
 const selectedConnId = ref('')
 let refreshTimer: number | null = null
@@ -35,35 +37,16 @@ async function loadConnections() {
   } catch (_e) { /* ignore */ }
 }
 
-async function loadLogs() {
-  if (!selectedConnId.value) return
-  try {
-    logs.value = await invoke<LogEntry[]>('get_communication_logs', {
-      connectionId: selectedConnId.value,
-    })
-  } catch (_e) { /* ignore */ }
+async function doLoadLogs() {
+  await loadLogs(selectedConnId.value)
 }
 
-async function clearLogs() {
-  if (!selectedConnId.value) return
-  try {
-    await invoke('clear_communication_logs', { connectionId: selectedConnId.value })
-    logs.value = []
-  } catch (_e) { /* ignore */ }
+async function doClearLogs() {
+  await clearLogs(selectedConnId.value)
 }
 
-async function exportLogs() {
-  if (!selectedConnId.value) return
-  try {
-    const csv = await invoke<string>('export_logs_csv', { connectionId: selectedConnId.value })
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `modbus_master_log_${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (_e) { /* ignore */ }
+async function doExportLogs() {
+  await exportLogsCsv(selectedConnId.value, 'modbus_master_log')
 }
 
 function formatTimestamp(ts: string): string {
@@ -104,7 +87,7 @@ function startAutoRefresh() {
   refreshTimer = window.setInterval(() => {
     if (props.expanded) {
       loadConnections()
-      loadLogs()
+      doLoadLogs()
     }
   }, 2000)
 }
@@ -126,18 +109,18 @@ watch(selectedConnectionId, (newId) => {
 watch(() => props.expanded, (expanded) => {
   if (expanded) {
     loadConnections()
-    loadLogs()
+    doLoadLogs()
     startAutoRefresh()
   } else {
     stopAutoRefresh()
   }
 })
 
-watch(selectedConnId, () => loadLogs())
+watch(selectedConnId, () => doLoadLogs())
 
 onMounted(async () => {
   await loadConnections()
-  if (selectedConnId.value) await loadLogs()
+  if (selectedConnId.value) await doLoadLogs()
   if (props.expanded) startAutoRefresh()
 })
 </script>
@@ -149,12 +132,12 @@ onMounted(async () => {
       <span class="log-title">通信日志</span>
       <span v-if="!expanded && logs.length > 0" class="log-count">{{ logs.length }}</span>
       <div class="log-controls" @click.stop>
-        <select v-model="selectedConnId" class="conn-select" @change="loadLogs">
+        <select v-model="selectedConnId" class="conn-select" @change="doLoadLogs">
           <option v-for="conn in connectionList" :key="conn.id" :value="conn.id">{{ conn.label }}</option>
         </select>
-        <button class="log-btn" @click="loadLogs">刷新</button>
-        <button class="log-btn" @click="clearLogs">清空</button>
-        <button class="log-btn" @click="exportLogs">导出</button>
+        <button class="log-btn" @click="doLoadLogs">刷新</button>
+        <button class="log-btn" @click="doClearLogs">清空</button>
+        <button class="log-btn" @click="doExportLogs">导出</button>
       </div>
     </div>
 
