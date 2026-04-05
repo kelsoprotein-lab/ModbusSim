@@ -16,3 +16,4 @@ rand = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
