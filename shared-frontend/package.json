@@ -1,0 +1,14 @@
+{
+  "name": "shared-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "vue": "^3.5.30",
+    "@tauri-apps/api": "^2.10.1"
+  },
+  "devDependencies": {
+    "@vue/tsconfig": "^0.9.0"
+  }
+}

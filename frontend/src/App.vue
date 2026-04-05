@@ -5,7 +5,7 @@ import ConnectionTree from './components/ConnectionTree.vue'
 import RegisterTable from './components/RegisterTable.vue'
 import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
-import AppDialog from './components/AppDialog.vue'
+import { AppDialog } from 'shared-frontend'
 import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
 
 // Shared state

@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "workspaces": [
+    "shared-frontend",
+    "frontend",
+    "master-frontend"
+  ]
+}
