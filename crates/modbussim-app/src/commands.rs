@@ -10,6 +10,7 @@ use modbussim_core::log_entry::LogEntry;
 use modbussim_core::log_helpers;
 use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
 use modbussim_core::register::{Endian, RegisterDef, RegisterType};
+use modbussim_core::project::{self, ProjectFile};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
 use modbussim_core::tools;
 use rand::Rng;
@@ -811,4 +812,39 @@ pub async fn random_mutate_registers(
     }
 
     Ok(mutated)
+}
+
+// ---------------------------------------------------------------------------
+// Project File Commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn save_project_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let connections = state.slave_connections.read().await;
+    let mut proj = ProjectFile::new_slave();
+
+    for (id, conn_state) in connections.iter() {
+        let conn = &conn_state.connection;
+        let conn_config = project::ConnectionConfig {
+            id: id.clone(),
+            name: format!("{}:{}", conn.transport.bind_address, conn.transport.port),
+            transport: project::TransportConfig::Tcp {
+                host: conn.transport.bind_address.clone(),
+                port: conn.transport.port,
+            },
+            devices: vec![],  // Simplified for Phase 1 - register serialization will be added later
+            scan_groups: vec![],
+        };
+        proj.connections.push(conn_config);
+    }
+
+    project::save_project(&proj, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub async fn load_project_file(path: String) -> Result<ProjectFile, String> {
+    project::load_project(std::path::Path::new(&path))
 }
