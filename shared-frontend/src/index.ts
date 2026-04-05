@@ -21,5 +21,8 @@ export {
   use64BitFormat,
 } from './composables/useValueFormat'
 
+// Log panel
+export { useLogPanel } from './composables/useLogPanel'
+
 // Components
 export { default as AppDialog } from './components/AppDialog.vue'
