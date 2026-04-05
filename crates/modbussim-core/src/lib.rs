@@ -6,5 +6,6 @@ pub mod log_collector;
 pub mod log_helpers;
 pub mod config;
 pub mod tools;
+pub mod frame;
 pub mod parse;
 pub mod project;
