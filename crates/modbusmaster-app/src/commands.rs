@@ -1,5 +1,7 @@
 //! Tauri commands for ModbusMaster.
 
+use modbussim_core::project::{self, ProjectFile};
+
 use crate::state::{
     AppState, CachedPollData, ConnectionStateEvent, FoundRegisterDto, MasterConnectionInfo,
     MasterConnectionState, PollDataPayload, PollErrorPayload, ReadResultDto, RegisterScanEvent,
@@ -1032,4 +1034,57 @@ pub async fn cancel_scan(
 #[tauri::command]
 pub fn parse_hex(hex_string: String) -> Result<Vec<u8>, String> {
     tools::parse_hex_string(&hex_string).map_err(|e| format!("{}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Project File Commands
+// ---------------------------------------------------------------------------
+
+fn read_function_to_fc(function: ReadFunction) -> u8 {
+    match function {
+        ReadFunction::ReadCoils => 1,
+        ReadFunction::ReadDiscreteInputs => 2,
+        ReadFunction::ReadHoldingRegisters => 3,
+        ReadFunction::ReadInputRegisters => 4,
+    }
+}
+
+#[tauri::command]
+pub async fn save_project_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let conns = state.master_connections.read().await;
+    let mut proj = ProjectFile::new_master();
+
+    for (id, conn_state) in conns.iter() {
+        let config = &conn_state.connection.config;
+        let conn_config = project::ConnectionConfig {
+            id: id.clone(),
+            name: format!("{}:{}", config.target_address, config.port),
+            transport: project::TransportConfig::Tcp {
+                host: config.target_address.clone(),
+                port: config.port,
+            },
+            devices: vec![],
+            scan_groups: conn_state.scan_groups.iter().map(|sg| {
+                project::ScanGroupConfig {
+                    name: sg.name.clone(),
+                    slave_id: sg.slave_id.unwrap_or(config.slave_id),
+                    function_code: read_function_to_fc(sg.function),
+                    start_address: sg.start_address,
+                    count: sg.quantity,
+                    interval_ms: sg.interval_ms,
+                }
+            }).collect(),
+        };
+        proj.connections.push(conn_config);
+    }
+
+    project::save_project(&proj, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub async fn load_project_file(path: String) -> Result<ProjectFile, String> {
+    project::load_project(std::path::Path::new(&path))
 }

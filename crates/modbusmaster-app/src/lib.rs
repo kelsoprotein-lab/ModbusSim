@@ -45,6 +45,9 @@ pub fn run() {
             commands::calculate_crc16,
             commands::calculate_lrc,
             commands::parse_hex,
+            // Project file commands
+            commands::save_project_file,
+            commands::load_project_file,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
