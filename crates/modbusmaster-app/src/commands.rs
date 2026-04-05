@@ -7,10 +7,12 @@ use crate::state::{
 };
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
+use modbussim_core::log_helpers;
 use modbussim_core::master::{
     scan_registers_with_ctx, scan_slave_ids_with_ctx, MasterConfig, MasterConnection, ReadFunction,
     ReadResult, ScanGroup,
 };
+use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -21,25 +23,6 @@ use tokio::sync::{mpsc, oneshot};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn function_to_string(f: ReadFunction) -> String {
-    match f {
-        ReadFunction::ReadCoils => "read_coils".to_string(),
-        ReadFunction::ReadDiscreteInputs => "read_discrete_inputs".to_string(),
-        ReadFunction::ReadHoldingRegisters => "read_holding_registers".to_string(),
-        ReadFunction::ReadInputRegisters => "read_input_registers".to_string(),
-    }
-}
-
-fn string_to_function(s: &str) -> Result<ReadFunction, String> {
-    match s {
-        "read_coils" => Ok(ReadFunction::ReadCoils),
-        "read_discrete_inputs" => Ok(ReadFunction::ReadDiscreteInputs),
-        "read_holding_registers" => Ok(ReadFunction::ReadHoldingRegisters),
-        "read_input_registers" => Ok(ReadFunction::ReadInputRegisters),
-        _ => Err(format!("Unknown function: {}", s)),
-    }
-}
 
 fn read_result_to_dto(
     scan_group_id: &str,
@@ -101,7 +84,7 @@ fn read_result_to_dto(
 
     ReadResultDto {
         scan_group_id: scan_group_id.to_string(),
-        function: function_to_string(function),
+        function: read_function_to_string(function).to_string(),
         start_address,
         values,
         timestamp: timestamp.to_string(),
@@ -292,7 +275,7 @@ pub async fn add_scan_group(
     connection_id: String,
     request: AddScanGroupRequest,
 ) -> Result<ScanGroupInfo, String> {
-    let function = string_to_function(&request.function)?;
+    let function = parse_read_function(&request.function)?;
     let group_id = uuid::Uuid::new_v4().to_string();
 
     let group = ScanGroup {
@@ -314,7 +297,7 @@ pub async fn add_scan_group(
     let info = ScanGroupInfo {
         id: group.id.clone(),
         name: group.name.clone(),
-        function: function_to_string(group.function),
+        function: read_function_to_string(group.function).to_string(),
         start_address: group.start_address,
         quantity: group.quantity,
         interval_ms: group.interval_ms,
@@ -359,7 +342,7 @@ pub async fn update_scan_group(
         group.name = name;
     }
     if let Some(function) = request.function {
-        group.function = string_to_function(&function)?;
+        group.function = parse_read_function(&function)?;
     }
     if let Some(addr) = request.start_address {
         group.start_address = addr;
@@ -379,7 +362,7 @@ pub async fn update_scan_group(
     Ok(ScanGroupInfo {
         id: group.id.clone(),
         name: group.name.clone(),
-        function: function_to_string(group.function),
+        function: read_function_to_string(group.function).to_string(),
         start_address: group.start_address,
         quantity: group.quantity,
         interval_ms: group.interval_ms,
@@ -428,7 +411,7 @@ pub async fn list_scan_groups(
         .map(|g| ScanGroupInfo {
             id: g.id.clone(),
             name: g.name.clone(),
-            function: function_to_string(g.function),
+            function: read_function_to_string(g.function).to_string(),
             start_address: g.start_address,
             quantity: g.quantity,
             interval_ms: g.interval_ms,
@@ -645,7 +628,7 @@ pub async fn read_once(
     connection_id: String,
     request: ReadOnceRequest,
 ) -> Result<ReadResultDto, String> {
-    let function = string_to_function(&request.function)?;
+    let function = parse_read_function(&request.function)?;
     let mut conns = state.master_connections.write().await;
     let conn_state = conns
         .get_mut(&connection_id)
@@ -777,7 +760,7 @@ pub async fn get_communication_logs(
         .get(&connection_id)
         .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
 
-    Ok(conn_state.log_collector.get_all().await)
+    Ok(log_helpers::get_all_logs(&conn_state.log_collector).await)
 }
 
 #[tauri::command]
@@ -790,7 +773,7 @@ pub async fn clear_communication_logs(
         .get(&connection_id)
         .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
 
-    conn_state.log_collector.clear().await;
+    log_helpers::clear_logs(&conn_state.log_collector).await;
     Ok(())
 }
 
@@ -804,7 +787,7 @@ pub async fn export_logs_csv(
         .get(&connection_id)
         .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
 
-    Ok(conn_state.log_collector.export_csv().await)
+    Ok(log_helpers::export_csv(&conn_state.log_collector).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -944,15 +927,6 @@ pub async fn start_slave_id_scan(
     Ok(())
 }
 
-fn parse_read_function(s: &str) -> Result<ReadFunction, String> {
-    match s {
-        "read_coils" => Ok(ReadFunction::ReadCoils),
-        "read_discrete_inputs" => Ok(ReadFunction::ReadDiscreteInputs),
-        "read_holding_registers" => Ok(ReadFunction::ReadHoldingRegisters),
-        "read_input_registers" => Ok(ReadFunction::ReadInputRegisters),
-        _ => Err(format!("unknown function: {}", s)),
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterScanRequest {
