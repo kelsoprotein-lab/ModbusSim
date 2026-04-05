@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { inject, ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import ScanDialog from './ScanDialog.vue'
@@ -9,6 +10,48 @@ const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
 const refreshTree = inject<() => void>('refreshTree')!
+
+// --- Project File Management ---
+const currentProjectPath = ref<string | null>(null)
+
+async function openProject() {
+  try {
+    const path = await open({
+      filters: [{ name: 'Modbus Project', extensions: ['modbusproj'] }],
+    })
+    if (!path) return
+    await invoke('load_project_file', { path })
+    currentProjectPath.value = path as string
+    refreshTree()
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+async function saveProject() {
+  if (!currentProjectPath.value) {
+    return saveProjectAs()
+  }
+  try {
+    await invoke('save_project_file', { path: currentProjectPath.value })
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+async function saveProjectAs() {
+  try {
+    const path = await save({
+      filters: [{ name: 'Modbus Project', extensions: ['modbusproj'] }],
+      defaultPath: 'untitled.modbusproj',
+    })
+    if (!path) return
+    await invoke('save_project_file', { path })
+    currentProjectPath.value = path
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
 
 // New Connection modal
 const showNewConn = ref(false)
@@ -168,6 +211,14 @@ const hasConnection = () => selectedConnectionId.value !== null
 
 <template>
   <div class="toolbar">
+    <div class="toolbar-group">
+      <button class="toolbar-btn" @click="openProject" title="打开项目">打开</button>
+      <button class="toolbar-btn" @click="saveProject" title="保存项目">保存</button>
+      <button class="toolbar-btn" @click="saveProjectAs" title="另存为">另存为</button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
     <div class="toolbar-group">
       <button class="toolbar-btn" @click="showNewConn = true">
         <span class="btn-icon">+</span> 新建连接

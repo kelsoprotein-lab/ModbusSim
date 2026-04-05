@@ -46,6 +46,7 @@ pub fn run() {
             commands::save_project_file,
             commands::load_project_file,
         ])
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

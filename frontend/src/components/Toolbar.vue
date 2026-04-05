@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, watch, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm, showPrompt as ShowPrompt } from '../composables/useDialog'
 
@@ -10,6 +11,48 @@ const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const refreshTree = inject<() => void>('refreshTree')!
 const refreshRegisters = inject<() => void>('refreshRegisters')!
 const { showAlert, showConfirm } = inject<{ showAlert: typeof ShowAlert; showConfirm: typeof ShowConfirm; showPrompt: typeof ShowPrompt }>(dialogKey)!
+
+// --- Project File Management ---
+const currentProjectPath = ref<string | null>(null)
+
+async function openProject() {
+  try {
+    const path = await open({
+      filters: [{ name: 'Modbus Project', extensions: ['modbusproj'] }],
+    })
+    if (!path) return
+    await invoke('load_project_file', { path })
+    currentProjectPath.value = path as string
+    refreshTree()
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+async function saveProject() {
+  if (!currentProjectPath.value) {
+    return saveProjectAs()
+  }
+  try {
+    await invoke('save_project_file', { path: currentProjectPath.value })
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+async function saveProjectAs() {
+  try {
+    const path = await save({
+      filters: [{ name: 'Modbus Project', extensions: ['modbusproj'] }],
+      defaultPath: 'untitled.modbusproj',
+    })
+    if (!path) return
+    await invoke('save_project_file', { path })
+    currentProjectPath.value = path
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
 
 // --- New Connection Modal ---
 const showNewConnModal = ref(false)
@@ -182,6 +225,18 @@ onUnmounted(() => {
 
 <template>
   <div class="toolbar">
+    <div class="toolbar-group">
+      <button class="toolbar-btn" @click="openProject" title="打开项目">
+        <span class="toolbar-label">打开</span>
+      </button>
+      <button class="toolbar-btn" @click="saveProject" title="保存项目">
+        <span class="toolbar-label">保存</span>
+      </button>
+      <button class="toolbar-btn" @click="saveProjectAs" title="另存为">
+        <span class="toolbar-label">另存为</span>
+      </button>
+    </div>
+    <div class="toolbar-divider"></div>
     <div class="toolbar-group">
       <button class="toolbar-btn" @click="openNewConnModal" title="新建连接">
         <span class="toolbar-icon">+</span>
