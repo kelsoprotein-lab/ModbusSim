@@ -12,5 +12,14 @@ export {
   dialogKey,
 } from './composables/useDialog'
 
+// Value formatting
+export {
+  swapBytes16,
+  toFloat32,
+  use16BitFormat,
+  use32BitFormat,
+  use64BitFormat,
+} from './composables/useValueFormat'
+
 // Components
 export { default as AppDialog } from './components/AppDialog.vue'

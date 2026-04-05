@@ -3,6 +3,7 @@ import { inject, computed, ref, watch, nextTick, type Ref, type Directive } from
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat } from 'shared-frontend'
 
 const vFocus: Directive<HTMLInputElement> = {
   mounted(el) {
@@ -73,140 +74,31 @@ const panelTitle = computed(() => {
   return `${prefix} @ ${fmtAddr(firstReg.value.address)}~${fmtAddr(last.address)}`
 })
 
-// 16-bit interpretations
-const signed16 = computed(() => {
-  if (!firstReg.value) return 0
-  const v = firstReg.value.value & 0xFFFF
-  return v >= 0x8000 ? v - 0x10000 : v
-})
-
-const unsigned16 = computed(() => {
-  if (!firstReg.value) return 0
-  return firstReg.value.value & 0xFFFF
-})
-
-const hex16 = computed(() => {
-  if (!firstReg.value) return '0x0000'
-  return '0x' + (firstReg.value.value & 0xFFFF).toString(16).toUpperCase().padStart(4, '0')
-})
-
-const binary16 = computed(() => {
-  if (!firstReg.value) return '0000 0000 0000 0000'
-  const b = (firstReg.value.value & 0xFFFF).toString(2).padStart(16, '0')
-  return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12, 16)}`
-})
-
-// Byte swap within a 16-bit word: 0xAABB → 0xBBAA
-function swapBytes16(v: number): number {
-  return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)
-}
+// 16-bit interpretations (shared composable)
+const rawValue = computed(() => firstReg.value ? firstReg.value.value & 0xFFFF : 0)
+const { signed16, unsigned16, hex16, binary16 } = use16BitFormat(rawValue)
 
 // 32-bit
 const show32bit = computed(() => {
   return selCount.value >= 2 && allSameType.value && !isBoolType.value
 })
 
-const reg32Values = computed(() => {
-  if (!show32bit.value) return [0, 0]
-  return [sortedRegs.value[0].value & 0xFFFF, sortedRegs.value[1].value & 0xFFFF]
-})
-
-const longABCD = computed(() => {
-  if (!show32bit.value) return '-'
-  const [hi, lo] = reg32Values.value
-  return (((hi << 16) | lo) >>> 0).toString()
-})
-
-const longCDAB = computed(() => {
-  if (!show32bit.value) return '-'
-  const [hi, lo] = reg32Values.value
-  return (((lo << 16) | hi) >>> 0).toString()
-})
-
-const longBADC = computed(() => {
-  if (!show32bit.value) return '-'
-  const [hi, lo] = reg32Values.value
-  return (((swapBytes16(hi) << 16) | swapBytes16(lo)) >>> 0).toString()
-})
-
-const longDCBA = computed(() => {
-  if (!show32bit.value) return '-'
-  const [hi, lo] = reg32Values.value
-  return (((swapBytes16(lo) << 16) | swapBytes16(hi)) >>> 0).toString()
-})
-
-function toFloat32(hi: number, lo: number): string {
-  const buf = new ArrayBuffer(4)
-  const view = new DataView(buf)
-  view.setUint16(0, hi)
-  view.setUint16(2, lo)
-  return view.getFloat32(0).toPrecision(7)
-}
-
-const floatABCD = computed(() => {
-  if (!show32bit.value) return '-'
-  return toFloat32(reg32Values.value[0], reg32Values.value[1])
-})
-
-const floatCDAB = computed(() => {
-  if (!show32bit.value) return '-'
-  return toFloat32(reg32Values.value[1], reg32Values.value[0])
-})
-
-const floatBADC = computed(() => {
-  if (!show32bit.value) return '-'
-  return toFloat32(swapBytes16(reg32Values.value[0]), swapBytes16(reg32Values.value[1]))
-})
-
-const floatDCBA = computed(() => {
-  if (!show32bit.value) return '-'
-  return toFloat32(swapBytes16(reg32Values.value[1]), swapBytes16(reg32Values.value[0]))
-})
+const reg32Hi = computed(() => show32bit.value ? sortedRegs.value[0].value & 0xFFFF : 0)
+const reg32Lo = computed(() => show32bit.value ? sortedRegs.value[1].value & 0xFFFF : 0)
+const { longABCD, longCDAB, longBADC, longDCBA, floatABCD, floatCDAB, floatBADC, floatDCBA } =
+  use32BitFormat(reg32Hi, reg32Lo, show32bit)
 
 // 64-bit
 const show64bit = computed(() => {
   return selCount.value >= 4 && allSameType.value && !isBoolType.value
 })
 
-const doubleValue = computed(() => {
-  if (!show64bit.value) return '-'
-  const buf = new ArrayBuffer(8)
-  const view = new DataView(buf)
-  for (let i = 0; i < 4; i++) {
-    view.setUint16(i * 2, sortedRegs.value[i].value & 0xFFFF)
-  }
-  return view.getFloat64(0).toPrecision(15)
+const reg64Values = computed(() => {
+  if (!show64bit.value) return [0, 0, 0, 0]
+  return sortedRegs.value.slice(0, 4).map(r => r.value & 0xFFFF)
 })
-
-const doubleReversed = computed(() => {
-  if (!show64bit.value) return '-'
-  const buf = new ArrayBuffer(8)
-  const view = new DataView(buf)
-  for (let i = 0; i < 4; i++) {
-    view.setUint16(i * 2, sortedRegs.value[3 - i].value & 0xFFFF)
-  }
-  return view.getFloat64(0).toPrecision(15)
-})
-
-const doubleByteSwap = computed(() => {
-  if (!show64bit.value) return '-'
-  const buf = new ArrayBuffer(8)
-  const view = new DataView(buf)
-  for (let i = 0; i < 4; i++) {
-    view.setUint16(i * 2, swapBytes16(sortedRegs.value[i].value & 0xFFFF))
-  }
-  return view.getFloat64(0).toPrecision(15)
-})
-
-const doubleLittleEndian = computed(() => {
-  if (!show64bit.value) return '-'
-  const buf = new ArrayBuffer(8)
-  const view = new DataView(buf)
-  for (let i = 0; i < 4; i++) {
-    view.setUint16(i * 2, swapBytes16(sortedRegs.value[3 - i].value & 0xFFFF))
-  }
-  return view.getFloat64(0).toPrecision(15)
-})
+const { doubleValue, doubleReversed, doubleByteSwap, doubleLittleEndian } =
+  use64BitFormat(reg64Values, show64bit)
 
 // --- Editing ---
 
