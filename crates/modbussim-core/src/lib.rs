@@ -19,3 +19,4 @@ pub mod rtu_master;
 pub mod ascii_master;
 pub mod rtu_tcp_master;
 pub mod reconnect;
+pub mod data_source;
