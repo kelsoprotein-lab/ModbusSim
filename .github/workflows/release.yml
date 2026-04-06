@@ -40,11 +40,12 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
 
       # --- Install all frontend dependencies (npm workspaces) ---
       # Delete lockfile so npm resolves platform-specific optional deps (rolldown bindings) for the current CI runner
       - name: Install frontend dependencies
+        shell: bash
         run: |
           rm -f package-lock.json
           npm install
