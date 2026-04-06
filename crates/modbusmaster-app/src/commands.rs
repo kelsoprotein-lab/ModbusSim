@@ -16,7 +16,7 @@ use modbussim_core::master::{
 };
 use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
-use modbussim_core::transport::Transport;
+use modbussim_core::transport::{self, Transport, SerialConfig, Parity};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -111,13 +111,60 @@ fn chrono_like_now() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Transport Request Types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TransportRequest {
+    Tcp { host: String, port: u16 },
+    Rtu { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
+    Ascii { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
+    RtuOverTcp { host: String, port: u16 },
+}
+
+fn parse_parity(s: &str) -> Parity {
+    match s {
+        "odd" => Parity::Odd,
+        "even" => Parity::Even,
+        _ => Parity::None,
+    }
+}
+
+fn to_transport(req: &TransportRequest) -> Transport {
+    match req {
+        TransportRequest::Tcp { host, port } => Transport::Tcp { host: host.clone(), port: *port },
+        TransportRequest::Rtu { serial_port, baud_rate, data_bits, stop_bits, parity } => {
+            Transport::Rtu(SerialConfig {
+                port: serial_port.clone(),
+                baud_rate: *baud_rate,
+                data_bits: *data_bits,
+                stop_bits: *stop_bits,
+                parity: parse_parity(parity),
+            })
+        }
+        TransportRequest::Ascii { serial_port, baud_rate, data_bits, stop_bits, parity } => {
+            Transport::Ascii(SerialConfig {
+                port: serial_port.clone(),
+                baud_rate: *baud_rate,
+                data_bits: *data_bits,
+                stop_bits: *stop_bits,
+                parity: parse_parity(parity),
+            })
+        }
+        TransportRequest::RtuOverTcp { host, port } => {
+            Transport::RtuOverTcp { host: host.clone(), port: *port }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Connection Commands
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMasterRequest {
-    pub target_address: String,
-    pub port: u16,
+    pub transport: TransportRequest,
     pub slave_id: u8,
     pub timeout_ms: Option<u64>,
 }
@@ -134,17 +181,22 @@ pub async fn create_master_connection(
         id
     };
 
+    let transport = to_transport(&request.transport);
+
+    let (target_address, port) = match &transport {
+        Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
+            (host.clone(), *port)
+        }
+        Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
+    };
+
     let config = MasterConfig {
-        target_address: request.target_address,
-        port: request.port,
+        target_address: target_address.clone(),
+        port,
         slave_id: request.slave_id,
         timeout_ms: request.timeout_ms.unwrap_or(3000),
     };
 
-    let transport = Transport::Tcp {
-        host: config.target_address.clone(),
-        port: config.port,
-    };
     let log_collector = Arc::new(LogCollector::new());
     let connection = MasterConnection::new(config.clone(), transport).with_log_collector(log_collector.clone());
 
@@ -1064,13 +1116,46 @@ pub async fn save_project_file(
 
     for (id, conn_state) in conns.iter() {
         let config = &conn_state.connection.config;
+        let (name, proj_transport) = match &conn_state.connection.transport {
+            Transport::Tcp { host, port } => (
+                format!("{}:{}", host, port),
+                project::TransportConfig::Tcp {
+                    host: host.clone(),
+                    port: *port,
+                },
+            ),
+            Transport::RtuOverTcp { host, port } => (
+                format!("rtu-tcp://{}:{}", host, port),
+                project::TransportConfig::RtuOverTcp {
+                    host: host.clone(),
+                    port: *port,
+                },
+            ),
+            Transport::Rtu(sc) => (
+                format!("rtu://{}", sc.port),
+                project::TransportConfig::Rtu {
+                    port: sc.port.clone(),
+                    baud_rate: sc.baud_rate,
+                    data_bits: sc.data_bits,
+                    stop_bits: sc.stop_bits,
+                    parity: format!("{:?}", sc.parity).to_lowercase(),
+                },
+            ),
+            Transport::Ascii(sc) => (
+                format!("ascii://{}", sc.port),
+                project::TransportConfig::Ascii {
+                    port: sc.port.clone(),
+                    baud_rate: sc.baud_rate,
+                    data_bits: sc.data_bits,
+                    stop_bits: sc.stop_bits,
+                    parity: format!("{:?}", sc.parity).to_lowercase(),
+                },
+            ),
+        };
         let conn_config = project::ConnectionConfig {
             id: id.clone(),
-            name: format!("{}:{}", config.target_address, config.port),
-            transport: project::TransportConfig::Tcp {
-                host: config.target_address.clone(),
-                port: config.port,
-            },
+            name,
+            transport: proj_transport,
             devices: vec![],
             scan_groups: conn_state.scan_groups.iter().map(|sg| {
                 project::ScanGroupConfig {
@@ -1092,4 +1177,13 @@ pub async fn save_project_file(
 #[tauri::command]
 pub async fn load_project_file(path: String) -> Result<ProjectFile, String> {
     project::load_project(std::path::Path::new(&path))
+}
+
+// ---------------------------------------------------------------------------
+// Serial Port Commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_serial_ports() -> Vec<transport::SerialPortInfo> {
+    transport::list_serial_ports()
 }
