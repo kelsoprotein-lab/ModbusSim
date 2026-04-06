@@ -41,7 +41,11 @@ async fn main() {
     let state: Arc<RwLock<HashMap<String, MasterConnection>>> =
         Arc::new(RwLock::new(HashMap::new()));
     {
-        let conn = MasterConnection::new(config).with_log_collector(master_log.clone());
+        let master_transport = Transport::Tcp {
+            host: config.target_address.clone(),
+            port: config.port,
+        };
+        let conn = MasterConnection::new(config, master_transport).with_log_collector(master_log.clone());
         state.write().await.insert("m1".to_string(), conn);
     }
     println!("    OK\n");
@@ -83,6 +87,7 @@ async fn main() {
             quantity: 10,
             interval_ms: 500,
             enabled: true,
+            slave_id: None,
         };
         let mut conns = state.write().await;
         let conn = conns.get_mut("m1").unwrap();

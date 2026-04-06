@@ -1,5 +1,9 @@
+use crate::ascii_master::AsciiMasterTransport;
 use crate::log_collector::LogCollector;
 use crate::log_entry::{Direction, FunctionCode, LogEntry};
+use crate::rtu_master::RtuMasterTransport;
+use crate::rtu_tcp_master::RtuTcpMasterTransport;
+use crate::transport::Transport;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -104,21 +108,32 @@ struct PollTaskHandle {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
-/// A master connection that connects to a Modbus TCP slave.
+/// Active transport context — holds the connected transport handle.
+#[derive(Clone)]
+enum TransportCtx {
+    Tcp(Arc<Mutex<client::Context>>),
+    Rtu(Arc<RtuMasterTransport>),
+    Ascii(Arc<AsciiMasterTransport>),
+    RtuTcp(Arc<RtuTcpMasterTransport>),
+}
+
+/// A master connection that connects to a Modbus slave via any transport.
 pub struct MasterConnection {
     pub config: MasterConfig,
+    pub transport: Transport,
     state: MasterState,
-    ctx: Option<Arc<Mutex<client::Context>>>,
+    transport_ctx: Option<TransportCtx>,
     poll_tasks: HashMap<String, PollTaskHandle>,
     log_collector: Option<Arc<LogCollector>>,
 }
 
 impl MasterConnection {
-    pub fn new(config: MasterConfig) -> Self {
+    pub fn new(config: MasterConfig, transport: Transport) -> Self {
         Self {
             config,
+            transport,
             state: MasterState::Disconnected,
-            ctx: None,
+            transport_ctx: None,
             poll_tasks: HashMap::new(),
             log_collector: None,
         }
@@ -134,26 +149,49 @@ impl MasterConnection {
         self.state
     }
 
-    /// Connect to the target Modbus TCP slave.
+    /// Connect to the target Modbus slave using the configured transport.
     pub async fn connect(&mut self) -> Result<(), MasterError> {
         if self.state == MasterState::Connected {
             return Err(MasterError::AlreadyConnected);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.target_address, self.config.port)
-                .parse()
-                .map_err(|e| MasterError::ConnectionFailed(format!("Invalid address: {e}")))?;
+        let timeout = Duration::from_millis(self.config.timeout_ms);
 
-        let ctx = tokio::time::timeout(
-            Duration::from_millis(self.config.timeout_ms),
-            tcp::connect_slave(addr, Slave(self.config.slave_id)),
-        )
-        .await
-        .map_err(|_| MasterError::Timeout("Connection timed out".to_string()))?
-        .map_err(|e| MasterError::ConnectionFailed(format!("{e}")))?;
+        let ctx = match &self.transport {
+            Transport::Tcp { host, port } => {
+                let addr: SocketAddr = format!("{}:{}", host, port)
+                    .parse()
+                    .map_err(|e| MasterError::ConnectionFailed(format!("Invalid address: {e}")))?;
+                let tcp_ctx = tokio::time::timeout(
+                    timeout,
+                    tcp::connect_slave(addr, Slave(self.config.slave_id)),
+                )
+                .await
+                .map_err(|_| MasterError::Timeout("Connection timed out".to_string()))?
+                .map_err(|e| MasterError::ConnectionFailed(format!("{e}")))?;
+                TransportCtx::Tcp(Arc::new(Mutex::new(tcp_ctx)))
+            }
+            Transport::Rtu(serial_config) => {
+                let rtu = RtuMasterTransport::connect(serial_config)
+                    .await
+                    .map_err(|e| MasterError::ConnectionFailed(e))?;
+                TransportCtx::Rtu(Arc::new(rtu))
+            }
+            Transport::Ascii(serial_config) => {
+                let ascii = AsciiMasterTransport::connect(serial_config)
+                    .await
+                    .map_err(|e| MasterError::ConnectionFailed(e))?;
+                TransportCtx::Ascii(Arc::new(ascii))
+            }
+            Transport::RtuOverTcp { host, port } => {
+                let rtu_tcp = RtuTcpMasterTransport::connect(host, *port, timeout)
+                    .await
+                    .map_err(|e| MasterError::ConnectionFailed(e))?;
+                TransportCtx::RtuTcp(Arc::new(rtu_tcp))
+            }
+        };
 
-        self.ctx = Some(Arc::new(Mutex::new(ctx)));
+        self.transport_ctx = Some(ctx);
         self.state = MasterState::Connected;
         Ok(())
     }
@@ -167,9 +205,12 @@ impl MasterConnection {
         // Stop all polling first
         self.stop_all_scans().await;
 
-        if let Some(ctx) = self.ctx.take() {
-            let mut ctx = ctx.lock().await;
-            let _ = ctx.disconnect().await;
+        if let Some(ctx) = self.transport_ctx.take() {
+            if let TransportCtx::Tcp(tcp_ctx) = ctx {
+                let mut ctx = tcp_ctx.lock().await;
+                let _ = ctx.disconnect().await;
+            }
+            // RTU/ASCII/RtuTcp: transport is dropped, which closes the port/stream.
         }
         self.state = MasterState::Disconnected;
         Ok(())
@@ -181,13 +222,22 @@ impl MasterConnection {
         self.connect().await
     }
 
-    fn get_ctx(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
-        self.ctx.clone().ok_or(MasterError::NotConnected)
+    fn get_transport_ctx(&self) -> Result<TransportCtx, MasterError> {
+        self.transport_ctx.clone().ok_or(MasterError::NotConnected)
     }
 
-    /// Get a handle to the context for external use (e.g., scanning).
+    fn get_tcp_ctx(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
+        match &self.transport_ctx {
+            Some(TransportCtx::Tcp(ctx)) => Ok(ctx.clone()),
+            Some(_) => Err(MasterError::Transport("operation requires TCP transport".into())),
+            None => Err(MasterError::NotConnected),
+        }
+    }
+
+    /// Get a handle to the TCP context for external use (e.g., scanning).
+    /// Returns an error for non-TCP transports.
     pub fn get_ctx_handle(&self) -> Result<Arc<Mutex<client::Context>>, MasterError> {
-        self.ctx.clone().ok_or(MasterError::NotConnected)
+        self.get_tcp_ctx()
     }
 
     fn timeout_duration(&self) -> Duration {
@@ -224,57 +274,22 @@ impl MasterConnection {
         start_address: u16,
         quantity: u16,
     ) -> Result<ReadResult, MasterError> {
-        let ctx = self.get_ctx()?;
-        let mut ctx = ctx.lock().await;
+        let transport_ctx = self.get_transport_ctx()?;
         let timeout = self.timeout_duration();
         let fc = Self::to_function_code(function);
 
         // Log TX
         self.log_tx(fc, &format!("R {} x{}", start_address, quantity)).await;
 
-        let result = match function {
-            ReadFunction::ReadCoils => {
-                let data = tokio::time::timeout(timeout, ctx.read_coils(start_address, quantity))
-                    .await
-                    .map_err(|_| MasterError::Timeout("Read coils timed out".into()))?
-                    .map_err(|e| MasterError::Transport(format!("{e}")))?
-                    .map_err(|e| MasterError::Exception(e))?;
-                ReadResult::Coils(data)
-            }
-            ReadFunction::ReadDiscreteInputs => {
-                let data = tokio::time::timeout(
-                    timeout,
-                    ctx.read_discrete_inputs(start_address, quantity),
-                )
-                .await
-                .map_err(|_| MasterError::Timeout("Read discrete inputs timed out".into()))?
-                .map_err(|e| MasterError::Transport(format!("{e}")))?
-                .map_err(|e| MasterError::Exception(e))?;
-                ReadResult::DiscreteInputs(data)
-            }
-            ReadFunction::ReadHoldingRegisters => {
-                let data = tokio::time::timeout(
-                    timeout,
-                    ctx.read_holding_registers(start_address, quantity),
-                )
-                .await
-                .map_err(|_| MasterError::Timeout("Read holding registers timed out".into()))?
-                .map_err(|e| MasterError::Transport(format!("{e}")))?
-                .map_err(|e| MasterError::Exception(e))?;
-                ReadResult::HoldingRegisters(data)
-            }
-            ReadFunction::ReadInputRegisters => {
-                let data = tokio::time::timeout(
-                    timeout,
-                    ctx.read_input_registers(start_address, quantity),
-                )
-                .await
-                .map_err(|_| MasterError::Timeout("Read input registers timed out".into()))?
-                .map_err(|e| MasterError::Transport(format!("{e}")))?
-                .map_err(|e| MasterError::Exception(e))?;
-                ReadResult::InputRegisters(data)
-            }
-        };
+        let result = execute_read_any(
+            &transport_ctx,
+            self.config.slave_id,
+            function,
+            start_address,
+            quantity,
+            timeout,
+        )
+        .await?;
 
         // Log RX with result data
         let detail = match &result {
@@ -294,14 +309,27 @@ impl MasterConnection {
         address: u16,
         value: bool,
     ) -> Result<(), MasterError> {
-        let ctx = self.get_ctx()?;
-        let mut ctx = ctx.lock().await;
+        let transport_ctx = self.get_transport_ctx()?;
+        let timeout = self.timeout_duration();
         self.log_tx(FunctionCode::WriteSingleCoil, &format!("W {} = {}", address, value)).await;
-        tokio::time::timeout(self.timeout_duration(), ctx.write_single_coil(address, value))
-            .await
-            .map_err(|_| MasterError::Timeout("Write single coil timed out".into()))?
-            .map_err(|e| MasterError::Transport(format!("{e}")))?
-            .map_err(|e| MasterError::Exception(e))?;
+        match &transport_ctx {
+            TransportCtx::Tcp(ctx) => {
+                let mut ctx = ctx.lock().await;
+                tokio::time::timeout(timeout, ctx.write_single_coil(address, value))
+                    .await
+                    .map_err(|_| MasterError::Timeout("Write single coil timed out".into()))?
+                    .map_err(|e| MasterError::Transport(format!("{e}")))?
+                    .map_err(|e| MasterError::Exception(e))?;
+            }
+            other => {
+                let coil_value: u16 = if value { 0xFF00 } else { 0x0000 };
+                let mut pdu = vec![0x05];
+                pdu.extend_from_slice(&address.to_be_bytes());
+                pdu.extend_from_slice(&coil_value.to_be_bytes());
+                let resp = send_pdu_via_transport(other, self.config.slave_id, &pdu, timeout).await?;
+                check_write_response(&resp, 0x05)?;
+            }
+        }
         Ok(())
     }
 
@@ -311,17 +339,26 @@ impl MasterConnection {
         address: u16,
         value: u16,
     ) -> Result<(), MasterError> {
-        let ctx = self.get_ctx()?;
-        let mut ctx = ctx.lock().await;
+        let transport_ctx = self.get_transport_ctx()?;
+        let timeout = self.timeout_duration();
         self.log_tx(FunctionCode::WriteSingleRegister, &format!("W {} = {:#06x}", address, value)).await;
-        tokio::time::timeout(
-            self.timeout_duration(),
-            ctx.write_single_register(address, value),
-        )
-        .await
-        .map_err(|_| MasterError::Timeout("Write single register timed out".into()))?
-        .map_err(|e| MasterError::Transport(format!("{e}")))?
-        .map_err(|e| MasterError::Exception(e))?;
+        match &transport_ctx {
+            TransportCtx::Tcp(ctx) => {
+                let mut ctx = ctx.lock().await;
+                tokio::time::timeout(timeout, ctx.write_single_register(address, value))
+                    .await
+                    .map_err(|_| MasterError::Timeout("Write single register timed out".into()))?
+                    .map_err(|e| MasterError::Transport(format!("{e}")))?
+                    .map_err(|e| MasterError::Exception(e))?;
+            }
+            other => {
+                let mut pdu = vec![0x06];
+                pdu.extend_from_slice(&address.to_be_bytes());
+                pdu.extend_from_slice(&value.to_be_bytes());
+                let resp = send_pdu_via_transport(other, self.config.slave_id, &pdu, timeout).await?;
+                check_write_response(&resp, 0x06)?;
+            }
+        }
         Ok(())
     }
 
@@ -331,17 +368,36 @@ impl MasterConnection {
         address: u16,
         values: &[bool],
     ) -> Result<(), MasterError> {
-        let ctx = self.get_ctx()?;
-        let mut ctx = ctx.lock().await;
+        let transport_ctx = self.get_transport_ctx()?;
+        let timeout = self.timeout_duration();
         self.log_tx(FunctionCode::WriteMultipleCoils, &format!("W {} x{}", address, values.len())).await;
-        tokio::time::timeout(
-            self.timeout_duration(),
-            ctx.write_multiple_coils(address, values),
-        )
-        .await
-        .map_err(|_| MasterError::Timeout("Write multiple coils timed out".into()))?
-        .map_err(|e| MasterError::Transport(format!("{e}")))?
-        .map_err(|e| MasterError::Exception(e))?;
+        match &transport_ctx {
+            TransportCtx::Tcp(ctx) => {
+                let mut ctx = ctx.lock().await;
+                tokio::time::timeout(timeout, ctx.write_multiple_coils(address, values))
+                    .await
+                    .map_err(|_| MasterError::Timeout("Write multiple coils timed out".into()))?
+                    .map_err(|e| MasterError::Transport(format!("{e}")))?
+                    .map_err(|e| MasterError::Exception(e))?;
+            }
+            other => {
+                let quantity = values.len() as u16;
+                let byte_count = (values.len() + 7) / 8;
+                let mut coil_bytes = vec![0u8; byte_count];
+                for (i, &v) in values.iter().enumerate() {
+                    if v {
+                        coil_bytes[i / 8] |= 1 << (i % 8);
+                    }
+                }
+                let mut pdu = vec![0x0F];
+                pdu.extend_from_slice(&address.to_be_bytes());
+                pdu.extend_from_slice(&quantity.to_be_bytes());
+                pdu.push(byte_count as u8);
+                pdu.extend_from_slice(&coil_bytes);
+                let resp = send_pdu_via_transport(other, self.config.slave_id, &pdu, timeout).await?;
+                check_write_response(&resp, 0x0F)?;
+            }
+        }
         Ok(())
     }
 
@@ -351,17 +407,32 @@ impl MasterConnection {
         address: u16,
         values: &[u16],
     ) -> Result<(), MasterError> {
-        let ctx = self.get_ctx()?;
-        let mut ctx = ctx.lock().await;
+        let transport_ctx = self.get_transport_ctx()?;
+        let timeout = self.timeout_duration();
         self.log_tx(FunctionCode::WriteMultipleRegisters, &format!("W {} x{}", address, values.len())).await;
-        tokio::time::timeout(
-            self.timeout_duration(),
-            ctx.write_multiple_registers(address, values),
-        )
-        .await
-        .map_err(|_| MasterError::Timeout("Write multiple registers timed out".into()))?
-        .map_err(|e| MasterError::Transport(format!("{e}")))?
-        .map_err(|e| MasterError::Exception(e))?;
+        match &transport_ctx {
+            TransportCtx::Tcp(ctx) => {
+                let mut ctx = ctx.lock().await;
+                tokio::time::timeout(timeout, ctx.write_multiple_registers(address, values))
+                    .await
+                    .map_err(|_| MasterError::Timeout("Write multiple registers timed out".into()))?
+                    .map_err(|e| MasterError::Transport(format!("{e}")))?
+                    .map_err(|e| MasterError::Exception(e))?;
+            }
+            other => {
+                let quantity = values.len() as u16;
+                let byte_count = (values.len() * 2) as u8;
+                let mut pdu = vec![0x10];
+                pdu.extend_from_slice(&address.to_be_bytes());
+                pdu.extend_from_slice(&quantity.to_be_bytes());
+                pdu.push(byte_count);
+                for v in values {
+                    pdu.extend_from_slice(&v.to_be_bytes());
+                }
+                let resp = send_pdu_via_transport(other, self.config.slave_id, &pdu, timeout).await?;
+                check_write_response(&resp, 0x10)?;
+            }
+        }
         Ok(())
     }
 
@@ -408,7 +479,7 @@ impl MasterConnection {
         // Stop existing poll for this group if any
         self.stop_scan_group(&group.id).await.ok();
 
-        let ctx = self.get_ctx()?;
+        let transport_ctx = self.get_transport_ctx()?;
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
         let (event_tx, event_rx) = mpsc::channel::<PollEvent>(100);
         let timeout = self.timeout_duration();
@@ -418,6 +489,7 @@ impl MasterConnection {
         let interval_ms = group.interval_ms;
         let log_collector = self.log_collector.clone();
         let group_slave_id = group.slave_id;
+        let default_slave_id = self.config.slave_id;
 
         let handle = tokio::spawn(async move {
             let interval = Duration::from_millis(interval_ms);
@@ -427,6 +499,7 @@ impl MasterConnection {
                 ReadFunction::ReadHoldingRegisters => FunctionCode::ReadHoldingRegisters,
                 ReadFunction::ReadInputRegisters => FunctionCode::ReadInputRegisters,
             };
+            let slave_id = group_slave_id.unwrap_or(default_slave_id);
             loop {
                 // Check for shutdown
                 if shutdown_rx.try_recv().is_ok() {
@@ -440,12 +513,22 @@ impl MasterConnection {
                 }
 
                 let result = {
-                    let mut ctx = ctx.lock().await;
-                    // Set slave ID if overridden for this group
-                    if let Some(sid) = group_slave_id {
-                        ctx.set_slave(Slave(sid));
+                    // For TCP with slave_id override, set it before reading
+                    if let TransportCtx::Tcp(ref ctx) = transport_ctx {
+                        if group_slave_id.is_some() {
+                            let mut ctx = ctx.lock().await;
+                            ctx.set_slave(Slave(slave_id));
+                        }
                     }
-                    execute_read(&mut ctx, function, start_address, quantity, timeout).await
+                    execute_read_any(
+                        &transport_ctx,
+                        slave_id,
+                        function,
+                        start_address,
+                        quantity,
+                        timeout,
+                    )
+                    .await
                 };
 
                 // Log RX
@@ -504,20 +587,137 @@ impl MasterConnection {
     }
 }
 
-/// Execute a single read operation on a client context.
-async fn execute_read(
-    ctx: &mut client::Context,
+// ---------------------------------------------------------------------------
+// PDU helpers for non-TCP transports
+// ---------------------------------------------------------------------------
+
+fn build_read_pdu(function: ReadFunction, start_address: u16, quantity: u16) -> Vec<u8> {
+    let fc: u8 = match function {
+        ReadFunction::ReadCoils => 0x01,
+        ReadFunction::ReadDiscreteInputs => 0x02,
+        ReadFunction::ReadHoldingRegisters => 0x03,
+        ReadFunction::ReadInputRegisters => 0x04,
+    };
+    let mut pdu = vec![fc];
+    pdu.extend_from_slice(&start_address.to_be_bytes());
+    pdu.extend_from_slice(&quantity.to_be_bytes());
+    pdu
+}
+
+fn parse_read_response_pdu(
+    function: ReadFunction,
+    response_pdu: &[u8],
+) -> Result<ReadResult, MasterError> {
+    if response_pdu.is_empty() {
+        return Err(MasterError::Transport("empty response".into()));
+    }
+    // Check for exception response (high bit set on function code)
+    if response_pdu[0] & 0x80 != 0 {
+        let exc = response_pdu.get(1).copied().unwrap_or(0);
+        return Err(MasterError::Transport(format!(
+            "Modbus exception: 0x{:02X}",
+            exc
+        )));
+    }
+    let byte_count = response_pdu.get(1).copied().unwrap_or(0) as usize;
+    let data = if response_pdu.len() > 2 {
+        &response_pdu[2..]
+    } else {
+        &[]
+    };
+
+    match function {
+        ReadFunction::ReadCoils | ReadFunction::ReadDiscreteInputs => {
+            let mut bits = Vec::new();
+            for byte_idx in 0..byte_count {
+                for bit_idx in 0..8 {
+                    if byte_idx < data.len() {
+                        bits.push((data[byte_idx] >> bit_idx) & 1 == 1);
+                    }
+                }
+            }
+            match function {
+                ReadFunction::ReadCoils => Ok(ReadResult::Coils(bits)),
+                _ => Ok(ReadResult::DiscreteInputs(bits)),
+            }
+        }
+        ReadFunction::ReadHoldingRegisters | ReadFunction::ReadInputRegisters => {
+            let mut regs = Vec::new();
+            for chunk in data.chunks(2) {
+                if chunk.len() == 2 {
+                    regs.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+                }
+            }
+            match function {
+                ReadFunction::ReadHoldingRegisters => Ok(ReadResult::HoldingRegisters(regs)),
+                _ => Ok(ReadResult::InputRegisters(regs)),
+            }
+        }
+    }
+}
+
+/// Send a raw PDU via a non-TCP transport and return the response PDU.
+async fn send_pdu_via_transport(
+    ctx: &TransportCtx,
+    slave_id: u8,
+    pdu: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, MasterError> {
+    match ctx {
+        TransportCtx::Rtu(t) => t
+            .request(slave_id, pdu, timeout)
+            .await
+            .map_err(|e| MasterError::Transport(e)),
+        TransportCtx::Ascii(t) => t
+            .request(slave_id, pdu, timeout)
+            .await
+            .map_err(|e| MasterError::Transport(e)),
+        TransportCtx::RtuTcp(t) => t
+            .request(slave_id, pdu, timeout)
+            .await
+            .map_err(|e| MasterError::Transport(e)),
+        TransportCtx::Tcp(_) => Err(MasterError::Transport(
+            "send_pdu_via_transport called for TCP".into(),
+        )),
+    }
+}
+
+/// Check a write response PDU for exception.
+fn check_write_response(resp: &[u8], expected_fc: u8) -> Result<(), MasterError> {
+    if resp.is_empty() {
+        return Err(MasterError::Transport("empty response".into()));
+    }
+    if resp[0] & 0x80 != 0 {
+        let exc = resp.get(1).copied().unwrap_or(0);
+        return Err(MasterError::Transport(format!(
+            "Modbus exception: 0x{:02X}",
+            exc
+        )));
+    }
+    if resp[0] != expected_fc {
+        return Err(MasterError::Transport(format!(
+            "unexpected function code in response: expected 0x{:02X}, got 0x{:02X}",
+            expected_fc, resp[0]
+        )));
+    }
+    Ok(())
+}
+
+/// Execute a read via TCP tokio_modbus context.
+async fn execute_read_tcp(
+    ctx: &Arc<Mutex<client::Context>>,
     function: ReadFunction,
     start_address: u16,
     quantity: u16,
     timeout: Duration,
 ) -> Result<ReadResult, MasterError> {
+    let mut ctx = ctx.lock().await;
     match function {
         ReadFunction::ReadCoils => {
             let data =
                 tokio::time::timeout(timeout, ctx.read_coils(start_address, quantity))
                     .await
-                    .map_err(|_| MasterError::Timeout("Poll read timed out".into()))?
+                    .map_err(|_| MasterError::Timeout("Read timed out".into()))?
                     .map_err(|e| MasterError::Transport(format!("{e}")))?
                     .map_err(|e| MasterError::Exception(e))?;
             Ok(ReadResult::Coils(data))
@@ -528,7 +728,7 @@ async fn execute_read(
                 ctx.read_discrete_inputs(start_address, quantity),
             )
             .await
-            .map_err(|_| MasterError::Timeout("Poll read timed out".into()))?
+            .map_err(|_| MasterError::Timeout("Read timed out".into()))?
             .map_err(|e| MasterError::Transport(format!("{e}")))?
             .map_err(|e| MasterError::Exception(e))?;
             Ok(ReadResult::DiscreteInputs(data))
@@ -539,7 +739,7 @@ async fn execute_read(
                 ctx.read_holding_registers(start_address, quantity),
             )
             .await
-            .map_err(|_| MasterError::Timeout("Poll read timed out".into()))?
+            .map_err(|_| MasterError::Timeout("Read timed out".into()))?
             .map_err(|e| MasterError::Transport(format!("{e}")))?
             .map_err(|e| MasterError::Exception(e))?;
             Ok(ReadResult::HoldingRegisters(data))
@@ -550,10 +750,31 @@ async fn execute_read(
                 ctx.read_input_registers(start_address, quantity),
             )
             .await
-            .map_err(|_| MasterError::Timeout("Poll read timed out".into()))?
+            .map_err(|_| MasterError::Timeout("Read timed out".into()))?
             .map_err(|e| MasterError::Transport(format!("{e}")))?
             .map_err(|e| MasterError::Exception(e))?;
             Ok(ReadResult::InputRegisters(data))
+        }
+    }
+}
+
+/// Execute a read operation on any transport type.
+async fn execute_read_any(
+    ctx: &TransportCtx,
+    slave_id: u8,
+    function: ReadFunction,
+    start_address: u16,
+    quantity: u16,
+    timeout: Duration,
+) -> Result<ReadResult, MasterError> {
+    match ctx {
+        TransportCtx::Tcp(tcp_ctx) => {
+            execute_read_tcp(tcp_ctx, function, start_address, quantity, timeout).await
+        }
+        other => {
+            let pdu = build_read_pdu(function, start_address, quantity);
+            let resp = send_pdu_via_transport(other, slave_id, &pdu, timeout).await?;
+            parse_read_response_pdu(function, &resp)
         }
     }
 }
@@ -797,7 +1018,12 @@ mod tests {
 
     #[test]
     fn test_master_connection_initial_state() {
-        let conn = MasterConnection::new(MasterConfig::default());
+        let config = MasterConfig::default();
+        let transport = Transport::Tcp {
+            host: config.target_address.clone(),
+            port: config.port,
+        };
+        let conn = MasterConnection::new(config, transport);
         assert_eq!(conn.state(), MasterState::Disconnected);
         assert!(!conn.is_polling());
     }

@@ -16,6 +16,7 @@ use modbussim_core::master::{
 };
 use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
+use modbussim_core::transport::Transport;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -140,8 +141,12 @@ pub async fn create_master_connection(
         timeout_ms: request.timeout_ms.unwrap_or(3000),
     };
 
+    let transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
     let log_collector = Arc::new(LogCollector::new());
-    let connection = MasterConnection::new(config.clone()).with_log_collector(log_collector.clone());
+    let connection = MasterConnection::new(config.clone(), transport).with_log_collector(log_collector.clone());
 
     let info = MasterConnectionInfo {
         id: id.clone(),

@@ -1,5 +1,6 @@
 /// Test: connect to the user's slave at port 5020
 use modbussim_core::master::{MasterConfig, MasterConnection, ReadFunction};
+use modbussim_core::transport::Transport;
 use std::time::Duration;
 
 #[tokio::main]
@@ -13,8 +14,12 @@ async fn main() {
         timeout_ms: 5000,
     };
 
+    let transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
     // No log collector to avoid any logging issues
-    let mut conn = MasterConnection::new(config);
+    let mut conn = MasterConnection::new(config, transport);
 
     println!("Connecting...");
     match conn.connect().await {

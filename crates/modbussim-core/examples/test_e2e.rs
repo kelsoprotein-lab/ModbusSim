@@ -40,8 +40,12 @@ async fn main() {
         slave_id: 1,
         timeout_ms: 3000,
     };
+    let master_transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
     let log_collector = Arc::new(LogCollector::new());
-    let mut master = MasterConnection::new(config).with_log_collector(log_collector.clone());
+    let mut master = MasterConnection::new(config, master_transport).with_log_collector(log_collector.clone());
     println!("       State: {:?}\n", master.state());
 
     // Step 3: Connect (simulates connect_master command)
@@ -59,6 +63,7 @@ async fn main() {
         quantity: 10,
         interval_ms: 500,
         enabled: true,
+        slave_id: None,
     };
     println!("       Scan group created: {}\n", scan_group.name);
 
