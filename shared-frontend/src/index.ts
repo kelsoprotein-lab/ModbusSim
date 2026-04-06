@@ -24,5 +24,9 @@ export {
 // Log panel
 export { useLogPanel } from './composables/useLogPanel'
 
+// Error handler
+export { useErrorHandler } from './composables/useErrorHandler'
+export type { Toast } from './composables/useErrorHandler'
+
 // Components
 export { default as AppDialog } from './components/AppDialog.vue'
