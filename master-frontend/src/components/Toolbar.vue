@@ -3,10 +3,10 @@ import { inject, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
+import type { showAlert as ShowAlert, showConfirm as ShowConfirm } from '../composables/useDialog'
 import ScanDialog from './ScanDialog.vue'
 
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
+const { showAlert, showConfirm } = inject<{ showAlert: typeof ShowAlert; showConfirm: typeof ShowConfirm }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
 const refreshTree = inject<() => void>('refreshTree')!
@@ -146,6 +146,10 @@ async function connectMaster() {
     await invoke('connect_master', { connectionId: selectedConnectionId.value })
     selectedConnectionState.value = 'Connected'
     refreshTree()
+    const doScan = await showConfirm('连接成功，是否扫描从站设备？')
+    if (doScan) {
+      showScanDialog.value = true
+    }
   } catch (e) {
     await showAlert(String(e))
   }
