@@ -1,3 +1,4 @@
+pub mod error;
 pub mod pdu;
 pub mod transport;
 pub mod register;
