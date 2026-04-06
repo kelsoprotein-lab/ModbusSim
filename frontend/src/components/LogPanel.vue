@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useLogPanel } from 'shared-frontend'
+import { useLogPanel, useLogFilter } from 'shared-frontend'
 
 interface Props {
   expanded: boolean
@@ -13,6 +13,7 @@ const emit = defineEmits<{
 }>()
 
 const { logs, isLoading, error, loadLogs, clearLogs, exportLogsCsv } = useLogPanel()
+const { searchQuery, directionFilter, fcFilter, filteredLogs, availableFcs, filterSummary } = useLogFilter(logs)
 
 const connectionList = ref<{ id: string; label: string }[]>([])
 const selectedConnId = ref('')
@@ -111,9 +112,23 @@ onMounted(async () => {
       </div>
     </div>
 
+    <div v-if="expanded" class="log-filters">
+      <input v-model="searchQuery" type="text" class="filter-input" placeholder="搜索..." />
+      <select v-model="directionFilter" class="filter-select">
+        <option value="all">全部</option>
+        <option value="rx">RX</option>
+        <option value="tx">TX</option>
+      </select>
+      <select v-model="fcFilter" class="filter-select">
+        <option value="all">全部FC</option>
+        <option v-for="fc in availableFcs" :key="fc" :value="fc">{{ fc }}</option>
+      </select>
+      <span v-if="filterSummary" class="filter-summary">{{ filterSummary }}</span>
+    </div>
+
     <div v-if="expanded" class="log-body">
       <div v-if="isLoading" class="log-loading">加载中...</div>
-      <div v-else-if="logs.length === 0" class="log-empty">暂无日志</div>
+      <div v-else-if="filteredLogs.length === 0" class="log-empty">暂无日志</div>
       <table v-else class="log-table">
         <thead>
           <tr>
@@ -124,7 +139,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, idx) in logs" :key="idx">
+          <tr v-for="(log, idx) in filteredLogs" :key="idx">
             <td class="col-time">{{ formatTimestamp(log.timestamp) }}</td>
             <td :class="['col-dir', log.direction.toLowerCase()]">{{ log.direction }}</td>
             <td class="col-func">{{ log.function_code }}</td>
@@ -262,5 +277,36 @@ onMounted(async () => {
 
 .col-detail {
   font-family: monospace;
+}
+
+.log-filters {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  align-items: center;
+  border-bottom: 1px solid #313244;
+}
+.filter-input {
+  flex: 1;
+  padding: 3px 8px;
+  background: #11111b;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 12px;
+}
+.filter-input:focus { outline: none; border-color: #89b4fa; }
+.filter-select {
+  padding: 3px 6px;
+  background: #11111b;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 12px;
+}
+.filter-summary {
+  font-size: 11px;
+  color: #89b4fa;
+  white-space: nowrap;
 }
 </style>

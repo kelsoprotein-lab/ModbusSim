@@ -23,6 +23,8 @@ export {
 
 // Log panel
 export { useLogPanel } from './composables/useLogPanel'
+export { useLogFilter } from './composables/useLogFilter'
+export type { DirectionFilter, FcFilter } from './composables/useLogFilter'
 
 // Error handler
 export { useErrorHandler } from './composables/useErrorHandler'
