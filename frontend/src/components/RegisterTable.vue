@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, inject, watch, computed, nextTick, provide, onUnmounted, type Ref } from 'vue'
+import { ref, inject, watch, computed, provide, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import RegisterModal from './RegisterModal.vue'
@@ -36,7 +37,7 @@ const isLoading = ref(false)
 const error = ref<string | null>(null)
 const searchQuery = ref('')
 const contextMenu = ref({ show: false, x: 0, y: 0, reg: null as Register | null })
-const scrollContainer = ref<HTMLDivElement | null>(null)
+// scrollContainer removed — replaced by scrollContainerRef for virtual scrolling
 const addrMode = ref<'hex' | 'dec'>('hex')
 provide('addrMode', addrMode)
 const showAddModal = ref(false)
@@ -97,6 +98,17 @@ const filteredRegisters = computed(() => {
   const lower = q.toLowerCase()
   return result.filter(r => r.name.toLowerCase().includes(lower))
 })
+
+// Virtual scrolling
+const scrollContainerRef = ref<HTMLElement | null>(null)
+const ROW_HEIGHT = 32
+
+const rowVirtualizer = useVirtualizer(computed(() => ({
+  count: filteredRegisters.value.length,
+  getScrollElement: () => scrollContainerRef.value,
+  estimateSize: () => ROW_HEIGHT,
+  overscan: 5,
+})))
 
 // Clear selection when search changes
 watch(searchQuery, () => {
@@ -253,15 +265,8 @@ function handleTableKeydown(e: KeyboardEvent) {
       lastClickedIndex.value = nextIdx
       emitSelection()
 
-      // Scroll into view
-      nextTick(() => {
-        const container = scrollContainer.value
-        if (!container) return
-        const rows = container.querySelectorAll('tbody tr')
-        if (rows[nextIdx]) {
-          rows[nextIdx].scrollIntoView({ block: 'nearest' })
-        }
-      })
+      // Scroll into view via virtualizer
+      rowVirtualizer.value.scrollToIndex(nextIdx, { align: 'auto' })
     }
   }
 }
@@ -400,7 +405,7 @@ function formatRegType(type: string): string {
 
     <div
       v-else
-      ref="scrollContainer"
+      ref="scrollContainerRef"
       class="table-scroll-container"
       tabindex="0"
       @keydown="handleTableKeydown"
@@ -414,43 +419,51 @@ function formatRegType(type: string): string {
             <th>备注</th>
           </tr>
         </thead>
-        <tbody>
-          <tr
-            v-for="reg in filteredRegisters"
-            :key="`${reg.register_type}-${reg.address}`"
-            :class="{ selected: isSelected(reg) }"
-            @click="selectRow($event, reg)"
-          >
-            <td class="col-addr">{{ formatAddress(reg) }}</td>
-            <td class="col-name">{{ reg.name || '-' }}</td>
-            <td class="col-value" @dblclick.stop="startEdit(reg)">
-              <template v-if="editingCell?.address === reg.address && editingCell?.register_type === reg.register_type">
-                <input
-                  v-model="editValue"
-                  class="edit-input"
-                  type="number"
-                  autofocus
-                  @blur="commitEdit"
-                  @keydown="handleEditKeydown"
-                  @click.stop
-                />
-              </template>
-              <template v-else>
-                <span
-                  v-if="reg.register_type === 'coil' || reg.register_type === 'discrete_input'"
-                  :class="['bool-value', getValue(reg) ? 'on' : 'off']"
-                >
-                  {{ getValue(reg) ? 'ON' : 'OFF' }}
-                </span>
-                <span v-else class="num-value">{{ formatValue(getValue(reg)) }}</span>
-              </template>
-            </td>
-            <td class="col-comment" @contextmenu.prevent="showContextMenu($event, reg)">
-              {{ reg.comment || '-' }}
-            </td>
-          </tr>
-        </tbody>
       </table>
+      <div :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }">
+        <div
+          v-for="virtualRow in rowVirtualizer.getVirtualItems()"
+          :key="filteredRegisters[virtualRow.index]?.address ?? virtualRow.index"
+          class="virtual-row"
+          :class="{ selected: isSelected(filteredRegisters[virtualRow.index]) }"
+          :style="{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: `${ROW_HEIGHT}px`,
+            transform: `translateY(${virtualRow.start}px)`,
+          }"
+          @click="selectRow($event, filteredRegisters[virtualRow.index])"
+          @contextmenu.prevent="showContextMenu($event, filteredRegisters[virtualRow.index])"
+        >
+          <span class="vcol col-addr">{{ formatAddress(filteredRegisters[virtualRow.index]) }}</span>
+          <span class="vcol col-name">{{ filteredRegisters[virtualRow.index].name || '-' }}</span>
+          <span class="vcol col-value" @dblclick.stop="startEdit(filteredRegisters[virtualRow.index])">
+            <template v-if="editingCell?.address === filteredRegisters[virtualRow.index].address && editingCell?.register_type === filteredRegisters[virtualRow.index].register_type">
+              <input
+                v-model="editValue"
+                class="edit-input"
+                type="number"
+                autofocus
+                @blur="commitEdit"
+                @keydown="handleEditKeydown"
+                @click.stop
+              />
+            </template>
+            <template v-else>
+              <span
+                v-if="filteredRegisters[virtualRow.index].register_type === 'coil' || filteredRegisters[virtualRow.index].register_type === 'discrete_input'"
+                :class="['bool-value', getValue(filteredRegisters[virtualRow.index]) ? 'on' : 'off']"
+              >
+                {{ getValue(filteredRegisters[virtualRow.index]) ? 'ON' : 'OFF' }}
+              </span>
+              <span v-else class="num-value">{{ formatValue(getValue(filteredRegisters[virtualRow.index])) }}</span>
+            </template>
+          </span>
+          <span class="vcol col-comment">{{ filteredRegisters[virtualRow.index].comment || '-' }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Context Menu -->
@@ -593,6 +606,7 @@ function formatRegType(type: string): string {
   flex: 1;
   overflow-y: auto;
   outline: none;
+  contain: strict;
 }
 
 .table {
@@ -698,6 +712,59 @@ function formatRegType(type: string): string {
   color: #cdd6f4;
   font-family: monospace;
   font-size: 12px;
+}
+
+/* Virtual rows */
+.virtual-row {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid #1e1e2e;
+}
+
+.virtual-row:hover {
+  background: #1e1e2e;
+}
+
+.virtual-row.selected {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
+.virtual-row.selected .col-addr {
+  color: #1e1e2e;
+}
+
+.virtual-row.selected .col-comment {
+  color: #45475a;
+}
+
+.vcol {
+  padding: 5px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcol.col-addr {
+  width: 80px;
+  min-width: 80px;
+}
+
+.vcol.col-name {
+  width: 120px;
+  min-width: 120px;
+}
+
+.vcol.col-value {
+  width: 100px;
+  min-width: 100px;
+}
+
+.vcol.col-comment {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Context Menu */
