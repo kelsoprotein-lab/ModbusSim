@@ -8,7 +8,8 @@
 /// 7. Write a value and verify it's updated on next poll
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,8 +21,8 @@ async fn main() {
 
     // Step 1: Start slave
     println!("[1/7] Starting slave on port 15021...");
-    let transport = TransportConfig {
-        bind_address: "0.0.0.0".to_string(),
+    let transport = Transport::Tcp {
+        host: "0.0.0.0".to_string(),
         port: 15021,
     };
     let mut slave = SlaveConnection::new(transport);

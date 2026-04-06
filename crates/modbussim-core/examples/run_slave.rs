@@ -1,11 +1,12 @@
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let transport = TransportConfig {
-        bind_address: "0.0.0.0".to_string(),
+    let transport = Transport::Tcp {
+        host: "0.0.0.0".to_string(),
         port: 5020,
     };
     let log = Arc::new(LogCollector::new());

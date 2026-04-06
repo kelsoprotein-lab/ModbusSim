@@ -11,7 +11,8 @@ use modbussim_core::log_helpers;
 use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
 use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::project::{self, ProjectFile};
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use modbussim_core::tools;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -63,9 +64,11 @@ pub async fn create_slave_connection(
         id
     };
 
-    let transport = TransportConfig {
-        bind_address: request.bind_address.unwrap_or_else(|| "0.0.0.0".to_string()),
-        port: request.port,
+    let host = request.bind_address.unwrap_or_else(|| "0.0.0.0".to_string());
+    let port = request.port;
+    let transport = Transport::Tcp {
+        host: host.clone(),
+        port,
     };
 
     let log_collector = Arc::new(LogCollector::new());
@@ -84,8 +87,8 @@ pub async fn create_slave_connection(
 
     let info = SlaveConnectionInfo {
         id: id.clone(),
-        bind_address: connection.transport.bind_address.clone(),
-        port: connection.transport.port,
+        bind_address: host,
+        port,
         state: format!("{:?}", connection.state()),
         device_count: 1,
     };
@@ -180,10 +183,16 @@ pub async fn list_slave_connections(
 
     for (id, conn_state) in connections.iter() {
         let device_count = conn_state.connection.devices.read().await.len();
+        let (bind_address, port) = match &conn_state.connection.transport {
+            Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
+                (host.clone(), *port)
+            }
+            Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
+        };
         result.push(SlaveConnectionInfo {
             id: id.clone(),
-            bind_address: conn_state.connection.transport.bind_address.clone(),
-            port: conn_state.connection.transport.port,
+            bind_address,
+            port,
             state: format!("{:?}", conn_state.connection.state()),
             device_count,
         });
@@ -657,9 +666,15 @@ pub async fn export_app_state(
             });
         }
 
+        let (bind_address, port) = match &conn_state.connection.transport {
+            Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
+                (host.clone(), *port)
+            }
+            Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
+        };
         persisted_connections.push(PersistedSlaveConnection {
-            bind_address: conn_state.connection.transport.bind_address.clone(),
-            port: conn_state.connection.transport.port,
+            bind_address,
+            port,
             devices: persisted_devices,
         });
     }
@@ -699,8 +714,8 @@ pub async fn import_app_state(
             id
         };
 
-        let transport = TransportConfig {
-            bind_address: conn_input.bind_address.clone(),
+        let transport = Transport::Tcp {
+            host: conn_input.bind_address.clone(),
             port: conn_input.port,
         };
 
@@ -828,13 +843,46 @@ pub async fn save_project_file(
 
     for (id, conn_state) in connections.iter() {
         let conn = &conn_state.connection;
+        let (name, proj_transport) = match &conn.transport {
+            Transport::Tcp { host, port } => (
+                format!("{}:{}", host, port),
+                project::TransportConfig::Tcp {
+                    host: host.clone(),
+                    port: *port,
+                },
+            ),
+            Transport::RtuOverTcp { host, port } => (
+                format!("rtu-tcp://{}:{}", host, port),
+                project::TransportConfig::RtuOverTcp {
+                    host: host.clone(),
+                    port: *port,
+                },
+            ),
+            Transport::Rtu(sc) => (
+                format!("rtu://{}", sc.port),
+                project::TransportConfig::Rtu {
+                    port: sc.port.clone(),
+                    baud_rate: sc.baud_rate,
+                    data_bits: sc.data_bits,
+                    stop_bits: sc.stop_bits,
+                    parity: format!("{:?}", sc.parity).to_lowercase(),
+                },
+            ),
+            Transport::Ascii(sc) => (
+                format!("ascii://{}", sc.port),
+                project::TransportConfig::Ascii {
+                    port: sc.port.clone(),
+                    baud_rate: sc.baud_rate,
+                    data_bits: sc.data_bits,
+                    stop_bits: sc.stop_bits,
+                    parity: format!("{:?}", sc.parity).to_lowercase(),
+                },
+            ),
+        };
         let conn_config = project::ConnectionConfig {
             id: id.clone(),
-            name: format!("{}:{}", conn.transport.bind_address, conn.transport.port),
-            transport: project::TransportConfig::Tcp {
-                host: conn.transport.bind_address.clone(),
-                port: conn.transport.port,
-            },
+            name,
+            transport: proj_transport,
             devices: vec![],  // Simplified for Phase 1 - register serialization will be added later
             scan_groups: vec![],
         };

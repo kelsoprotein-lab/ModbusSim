@@ -2,7 +2,8 @@
 /// This reproduces the exact Tauri app scenario that was causing Broken pipe.
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,8 +15,8 @@ async fn main() {
 
     // 1) Start slave WITH log collector (same as Tauri slave app does)
     println!("[1] Starting slave with LogCollector on port 15023...");
-    let transport = TransportConfig {
-        bind_address: "0.0.0.0".to_string(),
+    let transport = Transport::Tcp {
+        host: "0.0.0.0".to_string(),
         port: 15023,
     };
     let slave_log = Arc::new(LogCollector::new());

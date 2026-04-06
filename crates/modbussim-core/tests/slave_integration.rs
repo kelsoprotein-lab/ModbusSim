@@ -1,11 +1,12 @@
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use std::net::SocketAddr;
 use tokio_modbus::prelude::*;
 
 /// Helper: start a slave connection on the given port with pre-configured devices.
 async fn start_slave(port: u16) -> SlaveConnection {
-    let transport = TransportConfig {
-        bind_address: "127.0.0.1".to_string(),
+    let transport = Transport::Tcp {
+        host: "127.0.0.1".to_string(),
         port,
     };
     let mut conn = SlaveConnection::new(transport);

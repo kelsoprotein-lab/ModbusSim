@@ -2,12 +2,13 @@ use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterError, MasterState, PollConfig, PollEvent, ReadFunction,
     ReadResult,
 };
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 
 /// Helper: start a slave on the given port with a device at slave_id=1.
 async fn start_slave(port: u16) -> SlaveConnection {
-    let transport = TransportConfig {
-        bind_address: "127.0.0.1".to_string(),
+    let transport = Transport::Tcp {
+        host: "127.0.0.1".to_string(),
         port,
     };
     let mut conn = SlaveConnection::new(transport);
