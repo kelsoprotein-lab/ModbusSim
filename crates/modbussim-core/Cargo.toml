@@ -14,6 +14,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 log = "0.4"
 rand = "0.8"
 serialport = "4"
+tokio-serial = "5.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

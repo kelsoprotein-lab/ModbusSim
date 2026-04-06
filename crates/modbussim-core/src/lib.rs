@@ -11,3 +11,4 @@ pub mod tools;
 pub mod frame;
 pub mod parse;
 pub mod project;
+pub mod rtu_slave;
