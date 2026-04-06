@@ -139,6 +139,18 @@ const isBoolScanGroup = computed(() => {
 
 const isFloat = computed(() => displayFormat.value === 'float32_abcd' || displayFormat.value === 'float32_cdab')
 
+// Filtered values (before display format transform)
+const filteredValues = computed(() => {
+  if (!searchFilter.value) return values.value
+  const q = searchFilter.value.toLowerCase()
+  return values.value.filter(v => {
+    const hexAddr = '0x' + v.address.toString(16).toUpperCase().padStart(4, '0')
+    return hexAddr.toLowerCase().includes(q) ||
+      v.address.toString().includes(q) ||
+      v.display_value.toLowerCase().includes(q)
+  })
+})
+
 // Build display rows: for float32 formats, merge consecutive register pairs
 interface DisplayRow {
   address: number
@@ -227,18 +239,6 @@ const rowVirtualizer = useVirtualizer(computed(() => ({
   estimateSize: () => ROW_HEIGHT,
   overscan: 5,
 })))
-
-// Filtered values (before display format transform)
-const filteredValues = computed(() => {
-  if (!searchFilter.value) return values.value
-  const q = searchFilter.value.toLowerCase()
-  return values.value.filter(v => {
-    const hexAddr = '0x' + v.address.toString(16).toUpperCase().padStart(4, '0')
-    return hexAddr.toLowerCase().includes(q) ||
-      v.address.toString().includes(q) ||
-      v.display_value.toLowerCase().includes(q)
-  })
-})
 
 function fmtAddress(addr: number): string {
   if (addrMode.value === 'dec') return addr.toString()
