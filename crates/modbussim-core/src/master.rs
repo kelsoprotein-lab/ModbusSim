@@ -1,6 +1,7 @@
 use crate::ascii_master::AsciiMasterTransport;
 use crate::log_collector::LogCollector;
 use crate::log_entry::{Direction, FunctionCode, LogEntry};
+use crate::reconnect::ReconnectPolicy;
 use crate::rtu_master::RtuMasterTransport;
 use crate::rtu_tcp_master::RtuTcpMasterTransport;
 use crate::transport::Transport;
@@ -44,6 +45,7 @@ impl Default for MasterConfig {
 pub enum MasterState {
     Disconnected,
     Connected,
+    Reconnecting,
     Error,
 }
 
@@ -121,6 +123,8 @@ enum TransportCtx {
 pub struct MasterConnection {
     pub config: MasterConfig,
     pub transport: Transport,
+    pub reconnect_policy: ReconnectPolicy,
+    reconnect_handle: Option<tokio::task::JoinHandle<()>>,
     state: MasterState,
     transport_ctx: Option<TransportCtx>,
     poll_tasks: HashMap<String, PollTaskHandle>,
@@ -132,6 +136,8 @@ impl MasterConnection {
         Self {
             config,
             transport,
+            reconnect_policy: ReconnectPolicy::default(),
+            reconnect_handle: None,
             state: MasterState::Disconnected,
             transport_ctx: None,
             poll_tasks: HashMap::new(),
