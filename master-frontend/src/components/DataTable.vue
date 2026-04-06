@@ -139,7 +139,6 @@ const isBoolScanGroup = computed(() => {
 
 const isFloat = computed(() => displayFormat.value === 'float32_abcd' || displayFormat.value === 'float32_cdab')
 
-// Filtered values (before display format transform)
 const filteredValues = computed(() => {
   if (!searchFilter.value) return values.value
   const q = searchFilter.value.toLowerCase()
