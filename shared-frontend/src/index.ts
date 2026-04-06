@@ -23,6 +23,12 @@ export {
 
 // Log panel
 export { useLogPanel } from './composables/useLogPanel'
+export { useLogFilter } from './composables/useLogFilter'
+export type { DirectionFilter, FcFilter } from './composables/useLogFilter'
+
+// Error handler
+export { useErrorHandler } from './composables/useErrorHandler'
+export type { Toast } from './composables/useErrorHandler'
 
 // Components
 export { default as AppDialog } from './components/AppDialog.vue'

@@ -2,6 +2,7 @@
 import { ref, inject, watch, onMounted, onUnmounted, computed, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { ScanGroupInfo, RegisterValueDto, PollDataPayload, ReadResultDto } from '../types'
 
 const emit = defineEmits<{
@@ -216,6 +217,17 @@ const displayRows = computed<DisplayRow[]>(() => {
   })
 })
 
+// Virtual scrolling
+const scrollContainerRef = ref<HTMLElement | null>(null)
+const ROW_HEIGHT = 32
+
+const rowVirtualizer = useVirtualizer(computed(() => ({
+  count: displayRows.value.length,
+  getScrollElement: () => scrollContainerRef.value,
+  estimateSize: () => ROW_HEIGHT,
+  overscan: 5,
+})))
+
 // Filtered values (before display format transform)
 const filteredValues = computed(() => {
   if (!searchFilter.value) return values.value
@@ -337,7 +349,7 @@ const valueColumnLabel = computed(() => {
         <div class="error-text">{{ errorMsg }}</div>
       </div>
 
-      <div v-else class="table-scroll">
+      <div v-else ref="scrollContainerRef" class="table-scroll">
         <table class="table">
           <thead>
             <tr>
@@ -347,32 +359,41 @@ const valueColumnLabel = computed(() => {
               <th class="col-display">{{ valueColumnLabel }}</th>
             </tr>
           </thead>
-          <tbody>
-            <tr
-              v-for="(row, index) in displayRows"
-              :key="row.address"
-              :class="{ selected: selectedIndices.has(index) }"
-              @click="handleRowClick(index, $event)"
-            >
-              <td class="col-addr">{{ fmtAddress(row.address) }}</td>
-
-              <!-- Bool -->
-              <template v-if="row.is_bool">
-                <td class="col-display">
-                  <span :class="['bool-value', row.raw_value !== 0 ? 'on' : 'off']">
-                    {{ row.raw_value !== 0 ? 'ON' : 'OFF' }}
-                  </span>
-                </td>
-              </template>
-
-              <!-- Register -->
-              <template v-else>
-                <td class="col-raw">{{ row.rawDisplay }}</td>
-                <td class="col-display">{{ row.valueDisplay }}</td>
-              </template>
-            </tr>
-          </tbody>
         </table>
+        <div :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }">
+          <div
+            v-for="virtualRow in rowVirtualizer.getVirtualItems()"
+            :key="displayRows[virtualRow.index]?.address ?? virtualRow.index"
+            class="virtual-row"
+            :class="{ selected: selectedIndices.has(virtualRow.index) }"
+            :style="{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: `${ROW_HEIGHT}px`,
+              transform: `translateY(${virtualRow.start}px)`,
+            }"
+            @click="handleRowClick(virtualRow.index, $event)"
+          >
+            <span class="vcol col-addr">{{ fmtAddress(displayRows[virtualRow.index].address) }}</span>
+
+            <!-- Bool -->
+            <template v-if="displayRows[virtualRow.index].is_bool">
+              <span class="vcol col-display">
+                <span :class="['bool-value', displayRows[virtualRow.index].raw_value !== 0 ? 'on' : 'off']">
+                  {{ displayRows[virtualRow.index].raw_value !== 0 ? 'ON' : 'OFF' }}
+                </span>
+              </span>
+            </template>
+
+            <!-- Register -->
+            <template v-else>
+              <span class="vcol col-raw">{{ displayRows[virtualRow.index].rawDisplay }}</span>
+              <span class="vcol col-display">{{ displayRows[virtualRow.index].valueDisplay }}</span>
+            </template>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -489,6 +510,7 @@ const valueColumnLabel = computed(() => {
 .table-scroll {
   flex: 1;
   overflow-y: auto;
+  contain: strict;
 }
 
 .table {
@@ -563,5 +585,52 @@ const valueColumnLabel = computed(() => {
 .bool-value.off {
   background: #45475a;
   color: #6c7086;
+}
+
+/* Virtual rows */
+.virtual-row {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid #1e1e2e;
+}
+
+.virtual-row:hover {
+  background: #1e1e2e;
+}
+
+.virtual-row.selected {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
+.virtual-row.selected .col-addr {
+  color: #1e1e2e;
+}
+
+.vcol {
+  padding: 4px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vcol.col-addr {
+  width: 90px;
+  min-width: 90px;
+}
+
+.vcol.col-raw {
+  width: 120px;
+  min-width: 120px;
+  font-family: monospace;
+  color: #6c7086;
+}
+
+.vcol.col-display {
+  flex: 1;
+  min-width: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 </style>

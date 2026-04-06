@@ -47,6 +47,11 @@ pub fn run() {
             commands::load_project_file,
             // Serial port commands
             commands::list_serial_ports,
+            // Data source commands
+            commands::set_data_source,
+            commands::remove_data_source,
+            commands::list_data_sources,
+            commands::start_data_source_runner,
         ])
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
