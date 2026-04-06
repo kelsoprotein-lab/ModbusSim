@@ -42,10 +42,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # --- Install all frontend dependencies (npm workspaces) ---
+      - name: Install frontend dependencies
+        run: npm install
+
       # --- ModbusSlave ---
-      - name: Install and build slave frontend
+      - name: Build slave frontend
         working-directory: frontend
-        run: npm install && npm run build
+        run: npm run build
 
       - name: Build and release ModbusSlave
         uses: tauri-apps/tauri-action@v0
@@ -67,9 +71,9 @@ jobs:
           args: ${{ matrix.args }}
 
       # --- ModbusMaster ---
-      - name: Install and build master frontend
+      - name: Build master frontend
         working-directory: master-frontend
-        run: npm install && npm run build
+        run: npm run build
 
       - name: Build and release ModbusMaster
         uses: tauri-apps/tauri-action@v0
