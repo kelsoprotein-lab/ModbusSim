@@ -5,6 +5,7 @@
 use crate::state::{
     AppState, RegisterValueInfo, SlaveConnectionInfo, SlaveConnectionState, SlaveDeviceInfo,
 };
+use modbussim_core::data_source::{DataSource, DataSourceConfig, DataSourceState};
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::log_helpers;
@@ -953,4 +954,129 @@ pub async fn load_project_file(path: String) -> Result<ProjectFile, String> {
 #[tauri::command]
 pub fn list_serial_ports() -> Vec<transport::SerialPortInfo> {
     transport::list_serial_ports()
+}
+
+// ---------------------------------------------------------------------------
+// Data Source Commands
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SetDataSourceRequest {
+    pub connection_id: String,
+    pub slave_id: u8,
+    pub register_type: String,
+    pub address: u16,
+    pub source: DataSource,
+    pub update_interval_ms: u64,
+}
+
+#[tauri::command]
+pub async fn set_data_source(
+    state: State<'_, AppState>,
+    request: SetDataSourceRequest,
+) -> Result<(), String> {
+    let config = DataSourceConfig {
+        source: request.source,
+        update_interval_ms: request.update_interval_ms,
+    };
+    let key = format!(
+        "{}:{}:{}:{}",
+        request.connection_id, request.slave_id, request.register_type, request.address
+    );
+    let mut data_sources = state.data_sources.write().await;
+    data_sources.insert(key, DataSourceState::new(config));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_data_source(
+    state: State<'_, AppState>,
+    connection_id: String,
+    slave_id: u8,
+    register_type: String,
+    address: u16,
+) -> Result<(), String> {
+    let key = format!("{}:{}:{}:{}", connection_id, slave_id, register_type, address);
+    let mut data_sources = state.data_sources.write().await;
+    data_sources.remove(&key);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_data_sources(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let data_sources = state.data_sources.read().await;
+    let prefix = format!("{}:", connection_id);
+    Ok(data_sources
+        .iter()
+        .filter(|(k, _)| k.starts_with(&prefix))
+        .map(|(k, ds)| serde_json::json!({ "key": k, "config": ds.config }))
+        .collect())
+}
+
+#[tauri::command]
+pub async fn start_data_source_runner(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let data_sources = state.data_sources.clone();
+    let connections = state.slave_connections.clone();
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+
+            let mut ds = data_sources.write().await;
+            let conns = connections.read().await;
+
+            for (key, source_state) in ds.iter_mut() {
+                let parts: Vec<&str> = key.splitn(4, ':').collect();
+                if parts.len() != 4 {
+                    continue;
+                }
+                let conn_id = parts[0];
+                let slave_id: u8 = match parts[1].parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let reg_type = parts[2];
+                let address: u16 = match parts[3].parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let value = source_state.next_value();
+
+                if let Some(conn) = conns.get(conn_id) {
+                    let mut devices = conn.connection.devices.write().await;
+                    if let Some(device) = devices.get_mut(&slave_id) {
+                        match reg_type {
+                            "holding_register" => {
+                                device.register_map.holding_registers.insert(address, value);
+                                device.register_map.input_registers.insert(address, value);
+                            }
+                            "coil" => {
+                                device.register_map.coils.insert(address, value != 0);
+                                device.register_map.discrete_inputs.insert(address, value != 0);
+                            }
+                            "input_register" => {
+                                device.register_map.input_registers.insert(address, value);
+                            }
+                            "discrete_input" => {
+                                device
+                                    .register_map
+                                    .discrete_inputs
+                                    .insert(address, value != 0);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(())
 }

@@ -2,6 +2,7 @@
 //!
 //! Holds all runtime state: slave connections and log collectors.
 
+use modbussim_core::data_source::DataSourceState;
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::slave::SlaveConnection;
 use serde::{Deserialize, Serialize};
@@ -17,15 +18,17 @@ pub struct SlaveConnectionState {
 
 /// Application state holding all active connections.
 pub struct AppState {
-    pub slave_connections: RwLock<HashMap<String, SlaveConnectionState>>,
+    pub slave_connections: Arc<RwLock<HashMap<String, SlaveConnectionState>>>,
     pub next_slave_id: RwLock<u32>,
+    pub data_sources: Arc<RwLock<HashMap<String, DataSourceState>>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            slave_connections: RwLock::new(HashMap::new()),
+            slave_connections: Arc::new(RwLock::new(HashMap::new())),
             next_slave_id: RwLock::new(1),
+            data_sources: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
