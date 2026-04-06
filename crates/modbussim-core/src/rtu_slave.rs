@@ -331,7 +331,7 @@ pub(crate) fn format_request(req: &ModbusRequest) -> String {
 // Internal utilities
 // ---------------------------------------------------------------------------
 
-fn log_if_enabled(
+pub(crate) fn log_if_enabled(
     log_collector: &SharedLogCollector,
     direction: Direction,
     fc: FunctionCode,
