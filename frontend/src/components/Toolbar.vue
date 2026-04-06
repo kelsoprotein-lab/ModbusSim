@@ -58,23 +58,83 @@ async function saveProjectAs() {
 const showNewConnModal = ref(false)
 const newConnPort = ref('5020')
 const newConnInitMode = ref('zero')
+const newConnTransport = ref('tcp')
+const serialPort = ref('')
+const baudRate = ref(9600)
+const dataBits = ref(8)
+const stopBits = ref(1)
+const parityMode = ref('none')
+const serialPorts = ref<{ name: string; description: string; manufacturer: string }[]>([])
+
+async function refreshSerialPorts() {
+  try {
+    serialPorts.value = await invoke('list_serial_ports')
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+watch(newConnTransport, (val) => {
+  if (val === 'rtu' || val === 'ascii') {
+    refreshSerialPorts()
+  }
+})
 
 function openNewConnModal() {
   newConnPort.value = '5020'
   newConnInitMode.value = 'zero'
+  newConnTransport.value = 'tcp'
+  serialPort.value = ''
+  baudRate.value = 9600
+  dataBits.value = 8
+  stopBits.value = 1
+  parityMode.value = 'none'
   showNewConnModal.value = true
 }
 
 async function submitNewConnection() {
   const port = Number(newConnPort.value)
-  if (!port || port < 1 || port > 65535) {
+  const needsPort = newConnTransport.value === 'tcp' || newConnTransport.value === 'rtu_over_tcp'
+  const needsSerial = newConnTransport.value === 'rtu' || newConnTransport.value === 'ascii'
+
+  if (needsPort && (!port || port < 1 || port > 65535)) {
     await showAlert('请输入有效的端口号 (1-65535)')
     return
   }
+  if (needsSerial && !serialPort.value) {
+    await showAlert('请选择串口')
+    return
+  }
+
+  let transport: Record<string, unknown>
+  if (newConnTransport.value === 'tcp') {
+    transport = { type: 'tcp', port }
+  } else if (newConnTransport.value === 'rtu') {
+    transport = {
+      type: 'rtu',
+      serial_port: serialPort.value,
+      baud_rate: baudRate.value,
+      data_bits: dataBits.value,
+      stop_bits: stopBits.value,
+      parity: parityMode.value,
+    }
+  } else if (newConnTransport.value === 'ascii') {
+    transport = {
+      type: 'ascii',
+      serial_port: serialPort.value,
+      baud_rate: baudRate.value,
+      data_bits: dataBits.value,
+      stop_bits: stopBits.value,
+      parity: parityMode.value,
+    }
+  } else {
+    transport = { type: 'rtu_over_tcp', host: '0.0.0.0', port }
+  }
+
   showNewConnModal.value = false
   try {
     await invoke('create_slave_connection', {
-      request: { port, init_mode: newConnInitMode.value }
+      request: { transport, init_mode: newConnInitMode.value }
     })
     refreshTree()
   } catch (e) {
@@ -319,15 +379,71 @@ onUnmounted(() => {
       <div class="modal-box">
         <div class="modal-title">新建连接</div>
         <div class="modal-field">
-          <label>端口号</label>
-          <input
-            v-model="newConnPort"
-            type="number"
-            min="1"
-            max="65535"
-            @keyup.enter="submitNewConnection"
-          />
+          <label>传输类型</label>
+          <select v-model="newConnTransport" class="form-select">
+            <option value="tcp">TCP</option>
+            <option value="rtu">RTU (串口)</option>
+            <option value="ascii">ASCII (串口)</option>
+            <option value="rtu_over_tcp">RTU over TCP</option>
+          </select>
         </div>
+        <template v-if="newConnTransport === 'tcp' || newConnTransport === 'rtu_over_tcp'">
+          <div class="modal-field">
+            <label>端口号</label>
+            <input
+              v-model="newConnPort"
+              type="number"
+              min="1"
+              max="65535"
+              @keyup.enter="submitNewConnection"
+            />
+          </div>
+        </template>
+        <template v-if="newConnTransport === 'rtu' || newConnTransport === 'ascii'">
+          <div class="modal-field">
+            <label>串口</label>
+            <div style="display: flex; gap: 4px;">
+              <select v-model="serialPort" class="form-select" style="flex: 1;">
+                <option v-for="p in serialPorts" :key="p.name" :value="p.name">
+                  {{ p.name }}{{ p.description ? ` (${p.description})` : '' }}
+                </option>
+              </select>
+              <button class="tool-btn" @click="refreshSerialPorts" title="刷新串口列表" style="padding: 4px 8px;">&#x21bb;</button>
+            </div>
+          </div>
+          <div class="modal-field">
+            <label>波特率</label>
+            <select v-model.number="baudRate" class="form-select">
+              <option :value="9600">9600</option>
+              <option :value="19200">19200</option>
+              <option :value="38400">38400</option>
+              <option :value="57600">57600</option>
+              <option :value="115200">115200</option>
+            </select>
+          </div>
+          <div class="modal-field">
+            <label>数据位</label>
+            <select v-model.number="dataBits" class="form-select">
+              <option :value="7">7</option>
+              <option :value="8">8</option>
+            </select>
+          </div>
+          <div class="modal-field">
+            <label>停止位</label>
+            <select v-model.number="stopBits" class="form-select">
+              <option :value="1">1</option>
+              <option :value="2">2</option>
+            </select>
+          </div>
+          <div class="modal-field">
+            <label>校验</label>
+            <select v-model="parityMode" class="form-select">
+              <option value="none">None</option>
+              <option value="odd">Odd</option>
+              <option value="even">Even</option>
+            </select>
+          </div>
+        </template>
         <div class="modal-field">
           <label>初始值</label>
           <div class="radio-group">
@@ -544,6 +660,34 @@ onUnmounted(() => {
 
 .modal-field input[type="number"]:focus {
   border-color: #89b4fa;
+}
+
+.form-select {
+  width: 100%;
+  padding: 6px 10px;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 13px;
+  outline: none;
+}
+
+.form-select:focus {
+  border-color: #89b4fa;
+}
+
+.tool-btn {
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tool-btn:hover {
+  background: #45475a;
 }
 
 .radio-group {

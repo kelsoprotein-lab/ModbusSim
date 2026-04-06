@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref, type Ref } from 'vue'
+import { inject, ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
@@ -56,10 +56,31 @@ async function saveProjectAs() {
 // New Connection modal
 const showNewConn = ref(false)
 const newConnForm = ref({
+  transport: 'tcp',
   target_address: '127.0.0.1',
   port: 502,
   slave_id: 1,
   timeout_ms: 3000,
+})
+const serialPort = ref('')
+const baudRate = ref(9600)
+const dataBits = ref(8)
+const stopBits = ref(1)
+const parityMode = ref('none')
+const serialPorts = ref<{ name: string; description: string; manufacturer: string }[]>([])
+
+async function refreshSerialPorts() {
+  try {
+    serialPorts.value = await invoke('list_serial_ports')
+  } catch (e) {
+    await showAlert(String(e))
+  }
+}
+
+watch(() => newConnForm.value.transport, (val) => {
+  if (val === 'rtu' || val === 'ascii') {
+    refreshSerialPorts()
+  }
 })
 
 // Scan Group modal
@@ -82,11 +103,32 @@ const writeForm = ref({
 })
 
 async function createConnection() {
+  const needsSerial = newConnForm.value.transport === 'rtu' || newConnForm.value.transport === 'ascii'
+  if (needsSerial && !serialPort.value) {
+    await showAlert('请选择串口')
+    return
+  }
+
+  let transport: Record<string, unknown>
+  if (newConnForm.value.transport === 'tcp') {
+    transport = { type: 'tcp', host: newConnForm.value.target_address, port: newConnForm.value.port }
+  } else if (newConnForm.value.transport === 'rtu' || newConnForm.value.transport === 'ascii') {
+    transport = {
+      type: newConnForm.value.transport,
+      serial_port: serialPort.value,
+      baud_rate: baudRate.value,
+      data_bits: dataBits.value,
+      stop_bits: stopBits.value,
+      parity: parityMode.value,
+    }
+  } else {
+    transport = { type: 'rtu_over_tcp', host: newConnForm.value.target_address, port: newConnForm.value.port }
+  }
+
   try {
     await invoke('create_master_connection', {
       request: {
-        target_address: newConnForm.value.target_address,
-        port: newConnForm.value.port,
+        transport,
         slave_id: newConnForm.value.slave_id,
         timeout_ms: newConnForm.value.timeout_ms,
       }
@@ -275,13 +317,69 @@ const hasConnection = () => selectedConnectionId.value !== null
         <div class="modal-title">新建连接</div>
         <div class="modal-body">
           <label class="form-label">
-            目标地址
-            <input v-model="newConnForm.target_address" class="form-input" type="text" placeholder="127.0.0.1" />
+            传输类型
+            <select v-model="newConnForm.transport" class="form-input">
+              <option value="tcp">TCP</option>
+              <option value="rtu">RTU (串口)</option>
+              <option value="ascii">ASCII (串口)</option>
+              <option value="rtu_over_tcp">RTU over TCP</option>
+            </select>
           </label>
-          <label class="form-label">
-            端口
-            <input v-model.number="newConnForm.port" class="form-input" type="number" min="1" max="65535" />
-          </label>
+          <template v-if="newConnForm.transport === 'tcp' || newConnForm.transport === 'rtu_over_tcp'">
+            <label class="form-label">
+              目标地址
+              <input v-model="newConnForm.target_address" class="form-input" type="text" placeholder="127.0.0.1" />
+            </label>
+            <label class="form-label">
+              端口
+              <input v-model.number="newConnForm.port" class="form-input" type="number" min="1" max="65535" />
+            </label>
+          </template>
+          <template v-if="newConnForm.transport === 'rtu' || newConnForm.transport === 'ascii'">
+            <label class="form-label">
+              串口
+              <div style="display: flex; gap: 4px;">
+                <select v-model="serialPort" class="form-input" style="flex: 1;">
+                  <option v-for="p in serialPorts" :key="p.name" :value="p.name">
+                    {{ p.name }}{{ p.description ? ` (${p.description})` : '' }}
+                  </option>
+                </select>
+                <button class="tool-btn" @click="refreshSerialPorts" title="刷新串口列表" style="padding: 4px 8px;">&#x21bb;</button>
+              </div>
+            </label>
+            <label class="form-label">
+              波特率
+              <select v-model.number="baudRate" class="form-input">
+                <option :value="9600">9600</option>
+                <option :value="19200">19200</option>
+                <option :value="38400">38400</option>
+                <option :value="57600">57600</option>
+                <option :value="115200">115200</option>
+              </select>
+            </label>
+            <label class="form-label">
+              数据位
+              <select v-model.number="dataBits" class="form-input">
+                <option :value="7">7</option>
+                <option :value="8">8</option>
+              </select>
+            </label>
+            <label class="form-label">
+              停止位
+              <select v-model.number="stopBits" class="form-input">
+                <option :value="1">1</option>
+                <option :value="2">2</option>
+              </select>
+            </label>
+            <label class="form-label">
+              校验
+              <select v-model="parityMode" class="form-input">
+                <option value="none">None</option>
+                <option value="odd">Odd</option>
+                <option value="even">Even</option>
+              </select>
+            </label>
+          </template>
           <label class="form-label">
             从站 ID
             <input v-model.number="newConnForm.slave_id" class="form-input" type="number" min="1" max="247" />
@@ -503,6 +601,19 @@ const hasConnection = () => selectedConnectionId.value !== null
 .form-hint {
   color: #6c7086;
   font-size: 11px;
+}
+
+.tool-btn {
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tool-btn:hover {
+  background: #45475a;
 }
 
 .btn {
