@@ -1,3 +1,5 @@
+pub mod pdu;
+pub mod transport;
 pub mod register;
 pub mod slave;
 pub mod master;
@@ -6,5 +8,12 @@ pub mod log_collector;
 pub mod log_helpers;
 pub mod config;
 pub mod tools;
+pub mod frame;
 pub mod parse;
 pub mod project;
+pub mod rtu_slave;
+pub mod ascii_slave;
+pub mod rtu_tcp_slave;
+pub mod rtu_master;
+pub mod ascii_master;
+pub mod rtu_tcp_master;

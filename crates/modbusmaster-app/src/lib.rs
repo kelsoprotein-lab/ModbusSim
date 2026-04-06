@@ -48,6 +48,8 @@ pub fn run() {
             // Project file commands
             commands::save_project_file,
             commands::load_project_file,
+            // Serial port commands
+            commands::list_serial_ports,
         ])
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

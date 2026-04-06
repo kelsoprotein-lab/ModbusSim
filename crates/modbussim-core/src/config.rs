@@ -4,7 +4,8 @@
 //! to/from JSON files, as well as application state persistence.
 
 use crate::register::{DataType, Endian, RegisterDef, RegisterMap, RegisterType};
-use crate::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use crate::slave::{SlaveConnection, SlaveDevice};
+use crate::transport::Transport;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -263,7 +264,7 @@ fn get_register_value(map: &RegisterMap, def: &RegisterDef) -> Option<u16> {
 /// Configuration for a slave connection (transport + all devices).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
-    pub transport: TransportConfig,
+    pub transport: Transport,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<DeviceConfig>,
     #[serde(default)]
@@ -284,7 +285,11 @@ impl ConnectionConfig {
 
     /// Validate the connection config.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.transport.port == 0 {
+        let tcp_port = match &self.transport {
+            Transport::Tcp { port, .. } | Transport::RtuOverTcp { port, .. } => Some(*port),
+            _ => None,
+        };
+        if tcp_port == Some(0) {
             return Err(ConfigError::InvalidConfig("port must be non-zero".to_string()));
         }
 
@@ -346,8 +351,15 @@ impl AppConfig {
             conn.validate()?;
         }
 
-        // Check for duplicate connection ports
-        let mut ports: Vec<u16> = self.connections.iter().map(|c| c.transport.port).collect();
+        // Check for duplicate connection ports (TCP-based transports only)
+        let mut ports: Vec<u16> = self
+            .connections
+            .iter()
+            .filter_map(|c| match &c.transport {
+                Transport::Tcp { port, .. } | Transport::RtuOverTcp { port, .. } => Some(*port),
+                _ => None,
+            })
+            .collect();
         ports.sort();
         for i in 1..ports.len() {
             if ports[i] == ports[i - 1] {
@@ -478,8 +490,8 @@ mod tests {
     #[test]
     fn test_connection_config_validation() {
         let config = ConnectionConfig {
-            transport: TransportConfig {
-                bind_address: "0.0.0.0".to_string(),
+            transport: Transport::Tcp {
+                host: "0.0.0.0".to_string(),
                 port: 502,
             },
             devices: vec![],
@@ -495,16 +507,16 @@ mod tests {
             name: "Test".to_string(),
             connections: vec![
                 ConnectionConfig {
-                    transport: TransportConfig {
-                        bind_address: "0.0.0.0".to_string(),
+                    transport: Transport::Tcp {
+                        host: "0.0.0.0".to_string(),
                         port: 502,
                     },
                     devices: vec![],
                     auto_start: false,
                 },
                 ConnectionConfig {
-                    transport: TransportConfig {
-                        bind_address: "0.0.0.0".to_string(),
+                    transport: Transport::Tcp {
+                        host: "0.0.0.0".to_string(),
                         port: 502,
                     },
                     devices: vec![],
@@ -554,7 +566,8 @@ mod tests {
             "connections": [
                 {
                     "transport": {
-                        "bind_address": "0.0.0.0",
+                        "type": "tcp",
+                        "host": "0.0.0.0",
                         "port": 502
                     },
                     "devices": [
@@ -582,7 +595,10 @@ mod tests {
         let config = AppConfig::from_json(json).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.connections.len(), 1);
-        assert_eq!(config.connections[0].transport.port, 502);
+        assert!(matches!(
+            &config.connections[0].transport,
+            Transport::Tcp { host, port } if host == "0.0.0.0" && *port == 502
+        ));
         assert_eq!(config.connections[0].devices[0].slave_id, 1);
         assert_eq!(config.connections[0].devices[0].registers[0].value, Some(1234));
 

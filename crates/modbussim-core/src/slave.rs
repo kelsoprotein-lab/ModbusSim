@@ -1,6 +1,7 @@
 use crate::log_collector::LogCollector;
 use crate::log_entry::{Direction, FunctionCode, LogEntry};
 use crate::register::{RegisterDef, RegisterMap};
+use crate::transport::Transport;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future;
@@ -161,31 +162,15 @@ pub enum ConnectionState {
     Running,
 }
 
-/// Transport configuration for a slave connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransportConfig {
-    pub bind_address: String,
-    pub port: u16,
-}
-
-impl Default for TransportConfig {
-    fn default() -> Self {
-        Self {
-            bind_address: "0.0.0.0".to_string(),
-            port: 502,
-        }
-    }
-}
-
 /// Shared state accessible by all connections on a SlaveConnection.
 pub type SharedDevices = Arc<RwLock<HashMap<u8, SlaveDevice>>>;
 
 /// Shared log collector for all connections on a SlaveConnection.
 pub type SharedLogCollector = Option<Arc<LogCollector>>;
 
-/// A slave connection manages multiple SlaveDevices on a single TCP listener.
+/// A slave connection manages multiple SlaveDevices on a single transport.
 pub struct SlaveConnection {
-    pub transport: TransportConfig,
+    pub transport: Transport,
     pub devices: SharedDevices,
     pub log_collector: SharedLogCollector,
     state: ConnectionState,
@@ -194,7 +179,7 @@ pub struct SlaveConnection {
 }
 
 impl SlaveConnection {
-    pub fn new(transport: TransportConfig) -> Self {
+    pub fn new(transport: Transport) -> Self {
         Self {
             transport,
             devices: Arc::new(RwLock::new(HashMap::new())),
@@ -233,47 +218,100 @@ impl SlaveConnection {
             .ok_or(SlaveError::SlaveNotFound(slave_id))
     }
 
-    /// Start the TCP server. Returns error if already running or bind fails.
+    /// Start the server. Returns error if already running or bind fails.
     pub async fn start(&mut self) -> Result<(), SlaveError> {
         if self.state == ConnectionState::Running {
             return Err(SlaveError::AlreadyRunning);
         }
 
-        let addr: SocketAddr = format!("{}:{}", self.transport.bind_address, self.transport.port)
-            .parse()
-            .map_err(|e| SlaveError::BindError(format!("Invalid address: {e}")))?;
-
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| SlaveError::BindError(format!("Failed to bind {addr}: {e}")))?;
-
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let devices = self.devices.clone();
         let log_collector = self.log_collector.clone();
 
-        let handle = tokio::spawn(async move {
-            let server = Server::new(listener);
-            let on_connected = {
-                let devices = devices.clone();
-                let log_collector = log_collector.clone();
-                move |stream, socket_addr| {
-                    let devices = devices.clone();
-                    let log_collector = log_collector.clone();
-                    let new_service =
-                        move |_socket_addr| Ok(Some(SlaveService::new(devices.clone(), log_collector.clone())));
-                    async move { accept_tcp_connection(stream, socket_addr, new_service) }
-                }
-            };
-            let on_process_error = |err| {
-                log::error!("Slave server process error: {err}");
-            };
-            let abort_signal = Box::pin(async {
-                let _ = shutdown_rx.await;
-            });
-            let _ = server
-                .serve_until(&on_connected, on_process_error, abort_signal)
-                .await;
-        });
+        let handle = match &self.transport {
+            Transport::Tcp { host, port } => {
+                let addr: SocketAddr = format!("{}:{}", host, port)
+                    .parse()
+                    .map_err(|e| SlaveError::BindError(format!("Invalid address: {e}")))?;
+
+                let listener = TcpListener::bind(addr)
+                    .await
+                    .map_err(|e| SlaveError::BindError(format!("Failed to bind {addr}: {e}")))?;
+
+                tokio::spawn(async move {
+                    let server = Server::new(listener);
+                    let on_connected = {
+                        let devices = devices.clone();
+                        let log_collector = log_collector.clone();
+                        move |stream, socket_addr| {
+                            let devices = devices.clone();
+                            let log_collector = log_collector.clone();
+                            let new_service = move |_socket_addr| {
+                                Ok(Some(SlaveService::new(
+                                    devices.clone(),
+                                    log_collector.clone(),
+                                )))
+                            };
+                            async move { accept_tcp_connection(stream, socket_addr, new_service) }
+                        }
+                    };
+                    let on_process_error = |err| {
+                        log::error!("Slave server process error: {err}");
+                    };
+                    let abort_signal = Box::pin(async {
+                        let _ = shutdown_rx.await;
+                    });
+                    let _ = server
+                        .serve_until(&on_connected, on_process_error, abort_signal)
+                        .await;
+                })
+            }
+            Transport::Rtu(serial_config) => {
+                let config = serial_config.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::rtu_slave::run_rtu_slave(config, devices, log_collector, shutdown_rx)
+                            .await
+                    {
+                        log::error!("RTU slave error: {}", e);
+                    }
+                })
+            }
+            Transport::Ascii(serial_config) => {
+                let config = serial_config.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::ascii_slave::run_ascii_slave(
+                            config,
+                            devices,
+                            log_collector,
+                            shutdown_rx,
+                        )
+                        .await
+                    {
+                        log::error!("ASCII slave error: {}", e);
+                    }
+                })
+            }
+            Transport::RtuOverTcp { host, port } => {
+                let host = host.clone();
+                let port = *port;
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::rtu_tcp_slave::run_rtu_tcp_slave(
+                            host,
+                            port,
+                            devices,
+                            log_collector,
+                            shutdown_rx,
+                        )
+                        .await
+                    {
+                        log::error!("RTU-over-TCP slave error: {}", e);
+                    }
+                })
+            }
+        };
 
         self.shutdown_tx = Some(shutdown_tx);
         self.server_handle = Some(handle);
@@ -660,7 +698,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_slave_connection_add_remove_device() {
-        let conn = SlaveConnection::new(TransportConfig::default());
+        let conn = SlaveConnection::new(Transport::Tcp {
+            host: "0.0.0.0".to_string(),
+            port: 502,
+        });
         let device = SlaveDevice::new(1, "Test");
         conn.add_device(device).await.unwrap();
 
@@ -704,7 +745,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_with_default_device() {
-        let conn = SlaveConnection::new(TransportConfig::default());
+        let conn = SlaveConnection::new(Transport::Tcp {
+            host: "0.0.0.0".to_string(),
+            port: 502,
+        });
         let device = SlaveDevice::with_default_registers(1, "从站 1", 100);
         conn.add_device(device).await.unwrap();
 

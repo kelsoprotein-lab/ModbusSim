@@ -8,7 +8,8 @@
 /// 7. Write a value and verify it's updated on next poll
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,8 +21,8 @@ async fn main() {
 
     // Step 1: Start slave
     println!("[1/7] Starting slave on port 15021...");
-    let transport = TransportConfig {
-        bind_address: "0.0.0.0".to_string(),
+    let transport = Transport::Tcp {
+        host: "0.0.0.0".to_string(),
         port: 15021,
     };
     let mut slave = SlaveConnection::new(transport);
@@ -39,8 +40,12 @@ async fn main() {
         slave_id: 1,
         timeout_ms: 3000,
     };
+    let master_transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
     let log_collector = Arc::new(LogCollector::new());
-    let mut master = MasterConnection::new(config).with_log_collector(log_collector.clone());
+    let mut master = MasterConnection::new(config, master_transport).with_log_collector(log_collector.clone());
     println!("       State: {:?}\n", master.state());
 
     // Step 3: Connect (simulates connect_master command)
@@ -58,6 +63,7 @@ async fn main() {
         quantity: 10,
         interval_ms: 500,
         enabled: true,
+        slave_id: None,
     };
     println!("       Scan group created: {}\n", scan_group.name);
 

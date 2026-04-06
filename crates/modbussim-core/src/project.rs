@@ -10,11 +10,26 @@ pub enum ProjectType {
     Master,
 }
 
-/// Transport configuration (Phase 2 will extend with RTU/ASCII/RtuOverTcp).
+/// Transport configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportConfig {
     Tcp { host: String, port: u16 },
+    Rtu {
+        port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    Ascii {
+        port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    RtuOverTcp { host: String, port: u16 },
 }
 
 /// A register block definition in a project file.
@@ -202,6 +217,7 @@ mod tests {
                 assert_eq!(host, "127.0.0.1");
                 assert_eq!(*port, 502);
             }
+            _ => panic!("wrong transport variant"),
         }
 
         assert_eq!(conn.devices.len(), 1);
@@ -319,6 +335,54 @@ mod tests {
                 assert_eq!(host, "localhost");
                 assert_eq!(*port, 5020);
             }
+            _ => panic!("wrong transport variant"),
+        }
+    }
+
+    #[test]
+    fn test_transport_rtu_serde() {
+        let proj = ProjectFile {
+            version: 1,
+            project_type: ProjectType::Slave,
+            connections: vec![ConnectionConfig {
+                id: "c1".to_string(),
+                name: "serial".to_string(),
+                transport: TransportConfig::Rtu {
+                    port: "/dev/ttyUSB0".to_string(),
+                    baud_rate: 9600,
+                    data_bits: 8,
+                    stop_bits: 1,
+                    parity: "none".to_string(),
+                },
+                devices: vec![],
+                scan_groups: vec![],
+            }],
+        };
+        let json = serde_json::to_string(&proj).unwrap();
+        assert!(json.contains("\"type\":\"rtu\""));
+        assert!(json.contains("ttyUSB0"));
+        let loaded: ProjectFile = serde_json::from_str(&json).unwrap();
+        match &loaded.connections[0].transport {
+            TransportConfig::Rtu { port, baud_rate, .. } => {
+                assert_eq!(port, "/dev/ttyUSB0");
+                assert_eq!(*baud_rate, 9600);
+            }
+            _ => panic!("wrong transport variant"),
+        }
+    }
+
+    #[test]
+    fn test_transport_rtu_over_tcp_serde() {
+        let config = TransportConfig::RtuOverTcp { host: "10.0.0.1".to_string(), port: 502 };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"rtu_over_tcp\""));
+        let loaded: TransportConfig = serde_json::from_str(&json).unwrap();
+        match loaded {
+            TransportConfig::RtuOverTcp { host, port } => {
+                assert_eq!(host, "10.0.0.1");
+                assert_eq!(port, 502);
+            }
+            _ => panic!("wrong variant"),
         }
     }
 }

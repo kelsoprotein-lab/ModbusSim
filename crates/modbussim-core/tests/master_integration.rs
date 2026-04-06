@@ -2,12 +2,13 @@ use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterError, MasterState, PollConfig, PollEvent, ReadFunction,
     ReadResult,
 };
-use modbussim_core::slave::{SlaveConnection, SlaveDevice, TransportConfig};
+use modbussim_core::slave::{SlaveConnection, SlaveDevice};
+use modbussim_core::transport::Transport;
 
 /// Helper: start a slave on the given port with a device at slave_id=1.
 async fn start_slave(port: u16) -> SlaveConnection {
-    let transport = TransportConfig {
-        bind_address: "127.0.0.1".to_string(),
+    let transport = Transport::Tcp {
+        host: "127.0.0.1".to_string(),
         port,
     };
     let mut conn = SlaveConnection::new(transport);
@@ -36,10 +37,19 @@ fn master_config(port: u16) -> MasterConfig {
     }
 }
 
+fn new_master(port: u16) -> MasterConnection {
+    let config = master_config(port);
+    let transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
+    MasterConnection::new(config, transport)
+}
+
 #[tokio::test]
 async fn test_master_connect_disconnect() {
     let mut slave = start_slave(16001).await;
-    let mut master = MasterConnection::new(master_config(16001));
+    let mut master = new_master(16001);
 
     assert_eq!(master.state(), MasterState::Disconnected);
     master.connect().await.unwrap();
@@ -57,7 +67,7 @@ async fn test_master_connect_disconnect() {
 #[tokio::test]
 async fn test_master_read_holding_registers() {
     let mut slave = start_slave(16002).await;
-    let mut master = MasterConnection::new(master_config(16002));
+    let mut master = new_master(16002);
     master.connect().await.unwrap();
 
     let result = master
@@ -78,7 +88,7 @@ async fn test_master_read_holding_registers() {
 #[tokio::test]
 async fn test_master_read_coils() {
     let mut slave = start_slave(16003).await;
-    let mut master = MasterConnection::new(master_config(16003));
+    let mut master = new_master(16003);
     master.connect().await.unwrap();
 
     let result = master.read(ReadFunction::ReadCoils, 0, 2).await.unwrap();
@@ -96,7 +106,7 @@ async fn test_master_read_coils() {
 #[tokio::test]
 async fn test_master_read_discrete_inputs() {
     let mut slave = start_slave(16004).await;
-    let mut master = MasterConnection::new(master_config(16004));
+    let mut master = new_master(16004);
     master.connect().await.unwrap();
 
     let result = master
@@ -117,7 +127,7 @@ async fn test_master_read_discrete_inputs() {
 #[tokio::test]
 async fn test_master_read_input_registers() {
     let mut slave = start_slave(16005).await;
-    let mut master = MasterConnection::new(master_config(16005));
+    let mut master = new_master(16005);
     master.connect().await.unwrap();
 
     let result = master
@@ -138,7 +148,7 @@ async fn test_master_read_input_registers() {
 #[tokio::test]
 async fn test_master_write_single_coil() {
     let mut slave = start_slave(16006).await;
-    let mut master = MasterConnection::new(master_config(16006));
+    let mut master = new_master(16006);
     master.connect().await.unwrap();
 
     master.write_single_coil(10, true).await.unwrap();
@@ -157,7 +167,7 @@ async fn test_master_write_single_coil() {
 #[tokio::test]
 async fn test_master_write_single_register() {
     let mut slave = start_slave(16007).await;
-    let mut master = MasterConnection::new(master_config(16007));
+    let mut master = new_master(16007);
     master.connect().await.unwrap();
 
     master.write_single_register(10, 42).await.unwrap();
@@ -178,7 +188,7 @@ async fn test_master_write_single_register() {
 #[tokio::test]
 async fn test_master_write_multiple_coils() {
     let mut slave = start_slave(16008).await;
-    let mut master = MasterConnection::new(master_config(16008));
+    let mut master = new_master(16008);
     master.connect().await.unwrap();
 
     master
@@ -199,7 +209,7 @@ async fn test_master_write_multiple_coils() {
 #[tokio::test]
 async fn test_master_write_multiple_registers() {
     let mut slave = start_slave(16009).await;
-    let mut master = MasterConnection::new(master_config(16009));
+    let mut master = new_master(16009);
     master.connect().await.unwrap();
 
     master
@@ -222,7 +232,7 @@ async fn test_master_write_multiple_registers() {
 
 #[tokio::test]
 async fn test_master_not_connected_error() {
-    let master = MasterConnection::new(master_config(16010));
+    let master = new_master(16010);
     let result = master
         .read(ReadFunction::ReadHoldingRegisters, 0, 1)
         .await;
@@ -238,7 +248,11 @@ async fn test_master_connection_timeout() {
         slave_id: 1,
         timeout_ms: 500,
     };
-    let mut master = MasterConnection::new(config);
+    let transport = Transport::Tcp {
+        host: config.target_address.clone(),
+        port: config.port,
+    };
+    let mut master = MasterConnection::new(config, transport);
     let result = master.connect().await;
     assert!(result.is_err());
 }
@@ -246,7 +260,7 @@ async fn test_master_connection_timeout() {
 #[tokio::test]
 async fn test_master_polling() {
     let mut slave = start_slave(16011).await;
-    let mut master = MasterConnection::new(master_config(16011));
+    let mut master = new_master(16011);
     master.connect().await.unwrap();
 
     let poll_config = PollConfig {
