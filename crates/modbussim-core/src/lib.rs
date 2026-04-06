@@ -14,3 +14,6 @@ pub mod project;
 pub mod rtu_slave;
 pub mod ascii_slave;
 pub mod rtu_tcp_slave;
+pub mod rtu_master;
+pub mod ascii_master;
+pub mod rtu_tcp_master;
