@@ -1,7 +1,7 @@
 use crate::log_collector::LogCollector;
 use crate::log_entry::{Direction, FunctionCode, LogEntry};
 use crate::register::{RegisterDef, RegisterMap};
-use crate::transport::Transport;
+use crate::transport::{SlaveTlsConfig, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future;
@@ -171,6 +171,7 @@ pub type SharedLogCollector = Option<Arc<LogCollector>>;
 /// A slave connection manages multiple SlaveDevices on a single transport.
 pub struct SlaveConnection {
     pub transport: Transport,
+    pub tls_config: SlaveTlsConfig,
     pub devices: SharedDevices,
     pub log_collector: SharedLogCollector,
     state: ConnectionState,
@@ -182,6 +183,7 @@ impl SlaveConnection {
     pub fn new(transport: Transport) -> Self {
         Self {
             transport,
+            tls_config: SlaveTlsConfig::default(),
             devices: Arc::new(RwLock::new(HashMap::new())),
             log_collector: None,
             state: ConnectionState::Stopped,
@@ -193,6 +195,12 @@ impl SlaveConnection {
     /// Set the log collector for this connection.
     pub fn with_log_collector(mut self, collector: Arc<LogCollector>) -> Self {
         self.log_collector = Some(collector);
+        self
+    }
+
+    /// Set the TLS configuration for this connection.
+    pub fn with_tls_config(mut self, config: SlaveTlsConfig) -> Self {
+        self.tls_config = config;
         self
     }
 
@@ -311,8 +319,20 @@ impl SlaveConnection {
                     }
                 })
             }
-            Transport::TcpTls { .. } => {
-                return Err(SlaveError::BindError("TLS not yet implemented".to_string()));
+            Transport::TcpTls { host, port } => {
+                let addr: SocketAddr = format!("{}:{}", host, port)
+                    .parse()
+                    .map_err(|e| SlaveError::BindError(format!("Invalid address: {e}")))?;
+                let tls_config = self.tls_config.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::tls_slave::run_tls_slave(
+                        addr, tls_config, devices, log_collector, shutdown_rx,
+                    )
+                    .await
+                    {
+                        log::error!("TLS slave error: {}", e);
+                    }
+                })
             }
         };
 
