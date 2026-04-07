@@ -13,7 +13,7 @@ use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
 use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::project::{self, ProjectFile};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
-use modbussim_core::transport::{self, Transport, SerialConfig, Parity};
+use modbussim_core::transport::{self, Transport, SerialConfig, Parity, SlaveTlsConfig};
 use modbussim_core::tools;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -100,6 +100,13 @@ fn to_transport(req: &TransportRequest) -> Transport {
 pub struct CreateSlaveRequest {
     pub transport: TransportRequest,
     pub init_mode: Option<String>,
+    pub use_tls: Option<bool>,
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
+    pub ca_file: Option<String>,
+    pub require_client_cert: Option<bool>,
+    pub pkcs12_file: Option<String>,
+    pub pkcs12_password: Option<String>,
 }
 
 #[tauri::command]
@@ -126,6 +133,20 @@ pub async fn create_slave_connection(
     let log_collector = Arc::new(LogCollector::new());
     let connection = SlaveConnection::new(transport);
     let connection = connection.with_log_collector(log_collector.clone());
+
+    let connection = if request.use_tls.unwrap_or(false) {
+        connection.with_tls_config(SlaveTlsConfig {
+            enabled: true,
+            cert_file: request.cert_file.unwrap_or_default(),
+            key_file: request.key_file.unwrap_or_default(),
+            ca_file: request.ca_file.unwrap_or_default(),
+            require_client_cert: request.require_client_cert.unwrap_or(false),
+            pkcs12_file: request.pkcs12_file.unwrap_or_default(),
+            pkcs12_password: request.pkcs12_password.unwrap_or_default(),
+        })
+    } else {
+        connection
+    };
 
     // Auto-create default slave device (slave_id=1) with pre-filled registers
     let default_device = match request.init_mode.as_deref() {

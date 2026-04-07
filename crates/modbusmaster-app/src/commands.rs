@@ -16,7 +16,7 @@ use modbussim_core::master::{
 };
 use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
-use modbussim_core::transport::{self, Transport, SerialConfig, Parity};
+use modbussim_core::transport::{self, Transport, SerialConfig, Parity, TlsConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -169,6 +169,13 @@ pub struct CreateMasterRequest {
     pub transport: TransportRequest,
     pub slave_id: u8,
     pub timeout_ms: Option<u64>,
+    pub use_tls: Option<bool>,
+    pub ca_file: Option<String>,
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
+    pub pkcs12_file: Option<String>,
+    pub pkcs12_password: Option<String>,
+    pub accept_invalid_certs: Option<bool>,
 }
 
 #[tauri::command]
@@ -197,6 +204,15 @@ pub async fn create_master_connection(
         port,
         slave_id: request.slave_id,
         timeout_ms: request.timeout_ms.unwrap_or(3000),
+        tls: TlsConfig {
+            enabled: request.use_tls.unwrap_or(false),
+            ca_file: request.ca_file.unwrap_or_default(),
+            cert_file: request.cert_file.unwrap_or_default(),
+            key_file: request.key_file.unwrap_or_default(),
+            pkcs12_file: request.pkcs12_file.unwrap_or_default(),
+            pkcs12_password: request.pkcs12_password.unwrap_or_default(),
+            accept_invalid_certs: request.accept_invalid_certs.unwrap_or(false),
+        },
         ..Default::default()
     };
 
