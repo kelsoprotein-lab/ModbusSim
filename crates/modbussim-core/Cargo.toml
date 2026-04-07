@@ -15,7 +15,11 @@ log = "0.4"
 rand = "0.8"
 serialport = "4"
 tokio-serial = "5.4"
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+rcgen = "0.13"
+openssl = "0.10"

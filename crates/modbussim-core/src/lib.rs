@@ -20,3 +20,6 @@ pub mod ascii_master;
 pub mod rtu_tcp_master;
 pub mod reconnect;
 pub mod data_source;
+pub mod mbap;
+pub mod tls_slave;
+pub mod tls_master;
