@@ -12,6 +12,7 @@ async fn main() {
         port: 5020,
         slave_id: 1,
         timeout_ms: 5000,
+        ..Default::default()
     };
 
     let transport = Transport::Tcp {

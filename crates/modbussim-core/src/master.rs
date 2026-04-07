@@ -4,7 +4,8 @@ use crate::log_entry::{Direction, FunctionCode, LogEntry};
 use crate::reconnect::ReconnectPolicy;
 use crate::rtu_master::RtuMasterTransport;
 use crate::rtu_tcp_master::RtuTcpMasterTransport;
-use crate::transport::Transport;
+use crate::tls_master::TlsMasterConnection;
+use crate::transport::{TlsConfig, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -22,6 +23,8 @@ pub struct MasterConfig {
     pub slave_id: u8,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -35,6 +38,7 @@ impl Default for MasterConfig {
             port: 502,
             slave_id: 1,
             timeout_ms: default_timeout_ms(),
+            tls: TlsConfig::default(),
         }
     }
 }
@@ -117,6 +121,7 @@ enum TransportCtx {
     Rtu(Arc<RtuMasterTransport>),
     Ascii(Arc<AsciiMasterTransport>),
     RtuTcp(Arc<RtuTcpMasterTransport>),
+    TcpTls(Arc<TlsMasterConnection>),
 }
 
 /// A master connection that connects to a Modbus slave via any transport.
@@ -195,8 +200,11 @@ impl MasterConnection {
                     .map_err(|e| MasterError::ConnectionFailed(e))?;
                 TransportCtx::RtuTcp(Arc::new(rtu_tcp))
             }
-            Transport::TcpTls { .. } => {
-                return Err(MasterError::ConnectionFailed("TLS not yet implemented".to_string()));
+            Transport::TcpTls { host, port } => {
+                let tls_conn = crate::tls_master::connect_tls(
+                    host, *port, &self.config.tls, timeout,
+                ).await?;
+                TransportCtx::TcpTls(Arc::new(tls_conn))
             }
         };
 
@@ -330,6 +338,9 @@ impl MasterConnection {
                     .map_err(|e| MasterError::Transport(format!("{e}")))?
                     .map_err(|e| MasterError::Exception(e))?;
             }
+            TransportCtx::TcpTls(tls) => {
+                tls.write_single_coil(self.config.slave_id, address, value, timeout).await?;
+            }
             other => {
                 let coil_value: u16 = if value { 0xFF00 } else { 0x0000 };
                 let mut pdu = vec![0x05];
@@ -360,6 +371,9 @@ impl MasterConnection {
                     .map_err(|e| MasterError::Transport(format!("{e}")))?
                     .map_err(|e| MasterError::Exception(e))?;
             }
+            TransportCtx::TcpTls(tls) => {
+                tls.write_single_register(self.config.slave_id, address, value, timeout).await?;
+            }
             other => {
                 let mut pdu = vec![0x06];
                 pdu.extend_from_slice(&address.to_be_bytes());
@@ -388,6 +402,9 @@ impl MasterConnection {
                     .map_err(|_| MasterError::Timeout("Write multiple coils timed out".into()))?
                     .map_err(|e| MasterError::Transport(format!("{e}")))?
                     .map_err(|e| MasterError::Exception(e))?;
+            }
+            TransportCtx::TcpTls(tls) => {
+                tls.write_multiple_coils(self.config.slave_id, address, values, timeout).await?;
             }
             other => {
                 let quantity = values.len() as u16;
@@ -427,6 +444,9 @@ impl MasterConnection {
                     .map_err(|_| MasterError::Timeout("Write multiple registers timed out".into()))?
                     .map_err(|e| MasterError::Transport(format!("{e}")))?
                     .map_err(|e| MasterError::Exception(e))?;
+            }
+            TransportCtx::TcpTls(tls) => {
+                tls.write_multiple_registers(self.config.slave_id, address, values, timeout).await?;
             }
             other => {
                 let quantity = values.len() as u16;
@@ -688,6 +708,9 @@ async fn send_pdu_via_transport(
         TransportCtx::Tcp(_) => Err(MasterError::Transport(
             "send_pdu_via_transport called for TCP".into(),
         )),
+        TransportCtx::TcpTls(_) => Err(MasterError::Transport(
+            "send_pdu_via_transport called for TLS".into(),
+        )),
     }
 }
 
@@ -779,6 +802,9 @@ async fn execute_read_any(
     match ctx {
         TransportCtx::Tcp(tcp_ctx) => {
             execute_read_tcp(tcp_ctx, function, start_address, quantity, timeout).await
+        }
+        TransportCtx::TcpTls(tls) => {
+            tls.read(slave_id, function, start_address, quantity, timeout).await
         }
         other => {
             let pdu = build_read_pdu(function, start_address, quantity);

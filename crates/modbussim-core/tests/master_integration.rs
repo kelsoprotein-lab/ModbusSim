@@ -34,6 +34,7 @@ fn master_config(port: u16) -> MasterConfig {
         port,
         slave_id: 1,
         timeout_ms: 3000,
+        ..Default::default()
     }
 }
 
@@ -247,6 +248,7 @@ async fn test_master_connection_timeout() {
         port: 19999,
         slave_id: 1,
         timeout_ms: 500,
+        ..Default::default()
     };
     let transport = Transport::Tcp {
         host: config.target_address.clone(),

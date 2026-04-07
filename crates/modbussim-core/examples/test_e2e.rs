@@ -39,6 +39,7 @@ async fn main() {
         port: 15021,
         slave_id: 1,
         timeout_ms: 3000,
+        ..Default::default()
     };
     let master_transport = Transport::Tcp {
         host: config.target_address.clone(),

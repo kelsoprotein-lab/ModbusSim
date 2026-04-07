@@ -197,6 +197,7 @@ pub async fn create_master_connection(
         port,
         slave_id: request.slave_id,
         timeout_ms: request.timeout_ms.unwrap_or(3000),
+        ..Default::default()
     };
 
     let log_collector = Arc::new(LogCollector::new());

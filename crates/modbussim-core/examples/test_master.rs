@@ -37,6 +37,7 @@ async fn main() {
         port: 15023,
         slave_id: 1,
         timeout_ms: 3000,
+        ..Default::default()
     };
     let state: Arc<RwLock<HashMap<String, MasterConnection>>> =
         Arc::new(RwLock::new(HashMap::new()));
