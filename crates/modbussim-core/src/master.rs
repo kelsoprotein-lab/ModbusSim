@@ -195,6 +195,9 @@ impl MasterConnection {
                     .map_err(|e| MasterError::ConnectionFailed(e))?;
                 TransportCtx::RtuTcp(Arc::new(rtu_tcp))
             }
+            Transport::TcpTls { .. } => {
+                return Err(MasterError::ConnectionFailed("TLS not yet implemented".to_string()));
+            }
         };
 
         self.transport_ctx = Some(ctx);

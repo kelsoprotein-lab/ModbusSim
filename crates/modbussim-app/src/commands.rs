@@ -49,6 +49,7 @@ pub struct RegisterValueEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportRequest {
     Tcp { port: u16 },
+    TcpTls { port: u16 },
     Rtu { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
     Ascii { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
     RtuOverTcp { host: String, port: u16 },
@@ -65,6 +66,7 @@ fn parse_parity(s: &str) -> Parity {
 fn to_transport(req: &TransportRequest) -> Transport {
     match req {
         TransportRequest::Tcp { port } => Transport::Tcp { host: "0.0.0.0".into(), port: *port },
+        TransportRequest::TcpTls { port } => Transport::TcpTls { host: "0.0.0.0".into(), port: *port },
         TransportRequest::Rtu { serial_port, baud_rate, data_bits, stop_bits, parity } => {
             Transport::Rtu(SerialConfig {
                 port: serial_port.clone(),
@@ -115,9 +117,9 @@ pub async fn create_slave_connection(
     let transport = to_transport(&request.transport);
 
     let (bind_address, port) = match &transport {
-        Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
-            (host.clone(), *port)
-        }
+        Transport::Tcp { host, port }
+        | Transport::TcpTls { host, port }
+        | Transport::RtuOverTcp { host, port } => (host.clone(), *port),
         Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
     };
 
@@ -234,9 +236,9 @@ pub async fn list_slave_connections(
     for (id, conn_state) in connections.iter() {
         let device_count = conn_state.connection.devices.read().await.len();
         let (bind_address, port) = match &conn_state.connection.transport {
-            Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
-                (host.clone(), *port)
-            }
+            Transport::Tcp { host, port }
+            | Transport::TcpTls { host, port }
+            | Transport::RtuOverTcp { host, port } => (host.clone(), *port),
             Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
         };
         result.push(SlaveConnectionInfo {
@@ -717,9 +719,9 @@ pub async fn export_app_state(
         }
 
         let (bind_address, port) = match &conn_state.connection.transport {
-            Transport::Tcp { host, port } | Transport::RtuOverTcp { host, port } => {
-                (host.clone(), *port)
-            }
+            Transport::Tcp { host, port }
+            | Transport::TcpTls { host, port }
+            | Transport::RtuOverTcp { host, port } => (host.clone(), *port),
             Transport::Rtu(sc) | Transport::Ascii(sc) => (sc.port.clone(), 0),
         };
         persisted_connections.push(PersistedSlaveConnection {
@@ -926,6 +928,13 @@ pub async fn save_project_file(
                     data_bits: sc.data_bits,
                     stop_bits: sc.stop_bits,
                     parity: format!("{:?}", sc.parity).to_lowercase(),
+                },
+            ),
+            Transport::TcpTls { host, port } => (
+                format!("tls://{}:{}", host, port),
+                project::TransportConfig::Tcp {
+                    host: host.clone(),
+                    port: *port,
                 },
             ),
         };

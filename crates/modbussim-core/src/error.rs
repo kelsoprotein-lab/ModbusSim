@@ -23,6 +23,12 @@ pub enum ModbusError {
     #[error("permission denied for serial port {port}")]
     SerialPortPermissionDenied { port: String },
 
+    #[error("TLS error: {message}")]
+    TlsError { message: String },
+
+    #[error("certificate error: {message}")]
+    CertError { message: String },
+
     // Protocol layer
     #[error("illegal function code: {fc}")]
     IllegalFunction { fc: u8 },
@@ -74,7 +80,9 @@ impl ModbusError {
             | ModbusError::ConnectionLost { .. }
             | ModbusError::SerialPortBusy { .. }
             | ModbusError::SerialPortNotFound { .. }
-            | ModbusError::SerialPortPermissionDenied { .. } => "connection",
+            | ModbusError::SerialPortPermissionDenied { .. }
+            | ModbusError::TlsError { .. }
+            | ModbusError::CertError { .. } => "connection",
 
             ModbusError::IllegalFunction { .. }
             | ModbusError::IllegalDataAddress { .. }

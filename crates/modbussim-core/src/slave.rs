@@ -311,6 +311,9 @@ impl SlaveConnection {
                     }
                 })
             }
+            Transport::TcpTls { .. } => {
+                return Err(SlaveError::BindError("TLS not yet implemented".to_string()));
+            }
         };
 
         self.shutdown_tx = Some(shutdown_tx);
@@ -570,6 +573,10 @@ pub enum SlaveError {
     NotRunning,
     #[error("bind error: {0}")]
     BindError(String),
+    #[error("TLS error: {0}")]
+    TlsError(String),
+    #[error("certificate error: {0}")]
+    CertError(String),
 }
 
 #[cfg(test)]

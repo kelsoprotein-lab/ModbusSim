@@ -33,9 +33,32 @@ impl Default for SerialConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Transport {
     Tcp { host: String, port: u16 },
+    TcpTls { host: String, port: u16 },
     Rtu(SerialConfig),
     Ascii(SerialConfig),
     RtuOverTcp { host: String, port: u16 },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TlsConfig {
+    pub enabled: bool,
+    pub ca_file: String,
+    pub cert_file: String,
+    pub key_file: String,
+    pub pkcs12_file: String,
+    pub pkcs12_password: String,
+    pub accept_invalid_certs: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SlaveTlsConfig {
+    pub enabled: bool,
+    pub cert_file: String,
+    pub key_file: String,
+    pub ca_file: String,
+    pub require_client_cert: bool,
+    pub pkcs12_file: String,
+    pub pkcs12_password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -125,6 +148,33 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let t2: Transport = serde_json::from_str(&json).unwrap();
         assert_eq!(t, t2);
+    }
+
+    #[test]
+    fn test_transport_tcp_tls_serde() {
+        let t = Transport::TcpTls {
+            host: "127.0.0.1".to_string(),
+            port: 802,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let t2: Transport = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, t2);
+    }
+
+    #[test]
+    fn test_tls_config_default() {
+        let cfg = TlsConfig::default();
+        assert!(!cfg.enabled);
+        assert!(cfg.ca_file.is_empty());
+        assert!(!cfg.accept_invalid_certs);
+    }
+
+    #[test]
+    fn test_slave_tls_config_default() {
+        let cfg = SlaveTlsConfig::default();
+        assert!(!cfg.enabled);
+        assert!(!cfg.require_client_cert);
+        assert!(cfg.cert_file.is_empty());
     }
 
     #[test]
