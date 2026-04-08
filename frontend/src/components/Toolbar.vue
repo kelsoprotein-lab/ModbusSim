@@ -66,6 +66,14 @@ const stopBits = ref(1)
 const parityMode = ref('none')
 const serialPorts = ref<{ name: string; description: string; manufacturer: string }[]>([])
 
+const useTls = ref(false)
+const tlsCertFile = ref('')
+const tlsKeyFile = ref('')
+const tlsCaFile = ref('')
+const tlsRequireClientCert = ref(false)
+const tlsPkcs12File = ref('')
+const tlsPkcs12Password = ref('')
+
 async function refreshSerialPorts() {
   try {
     serialPorts.value = await invoke('list_serial_ports')
@@ -89,7 +97,32 @@ function openNewConnModal() {
   dataBits.value = 8
   stopBits.value = 1
   parityMode.value = 'none'
+  useTls.value = false
+  tlsCertFile.value = ''
+  tlsKeyFile.value = ''
+  tlsCaFile.value = ''
+  tlsRequireClientCert.value = false
+  tlsPkcs12File.value = ''
+  tlsPkcs12Password.value = ''
   showNewConnModal.value = true
+}
+
+async function pickFile(target: 'cert' | 'key' | 'ca' | 'pkcs12') {
+  try {
+    const path = await open({
+      filters: target === 'pkcs12'
+        ? [{ name: 'PKCS#12', extensions: ['p12', 'pfx'] }]
+        : [{ name: 'PEM Certificate', extensions: ['pem', 'crt', 'key'] }],
+    })
+    if (!path) return
+    const p = path as string
+    if (target === 'cert') tlsCertFile.value = p
+    else if (target === 'key') tlsKeyFile.value = p
+    else if (target === 'ca') tlsCaFile.value = p
+    else if (target === 'pkcs12') tlsPkcs12File.value = p
+  } catch (e) {
+    await showAlert(String(e))
+  }
 }
 
 async function submitNewConnection() {
@@ -109,6 +142,9 @@ async function submitNewConnection() {
   let transport: Record<string, unknown>
   if (newConnTransport.value === 'tcp') {
     transport = { type: 'tcp', port }
+    if (useTls.value) {
+      transport = { type: 'tcp_tls', port }
+    }
   } else if (newConnTransport.value === 'rtu') {
     transport = {
       type: 'rtu',
@@ -134,7 +170,19 @@ async function submitNewConnection() {
   showNewConnModal.value = false
   try {
     await invoke('create_slave_connection', {
-      request: { transport, init_mode: newConnInitMode.value }
+      request: {
+        transport,
+        init_mode: newConnInitMode.value,
+        ...(useTls.value ? {
+          use_tls: true,
+          cert_file: tlsCertFile.value || undefined,
+          key_file: tlsKeyFile.value || undefined,
+          ca_file: tlsCaFile.value || undefined,
+          require_client_cert: tlsRequireClientCert.value || undefined,
+          pkcs12_file: tlsPkcs12File.value || undefined,
+          pkcs12_password: tlsPkcs12Password.value || undefined,
+        } : {}),
+      }
     })
     refreshTree()
   } catch (e) {
@@ -398,6 +446,52 @@ onUnmounted(() => {
               @keyup.enter="submitNewConnection"
             />
           </div>
+        </template>
+        <template v-if="newConnTransport === 'tcp'">
+          <div class="modal-field">
+            <label>
+              <input type="checkbox" v-model="useTls" /> 启用 TLS
+            </label>
+          </div>
+          <template v-if="useTls">
+            <div class="modal-field">
+              <label>服务器证书 (PEM)</label>
+              <div style="display: flex; gap: 4px;">
+                <input v-model="tlsCertFile" type="text" placeholder="证书文件路径" style="flex: 1;" />
+                <button class="tool-btn" @click="pickFile('cert')" style="padding: 4px 8px;">...</button>
+              </div>
+            </div>
+            <div class="modal-field">
+              <label>服务器私钥 (PEM)</label>
+              <div style="display: flex; gap: 4px;">
+                <input v-model="tlsKeyFile" type="text" placeholder="私钥文件路径" style="flex: 1;" />
+                <button class="tool-btn" @click="pickFile('key')" style="padding: 4px 8px;">...</button>
+              </div>
+            </div>
+            <div class="modal-field">
+              <label>PKCS#12 文件</label>
+              <div style="display: flex; gap: 4px;">
+                <input v-model="tlsPkcs12File" type="text" placeholder="可选，优先于 PEM" style="flex: 1;" />
+                <button class="tool-btn" @click="pickFile('pkcs12')" style="padding: 4px 8px;">...</button>
+              </div>
+            </div>
+            <div class="modal-field" v-if="tlsPkcs12File">
+              <label>PKCS#12 密码</label>
+              <input v-model="tlsPkcs12Password" type="password" placeholder="密码" />
+            </div>
+            <div class="modal-field">
+              <label>
+                <input type="checkbox" v-model="tlsRequireClientCert" /> 要求客户端证书 (mTLS)
+              </label>
+            </div>
+            <div class="modal-field" v-if="tlsRequireClientCert">
+              <label>CA 证书 (验证客户端)</label>
+              <div style="display: flex; gap: 4px;">
+                <input v-model="tlsCaFile" type="text" placeholder="CA 证书路径" style="flex: 1;" />
+                <button class="tool-btn" @click="pickFile('ca')" style="padding: 4px 8px;">...</button>
+              </div>
+            </div>
+          </template>
         </template>
         <template v-if="newConnTransport === 'rtu' || newConnTransport === 'ascii'">
           <div class="modal-field">
