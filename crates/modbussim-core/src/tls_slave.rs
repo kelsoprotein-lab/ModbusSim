@@ -102,8 +102,12 @@ pub async fn run_tls_slave(
                         }
 
                         // Convert tokio TcpStream to std TcpStream for blocking TLS handshake.
+                        // tokio's into_std() leaves the socket in non-blocking mode, so we must
+                        // switch to blocking mode before passing to the synchronous TLS acceptor.
                         let std_stream = stream.into_std()
                             .map_err(|e| format!("Failed to convert stream: {e}"))?;
+                        std_stream.set_nonblocking(false)
+                            .map_err(|e| format!("Failed to set blocking mode: {e}"))?;
 
                         let acceptor = acceptor.clone();
                         let devices = devices.clone();

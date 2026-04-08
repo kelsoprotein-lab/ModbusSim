@@ -291,10 +291,15 @@ pub async fn connect_tls(
         .map_err(|_| MasterError::Timeout("TLS TCP connect timed out".into()))?
         .map_err(|e| MasterError::ConnectionFailed(format!("TCP connect: {e}")))?;
 
-    // Convert to std TcpStream for native_tls
+    // Convert to std TcpStream for native_tls.
+    // tokio's into_std() leaves the socket in non-blocking mode; switch to blocking mode
+    // so the synchronous TLS connector works correctly.
     let std_stream = tcp_stream
         .into_std()
         .map_err(|e| MasterError::ConnectionFailed(format!("convert to std stream: {e}")))?;
+    std_stream
+        .set_nonblocking(false)
+        .map_err(|e| MasterError::ConnectionFailed(format!("set blocking mode: {e}")))?;
 
     let connector = build_tls_connector(tls_config)?;
 
