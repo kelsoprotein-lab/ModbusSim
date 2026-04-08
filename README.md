@@ -1,6 +1,6 @@
 # ModbusSim
 
-Cross-platform Modbus simulation suite — includes **ModbusSlave** and **ModbusMaster**, built with Tauri 2, Rust, and Vue 3. Supports **TCP, RTU, ASCII, and RTU-over-TCP** transports.
+Cross-platform Modbus simulation suite — includes **ModbusSlave** and **ModbusMaster**, built with Tauri 2, Rust, and Vue 3. Supports **TCP, TCP+TLS, RTU, ASCII, and RTU-over-TCP** transports.
 
 [中文文档](README_CN.md)
 
@@ -19,7 +19,8 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 
 ### ModbusSlave — Slave Simulator
 
-- **Multi-Transport Support** — TCP, RTU (serial), ASCII (serial), RTU-over-TCP
+- **Multi-Transport Support** — TCP, TCP+TLS, RTU (serial), ASCII (serial), RTU-over-TCP
+- **Modbus TCP over TLS** — TLS 1.2+ encryption, PEM and PKCS#12 certificate formats, optional mTLS (mutual authentication with client certificates)
 - **Multiple Slave Devices** — Create connections on any port, add multiple slave devices per connection
 - **Four Register Types** — Coils (FC01), Discrete Inputs (FC02), Holding Registers (FC03), Input Registers (FC04)
 - **Full Protocol Support** — Read (FC01-04), Write Single (FC05/06), Write Multiple (FC15/16), with Modbus exception codes
@@ -32,7 +33,8 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 
 ### ModbusMaster — Master Tool
 
-- **Multi-Transport Support** — TCP, RTU (serial), ASCII (serial), RTU-over-TCP
+- **Multi-Transport Support** — TCP, TCP+TLS, RTU (serial), ASCII (serial), RTU-over-TCP
+- **Modbus TCP over TLS** — TLS 1.2+ encryption, PEM and PKCS#12 certificate formats, accept-invalid-certs mode for self-signed certificate testing
 - **Scan Groups** — Configure periodic polling with custom intervals per register group, per-group slave ID override
 - **Device Discovery** — Slave ID scan (1-247), register address scan, auto-add discovered devices to scan groups
 - **Multi-format Data View** — Unsigned, Signed, Hex, Binary, Float32 (AB CD / CD AB), virtual scrolling
@@ -65,6 +67,7 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 | Mode | Transport | Framing | Use Case |
 |------|-----------|---------|----------|
 | TCP | TCP/IP socket | MBAP header | Standard Modbus TCP |
+| TCP+TLS | TLS over TCP | MBAP header | Secure Modbus TCP (TLS 1.2+) |
 | RTU | Serial port | Slave ID + CRC-16 | RS-485/RS-232 devices |
 | ASCII | Serial port | `:` + hex + LRC + CRLF | Legacy serial devices |
 | RTU-over-TCP | TCP/IP socket | Slave ID + CRC-16 | Industrial gateways |
@@ -72,6 +75,7 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 ## Tech Stack
 
 - **Backend**: Rust + [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
+- **TLS**: [native-tls](https://crates.io/crates/native-tls) (system TLS: macOS Security.framework, Linux OpenSSL, Windows SChannel)
 - **Frontend**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual)
 - **Framework**: [Tauri 2](https://tauri.app/)
 - **Serial**: [serialport](https://crates.io/crates/serialport) for port enumeration
@@ -87,7 +91,10 @@ ModbusSim/
 │   │   │   ├── master.rs      # Master connection with multi-transport support
 │   │   │   ├── frame.rs       # RTU/ASCII frame encode/decode
 │   │   │   ├── pdu.rs         # Modbus PDU request/response parsing
-│   │   │   ├── transport.rs   # Transport enum, serial config, port enumeration
+│   │   │   ├── transport.rs   # Transport enum, serial config, TLS config, port enumeration
+│   │   │   ├── mbap.rs        # MBAP frame encoding/decoding (for TLS mode)
+│   │   │   ├── tls_slave.rs   # TLS-enabled Modbus TCP slave server
+│   │   │   ├── tls_master.rs  # TLS-enabled Modbus TCP master client
 │   │   │   ├── register.rs    # Register types, encoding/decoding
 │   │   │   ├── data_source.rs # Dynamic data sources for register simulation
 │   │   │   ├── reconnect.rs   # Reconnect policy with exponential backoff

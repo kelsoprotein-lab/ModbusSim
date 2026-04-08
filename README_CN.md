@@ -1,6 +1,6 @@
 # ModbusSim
 
-跨平台 Modbus 仿真套件 — 包含 **ModbusSlave**（从站模拟器）和 **ModbusMaster**（主站工具），基于 Tauri 2、Rust 和 Vue 3 构建。支持 **TCP、RTU、ASCII、RTU-over-TCP** 四种传输模式。
+跨平台 Modbus 仿真套件 — 包含 **ModbusSlave**（从站模拟器）和 **ModbusMaster**（主站工具），基于 Tauri 2、Rust 和 Vue 3 构建。支持 **TCP、TCP+TLS、RTU、ASCII、RTU-over-TCP** 五种传输模式。
 
 [English](README.md)
 
@@ -19,7 +19,8 @@
 
 ### ModbusSlave — 从站模拟器
 
-- **多传输模式** — TCP、RTU（串口）、ASCII（串口）、RTU-over-TCP
+- **多传输模式** — TCP、TCP+TLS、RTU（串口）、ASCII（串口）、RTU-over-TCP
+- **Modbus TCP over TLS** — TLS 1.2+ 加密传输，支持 PEM 和 PKCS#12 证书格式，可选 mTLS 双向认证（验证客户端证书）
 - **多设备支持** — 在任意端口创建连接，每个连接支持多个从站设备
 - **四种寄存器类型** — 线圈 (FC01)、离散输入 (FC02)、保持寄存器 (FC03)、输入寄存器 (FC04)
 - **完整协议支持** — 读取 (FC01-04)、单点写入 (FC05/06)、多点写入 (FC15/16)，支持 Modbus 异常码
@@ -32,7 +33,8 @@
 
 ### ModbusMaster — 主站工具
 
-- **多传输模式** — TCP、RTU（串口）、ASCII（串口）、RTU-over-TCP
+- **多传输模式** — TCP、TCP+TLS、RTU（串口）、ASCII（串口）、RTU-over-TCP
+- **Modbus TCP over TLS** — TLS 1.2+ 加密传输，支持 PEM 和 PKCS#12 证书格式，支持自签名证书测试模式
 - **扫描组** — 按寄存器组配置周期性轮询，自定义轮询间隔，支持独立从站 ID 覆盖
 - **设备发现** — 从站 ID 扫描 (1-247)、寄存器地址扫描、发现设备后自动添加到扫描组
 - **多格式数据视图** — 无符号、有符号、十六进制、二进制、Float32 (AB CD / CD AB)，虚拟滚动
@@ -65,6 +67,7 @@
 | 模式 | 传输层 | 帧格式 | 使用场景 |
 |------|--------|--------|----------|
 | TCP | TCP/IP 套接字 | MBAP 头 | 标准 Modbus TCP |
+| TCP+TLS | TLS over TCP | MBAP 头 | 安全 Modbus TCP（TLS 1.2+） |
 | RTU | 串口 | 从站 ID + CRC-16 | RS-485/RS-232 设备 |
 | ASCII | 串口 | `:` + 十六进制 + LRC + CRLF | 传统串口设备 |
 | RTU-over-TCP | TCP/IP 套接字 | 从站 ID + CRC-16 | 工业网关 |
@@ -72,6 +75,7 @@
 ## 技术栈
 
 - **后端**: Rust + [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
+- **TLS**: [native-tls](https://crates.io/crates/native-tls)（系统 TLS：macOS Security.framework、Linux OpenSSL、Windows SChannel）
 - **前端**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual)
 - **框架**: [Tauri 2](https://tauri.app/)
 - **串口**: [serialport](https://crates.io/crates/serialport) 端口枚举
@@ -87,7 +91,10 @@ ModbusSim/
 │   │   │   ├── master.rs      # 主站连接，多传输模式支持
 │   │   │   ├── frame.rs       # RTU/ASCII 帧编解码
 │   │   │   ├── pdu.rs         # Modbus PDU 请求/响应解析
-│   │   │   ├── transport.rs   # Transport 枚举、串口配置、端口枚举
+│   │   │   ├── transport.rs   # Transport 枚举、串口配置、TLS 配置、端口枚举
+│   │   │   ├── mbap.rs        # MBAP 帧编解码（TLS 模式使用）
+│   │   │   ├── tls_slave.rs   # TLS 加密 Modbus TCP 从站服务器
+│   │   │   ├── tls_master.rs  # TLS 加密 Modbus TCP 主站客户端
 │   │   │   ├── register.rs    # 寄存器类型、编码/解码
 │   │   │   ├── data_source.rs # 动态数据源（正弦波、计数器等）
 │   │   │   ├── reconnect.rs   # 重连策略（指数退避）
