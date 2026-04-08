@@ -4,7 +4,7 @@
 //! over the encrypted stream. All I/O is synchronous (native_tls::TlsStream) so
 //! we use `spawn_blocking` to avoid blocking the Tokio runtime.
 
-use crate::master::{MasterError, ReadFunction, ReadResult};
+use crate::master::{build_read_pdu, check_write_response, parse_read_response_pdu, MasterError, ReadFunction, ReadResult};
 use crate::mbap;
 use crate::transport::TlsConfig;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -16,6 +16,8 @@ use tokio::sync::Mutex;
 pub struct TlsMasterConnection {
     stream: Arc<Mutex<native_tls::TlsStream<std::net::TcpStream>>>,
     transaction_id: AtomicU16,
+    /// Timeout configured at connection time (applied once to the underlying TCP socket).
+    _configured_timeout: Duration,
 }
 
 impl TlsMasterConnection {
@@ -24,11 +26,11 @@ impl TlsMasterConnection {
     }
 
     /// Core send/receive over TLS. Runs in spawn_blocking because native_tls is sync.
+    /// Timeouts are set once at connection time (see `connect_tls`).
     async fn send_receive(
         &self,
         slave_id: u8,
         pdu: &[u8],
-        timeout: Duration,
     ) -> Result<Vec<u8>, MasterError> {
         let stream = self.stream.clone();
         let tid = self.next_transaction_id();
@@ -36,13 +38,6 @@ impl TlsMasterConnection {
 
         tokio::task::spawn_blocking(move || {
             let mut stream = stream.blocking_lock();
-
-            // Set timeouts on the underlying TCP stream
-            let tcp = stream.get_ref();
-            tcp.set_read_timeout(Some(timeout))
-                .map_err(|e| MasterError::Transport(format!("set read timeout: {e}")))?;
-            tcp.set_write_timeout(Some(timeout))
-                .map_err(|e| MasterError::Transport(format!("set write timeout: {e}")))?;
 
             // Write MBAP frame
             mbap::write_frame(&mut *stream, tid, slave_id, &pdu)
@@ -65,20 +60,11 @@ impl TlsMasterConnection {
         function: ReadFunction,
         start_address: u16,
         quantity: u16,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<ReadResult, MasterError> {
-        let fc: u8 = match function {
-            ReadFunction::ReadCoils => 0x01,
-            ReadFunction::ReadDiscreteInputs => 0x02,
-            ReadFunction::ReadHoldingRegisters => 0x03,
-            ReadFunction::ReadInputRegisters => 0x04,
-        };
-        let mut pdu = vec![fc];
-        pdu.extend_from_slice(&start_address.to_be_bytes());
-        pdu.extend_from_slice(&quantity.to_be_bytes());
-
-        let resp = self.send_receive(slave_id, &pdu, timeout).await?;
-        parse_response(function, &resp)
+        let pdu = build_read_pdu(function, start_address, quantity);
+        let resp = self.send_receive(slave_id, &pdu).await?;
+        parse_read_response_pdu(function, &resp)
     }
 
     /// Write a single coil (FC05).
@@ -87,13 +73,13 @@ impl TlsMasterConnection {
         slave_id: u8,
         address: u16,
         value: bool,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<(), MasterError> {
         let coil_value: u16 = if value { 0xFF00 } else { 0x0000 };
         let mut pdu = vec![0x05];
         pdu.extend_from_slice(&address.to_be_bytes());
         pdu.extend_from_slice(&coil_value.to_be_bytes());
-        let resp = self.send_receive(slave_id, &pdu, timeout).await?;
+        let resp = self.send_receive(slave_id, &pdu).await?;
         check_write_response(&resp, 0x05)
     }
 
@@ -103,12 +89,12 @@ impl TlsMasterConnection {
         slave_id: u8,
         address: u16,
         value: u16,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<(), MasterError> {
         let mut pdu = vec![0x06];
         pdu.extend_from_slice(&address.to_be_bytes());
         pdu.extend_from_slice(&value.to_be_bytes());
-        let resp = self.send_receive(slave_id, &pdu, timeout).await?;
+        let resp = self.send_receive(slave_id, &pdu).await?;
         check_write_response(&resp, 0x06)
     }
 
@@ -118,7 +104,7 @@ impl TlsMasterConnection {
         slave_id: u8,
         address: u16,
         values: &[bool],
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<(), MasterError> {
         let quantity = values.len() as u16;
         let byte_count = (values.len() + 7) / 8;
@@ -133,7 +119,7 @@ impl TlsMasterConnection {
         pdu.extend_from_slice(&quantity.to_be_bytes());
         pdu.push(byte_count as u8);
         pdu.extend_from_slice(&coil_bytes);
-        let resp = self.send_receive(slave_id, &pdu, timeout).await?;
+        let resp = self.send_receive(slave_id, &pdu).await?;
         check_write_response(&resp, 0x0F)
     }
 
@@ -143,7 +129,7 @@ impl TlsMasterConnection {
         slave_id: u8,
         address: u16,
         values: &[u16],
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<(), MasterError> {
         let quantity = values.len() as u16;
         let byte_count = (values.len() * 2) as u8;
@@ -154,77 +140,9 @@ impl TlsMasterConnection {
         for v in values {
             pdu.extend_from_slice(&v.to_be_bytes());
         }
-        let resp = self.send_receive(slave_id, &pdu, timeout).await?;
+        let resp = self.send_receive(slave_id, &pdu).await?;
         check_write_response(&resp, 0x10)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Response parsing helpers
-// ---------------------------------------------------------------------------
-
-fn parse_response(function: ReadFunction, resp: &[u8]) -> Result<ReadResult, MasterError> {
-    if resp.is_empty() {
-        return Err(MasterError::Transport("empty response".into()));
-    }
-    if resp[0] & 0x80 != 0 {
-        let exc = resp.get(1).copied().unwrap_or(0);
-        return Err(MasterError::Transport(format!(
-            "Modbus exception: 0x{:02X}",
-            exc
-        )));
-    }
-    let byte_count = resp.get(1).copied().unwrap_or(0) as usize;
-    let data = if resp.len() > 2 { &resp[2..] } else { &[] };
-
-    match function {
-        ReadFunction::ReadCoils | ReadFunction::ReadDiscreteInputs => {
-            let mut bits = Vec::new();
-            for byte_idx in 0..byte_count {
-                for bit_idx in 0..8 {
-                    if byte_idx < data.len() {
-                        bits.push((data[byte_idx] >> bit_idx) & 1 == 1);
-                    }
-                }
-            }
-            match function {
-                ReadFunction::ReadCoils => Ok(ReadResult::Coils(bits)),
-                _ => Ok(ReadResult::DiscreteInputs(bits)),
-            }
-        }
-        ReadFunction::ReadHoldingRegisters | ReadFunction::ReadInputRegisters => {
-            let mut regs = Vec::new();
-            for chunk in data.chunks(2) {
-                if chunk.len() == 2 {
-                    regs.push(u16::from_be_bytes([chunk[0], chunk[1]]));
-                }
-            }
-            match function {
-                ReadFunction::ReadHoldingRegisters => Ok(ReadResult::HoldingRegisters(regs)),
-                _ => Ok(ReadResult::InputRegisters(regs)),
-            }
-        }
-    }
-}
-
-fn check_write_response(resp: &[u8], expected_fc: u8) -> Result<(), MasterError> {
-    if resp.is_empty() {
-        return Err(MasterError::Transport("empty response".into()));
-    }
-    if resp[0] & 0x80 != 0 {
-        let exc = resp.get(1).copied().unwrap_or(0);
-        return Err(MasterError::Transport(format!(
-            "Modbus exception: 0x{:02X}",
-            exc
-        )));
-    }
-    if resp[0] != expected_fc {
-        return Err(MasterError::Transport(format!(
-            "unexpected function code: expected 0x{:02X}, got 0x{:02X}",
-            expected_fc, resp[0]
-        )));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -313,8 +231,16 @@ pub async fn connect_tls(
     .map_err(|e| MasterError::ConnectionFailed(format!("spawn_blocking: {e}")))?
     ?;
 
+    // Set read/write timeouts once on the underlying TCP stream.
+    let tcp = tls_stream.get_ref();
+    tcp.set_read_timeout(Some(timeout))
+        .map_err(|e| MasterError::ConnectionFailed(format!("set read timeout: {e}")))?;
+    tcp.set_write_timeout(Some(timeout))
+        .map_err(|e| MasterError::ConnectionFailed(format!("set write timeout: {e}")))?;
+
     Ok(TlsMasterConnection {
         stream: Arc::new(Mutex::new(tls_stream)),
         transaction_id: AtomicU16::new(1),
+        _configured_timeout: timeout,
     })
 }

@@ -620,7 +620,7 @@ impl MasterConnection {
 // PDU helpers for non-TCP transports
 // ---------------------------------------------------------------------------
 
-fn build_read_pdu(function: ReadFunction, start_address: u16, quantity: u16) -> Vec<u8> {
+pub(crate) fn build_read_pdu(function: ReadFunction, start_address: u16, quantity: u16) -> Vec<u8> {
     let fc: u8 = match function {
         ReadFunction::ReadCoils => 0x01,
         ReadFunction::ReadDiscreteInputs => 0x02,
@@ -633,7 +633,7 @@ fn build_read_pdu(function: ReadFunction, start_address: u16, quantity: u16) -> 
     pdu
 }
 
-fn parse_read_response_pdu(
+pub(crate) fn parse_read_response_pdu(
     function: ReadFunction,
     response_pdu: &[u8],
 ) -> Result<ReadResult, MasterError> {
@@ -715,7 +715,7 @@ async fn send_pdu_via_transport(
 }
 
 /// Check a write response PDU for exception.
-fn check_write_response(resp: &[u8], expected_fc: u8) -> Result<(), MasterError> {
+pub(crate) fn check_write_response(resp: &[u8], expected_fc: u8) -> Result<(), MasterError> {
     if resp.is_empty() {
         return Err(MasterError::Transport("empty response".into()));
     }

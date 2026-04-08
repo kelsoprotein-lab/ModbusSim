@@ -194,7 +194,7 @@ pub(crate) async fn process_request(
 // Read / Write helpers
 // ---------------------------------------------------------------------------
 
-fn execute_read(register_map: &RegisterMap, req: &ModbusRequest) -> Result<ResponseData, u8> {
+pub(crate) fn execute_read(register_map: &RegisterMap, req: &ModbusRequest) -> Result<ResponseData, u8> {
     match req {
         ModbusRequest::ReadCoils { address, quantity } => {
             validate_quantity(*address, *quantity, 2000)?;
@@ -220,7 +220,7 @@ fn execute_read(register_map: &RegisterMap, req: &ModbusRequest) -> Result<Respo
     }
 }
 
-fn execute_write(
+pub(crate) fn execute_write(
     register_map: &mut RegisterMap,
     req: &ModbusRequest,
 ) -> Result<ResponseData, u8> {
@@ -271,7 +271,7 @@ fn execute_write(
 
 /// Validate quantity > 0, quantity <= max, and address + quantity <= 65536.
 /// Returns exception code 0x03 (Illegal Data Value) or 0x02 (Illegal Data Address).
-fn validate_quantity(addr: u16, quantity: u16, max_quantity: u16) -> Result<(), u8> {
+pub(crate) fn validate_quantity(addr: u16, quantity: u16, max_quantity: u16) -> Result<(), u8> {
     if quantity == 0 || quantity > max_quantity {
         return Err(0x03); // Illegal Data Value
     }

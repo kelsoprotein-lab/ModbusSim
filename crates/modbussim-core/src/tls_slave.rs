@@ -4,16 +4,17 @@
 //! via `native_tls`, and then handles MBAP-framed Modbus requests on each
 //! connection in a blocking thread.
 
-use crate::log_entry::{Direction, FunctionCode, LogEntry};
+use crate::log_entry::{Direction, FunctionCode};
 use crate::mbap;
 use crate::pdu::{
-    build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest, ResponseData,
+    build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest,
 };
-use crate::register::RegisterMap;
+use crate::rtu_slave::{execute_read, execute_write, format_request, log_if_enabled};
 use crate::slave::{SharedDevices, SharedLogCollector};
 use crate::transport::SlaveTlsConfig;
 use native_tls::{Identity, Protocol, TlsAcceptor};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -78,7 +79,7 @@ pub async fn run_tls_slave(
     log::info!("TLS Modbus slave listening on {addr}");
 
     // Shared shutdown flag that blocking client threads can check.
-    let shutdown_flag = Arc::new(std::sync::Mutex::new(false));
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
 
     tokio::pin!(shutdown_rx);
 
@@ -86,20 +87,13 @@ pub async fn run_tls_slave(
         tokio::select! {
             _ = &mut shutdown_rx => {
                 log::info!("TLS slave shutting down");
-                *shutdown_flag.lock().unwrap() = true;
+                shutdown_flag.store(true, Ordering::Relaxed);
                 return Ok(());
             }
             accept_result = listener.accept() => {
                 match accept_result {
                     Ok((stream, peer)) => {
                         log::info!("TLS client connected: {peer}");
-                        if let Some(ref collector) = log_collector {
-                            collector.try_add(LogEntry::new(
-                                Direction::Rx,
-                                FunctionCode::ReadHoldingRegisters,
-                                format!("TLS client connected: {peer}"),
-                            ));
-                        }
 
                         // Convert tokio TcpStream to std TcpStream for blocking TLS handshake.
                         // tokio's into_std() leaves the socket in non-blocking mode, so we must
@@ -158,7 +152,7 @@ fn handle_client(
     peer_addr: SocketAddr,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
-    shutdown: Arc<std::sync::Mutex<bool>>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // Set read timeout so we can check the shutdown flag periodically.
     tls_stream
@@ -168,7 +162,7 @@ fn handle_client(
 
     loop {
         // Check shutdown flag.
-        if *shutdown.lock().unwrap() {
+        if shutdown.load(Ordering::Relaxed) {
             return Ok(());
         }
 
@@ -194,20 +188,26 @@ fn handle_client(
         let transaction_id = header.transaction_id;
         let fc_byte = pdu.first().copied().unwrap_or(0);
 
+        // Parse PDU once — reuse for both logging and processing.
+        let parsed = parse_request_pdu(&pdu);
+
         // Log inbound request.
         if let Some(fc) = FunctionCode::from_u8(fc_byte) {
-            if let Ok(req) = parse_request_pdu(&pdu) {
+            if let Ok(ref req) = parsed {
                 log_if_enabled(
                     &log_collector,
                     Direction::Rx,
                     fc,
-                    &format_request(&req),
+                    &format_request(req),
                 );
             }
         }
 
         // Process the request.
-        let response_pdu = process_request(unit_id, fc_byte, &pdu, &devices);
+        let response_pdu = match parsed {
+            Ok(req) => process_parsed_request(unit_id, fc_byte, &req, &devices),
+            Err(_) => Some(build_exception_pdu(fc_byte, 0x01)),
+        };
 
         if let Some(ref resp) = response_pdu {
             // Log outbound response.
@@ -227,7 +227,7 @@ fn handle_client(
             mbap::write_frame(&mut tls_stream, transaction_id, unit_id, resp)
                 .map_err(|e| format!("Write error to {peer_addr}: {e}"))?;
         }
-        // If process_request returns None, slave_id not found — silently drop.
+        // If process returns None, slave_id not found — silently drop.
     }
 }
 
@@ -235,24 +235,16 @@ fn handle_client(
 // Request processing (blocking, uses try_read / try_write)
 // ---------------------------------------------------------------------------
 
-/// Process a Modbus request PDU for the given unit/slave.
+/// Process an already-parsed Modbus request for the given unit/slave.
 ///
 /// Uses `try_read` / `try_write` on the shared device map because this runs
 /// in a blocking thread (cannot `.await`).
-fn process_request(
+fn process_parsed_request(
     unit_id: u8,
     fc_byte: u8,
-    pdu: &[u8],
+    req: &ModbusRequest,
     devices: &SharedDevices,
 ) -> Option<Vec<u8>> {
-    let req = match parse_request_pdu(pdu) {
-        Ok(r) => r,
-        Err(_) => {
-            // Unsupported or malformed function code — Illegal Function.
-            return Some(build_exception_pdu(fc_byte, 0x01));
-        }
-    };
-
     let is_write = matches!(
         req,
         ModbusRequest::WriteSingleCoil { .. }
@@ -265,7 +257,7 @@ fn process_request(
         match devices.try_write() {
             Ok(mut devices) => {
                 let device = devices.get_mut(&unit_id)?;
-                match execute_write(&mut device.register_map, &req) {
+                match execute_write(&mut device.register_map, req) {
                     Ok(data) => Some(build_response_pdu(fc_byte, &data)),
                     Err(exception) => Some(build_exception_pdu(fc_byte, exception)),
                 }
@@ -276,7 +268,7 @@ fn process_request(
         match devices.try_read() {
             Ok(devices) => {
                 let device = devices.get(&unit_id)?;
-                match execute_read(&device.register_map, &req) {
+                match execute_read(&device.register_map, req) {
                     Ok(data) => Some(build_response_pdu(fc_byte, &data)),
                     Err(exception) => Some(build_exception_pdu(fc_byte, exception)),
                 }
@@ -286,164 +278,17 @@ fn process_request(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Read / Write helpers
-// ---------------------------------------------------------------------------
-
-fn execute_read(register_map: &RegisterMap, req: &ModbusRequest) -> Result<ResponseData, u8> {
-    match req {
-        ModbusRequest::ReadCoils { address, quantity } => {
-            validate_quantity(*address, *quantity, 2000)?;
-            if !register_map.has_all_coils(*address, *quantity) {
-                return Err(0x02); // Illegal Data Address
-            }
-            Ok(ResponseData::ReadBits(
-                register_map.read_coils(*address, *quantity),
-            ))
-        }
-        ModbusRequest::ReadDiscreteInputs { address, quantity } => {
-            validate_quantity(*address, *quantity, 2000)?;
-            if !register_map.has_all_discrete_inputs(*address, *quantity) {
-                return Err(0x02);
-            }
-            Ok(ResponseData::ReadBits(
-                register_map.read_discrete_inputs(*address, *quantity),
-            ))
-        }
-        ModbusRequest::ReadHoldingRegisters { address, quantity } => {
-            validate_quantity(*address, *quantity, 125)?;
-            if !register_map.has_all_holding_registers(*address, *quantity) {
-                return Err(0x02);
-            }
-            Ok(ResponseData::ReadRegisters(
-                register_map.read_holding_registers(*address, *quantity),
-            ))
-        }
-        ModbusRequest::ReadInputRegisters { address, quantity } => {
-            validate_quantity(*address, *quantity, 125)?;
-            if !register_map.has_all_input_registers(*address, *quantity) {
-                return Err(0x02);
-            }
-            Ok(ResponseData::ReadRegisters(
-                register_map.read_input_registers(*address, *quantity),
-            ))
-        }
-        _ => Err(0x01), // Illegal Function
-    }
-}
-
-fn execute_write(
-    register_map: &mut RegisterMap,
-    req: &ModbusRequest,
-) -> Result<ResponseData, u8> {
-    match req {
-        ModbusRequest::WriteSingleCoil { address, value } => {
-            if !register_map.has_coil(*address) {
-                return Err(0x02);
-            }
-            register_map.write_coil(*address, *value);
-            // Mirror to discrete_inputs.
-            register_map.discrete_inputs.insert(*address, *value);
-            Ok(ResponseData::WriteSingleCoil {
-                address: *address,
-                value: *value,
-            })
-        }
-        ModbusRequest::WriteSingleRegister { address, value } => {
-            if !register_map.has_holding_register(*address) {
-                return Err(0x02);
-            }
-            register_map.write_holding_register(*address, *value);
-            // Mirror to input_registers.
-            register_map.input_registers.insert(*address, *value);
-            Ok(ResponseData::WriteSingleRegister {
-                address: *address,
-                value: *value,
-            })
-        }
-        ModbusRequest::WriteMultipleCoils { address, values } => {
-            let quantity = values.len() as u16;
-            validate_quantity(*address, quantity, 1968)?;
-            if !register_map.has_all_coils(*address, quantity) {
-                return Err(0x02);
-            }
-            register_map.write_coils(*address, values);
-            for (i, &val) in values.iter().enumerate() {
-                register_map.discrete_inputs.insert(*address + i as u16, val);
-            }
-            Ok(ResponseData::WriteMultiple {
-                address: *address,
-                quantity,
-            })
-        }
-        ModbusRequest::WriteMultipleRegisters { address, values } => {
-            let quantity = values.len() as u16;
-            validate_quantity(*address, quantity, 123)?;
-            if !register_map.has_all_holding_registers(*address, quantity) {
-                return Err(0x02);
-            }
-            register_map.write_holding_registers(*address, values);
-            for (i, &val) in values.iter().enumerate() {
-                register_map.input_registers.insert(*address + i as u16, val);
-            }
-            Ok(ResponseData::WriteMultiple {
-                address: *address,
-                quantity,
-            })
-        }
-        _ => Err(0x01), // Illegal Function
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Validation / logging helpers
-// ---------------------------------------------------------------------------
-
-fn validate_quantity(addr: u16, quantity: u16, max_quantity: u16) -> Result<(), u8> {
-    if quantity == 0 || quantity > max_quantity {
-        return Err(0x03); // Illegal Data Value
-    }
-    if (addr as u32) + (quantity as u32) > 65536 {
-        return Err(0x02); // Illegal Data Address
-    }
-    Ok(())
-}
-
-fn log_if_enabled(
-    log_collector: &SharedLogCollector,
-    direction: Direction,
-    fc: FunctionCode,
-    detail: &str,
-) {
-    if let Some(collector) = log_collector {
-        collector.try_add(LogEntry::new(direction, fc, detail));
-    }
-}
-
-fn format_request(req: &ModbusRequest) -> String {
-    match req {
-        ModbusRequest::ReadCoils { address, quantity } => format!("R {} x{}", address, quantity),
-        ModbusRequest::ReadDiscreteInputs { address, quantity } => {
-            format!("R {} x{}", address, quantity)
-        }
-        ModbusRequest::ReadHoldingRegisters { address, quantity } => {
-            format!("R {} x{}", address, quantity)
-        }
-        ModbusRequest::ReadInputRegisters { address, quantity } => {
-            format!("R {} x{}", address, quantity)
-        }
-        ModbusRequest::WriteSingleCoil { address, value } => {
-            format!("W {} = {}", address, value)
-        }
-        ModbusRequest::WriteSingleRegister { address, value } => {
-            format!("W {} = {:#06x}", address, value)
-        }
-        ModbusRequest::WriteMultipleCoils { address, values } => {
-            format!("W {} x{}", address, values.len())
-        }
-        ModbusRequest::WriteMultipleRegisters { address, values } => {
-            format!("W {} x{}", address, values.len())
-        }
+/// Convenience wrapper: parse PDU then process. Used by tests.
+#[cfg(test)]
+fn process_request(
+    unit_id: u8,
+    fc_byte: u8,
+    pdu: &[u8],
+    devices: &SharedDevices,
+) -> Option<Vec<u8>> {
+    match parse_request_pdu(pdu) {
+        Ok(req) => process_parsed_request(unit_id, fc_byte, &req, devices),
+        Err(_) => Some(build_exception_pdu(fc_byte, 0x01)),
     }
 }
 
@@ -580,25 +425,7 @@ mod tests {
         assert_eq!(resp[2], 0b00000101);
     }
 
-    #[test]
-    fn test_validate_quantity_ok() {
-        assert!(validate_quantity(0, 10, 125).is_ok());
-    }
-
-    #[test]
-    fn test_validate_quantity_zero() {
-        assert_eq!(validate_quantity(0, 0, 125), Err(0x03));
-    }
-
-    #[test]
-    fn test_validate_quantity_overflow() {
-        assert_eq!(validate_quantity(65535, 2, 125), Err(0x02));
-    }
-
-    #[test]
-    fn test_validate_quantity_exceeds_max() {
-        assert_eq!(validate_quantity(0, 200, 125), Err(0x03));
-    }
+    // validate_quantity tests removed — covered by rtu_slave::tests
 
     #[test]
     fn test_build_tls_acceptor_no_cert() {
