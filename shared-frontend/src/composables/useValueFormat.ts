@@ -126,3 +126,23 @@ export function use64BitFormat(values: Ref<number[]>, enabled: Ref<boolean>) {
 
   return { doubleValue, doubleReversed, doubleByteSwap, doubleLittleEndian }
 }
+
+export type ByteOrder = 'ABCD' | 'CDAB' | 'BADC' | 'DCBA'
+
+/**
+ * Encode a Float32 value into a pair of u16 registers with the specified byte order.
+ */
+export function float32ToU16Pair(value: number, byteOrder: ByteOrder): [number, number] {
+  const buf = new ArrayBuffer(4)
+  const view = new DataView(buf)
+  view.setFloat32(0, value)
+  const w0 = view.getUint16(0)
+  const w1 = view.getUint16(2)
+  const map: Record<ByteOrder, [number, number]> = {
+    ABCD: [w0, w1],
+    CDAB: [w1, w0],
+    BADC: [swapBytes16(w0), swapBytes16(w1)],
+    DCBA: [swapBytes16(w1), swapBytes16(w0)],
+  }
+  return map[byteOrder]
+}

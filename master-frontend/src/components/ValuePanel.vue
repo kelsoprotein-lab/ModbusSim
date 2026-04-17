@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { RegisterValueDto, ScanGroupInfo } from '../types'
-import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat } from 'shared-frontend'
+import { swapBytes16, float32ToU16Pair, use16BitFormat, use32BitFormat, use64BitFormat, type ByteOrder } from 'shared-frontend'
 
 const vFocus: Directive<HTMLInputElement> = {
   mounted(el) {
@@ -133,10 +133,8 @@ function reverseParseField(field: string, input: string): { address: number; val
   // 32-bit Float
   if (field === 'floatABCD' || field === 'floatCDAB' || field === 'floatBADC' || field === 'floatDCBA') {
     if (regs.length < 2) return null; const n = parseFloat(input); if (isNaN(n)) return null
-    const buf = new ArrayBuffer(4); const view = new DataView(buf); view.setFloat32(0, n)
-    const w0 = view.getUint16(0); const w1 = view.getUint16(2)
-    const map: Record<string, [number, number]> = { floatABCD: [w0, w1], floatCDAB: [w1, w0], floatBADC: [swapBytes16(w0), swapBytes16(w1)], floatDCBA: [swapBytes16(w1), swapBytes16(w0)] }
-    const [r0, r1] = map[field]
+    const order = field.replace('float', '') as ByteOrder
+    const [r0, r1] = float32ToU16Pair(n, order)
     return [{ address: regs[0].address, value: r0 }, { address: regs[1].address, value: r1 }]
   }
 

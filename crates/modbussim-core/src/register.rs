@@ -168,6 +168,27 @@ impl RegisterMap {
 
     pub fn has_coil(&self, addr: u16) -> bool { self.coils.contains_key(&addr) }
     pub fn has_holding_register(&self, addr: u16) -> bool { self.holding_registers.contains_key(&addr) }
+
+    /// Ensure map entries exist for every address covered by `def`.
+    /// Uses default values (0 / false) only for addresses that are absent,
+    /// so existing register values are preserved when the def is re-added.
+    pub fn ensure_from_def(&mut self, def: &RegisterDef) {
+        let count = match def.register_type {
+            RegisterType::Coil | RegisterType::DiscreteInput => 1,
+            RegisterType::HoldingRegister | RegisterType::InputRegister => {
+                def.data_type.register_count()
+            }
+        };
+        for i in 0..count {
+            let Some(addr) = def.address.checked_add(i) else { break; };
+            match def.register_type {
+                RegisterType::Coil => { self.coils.entry(addr).or_insert(false); }
+                RegisterType::DiscreteInput => { self.discrete_inputs.entry(addr).or_insert(false); }
+                RegisterType::HoldingRegister => { self.holding_registers.entry(addr).or_insert(0); }
+                RegisterType::InputRegister => { self.input_registers.entry(addr).or_insert(0); }
+            }
+        }
+    }
 }
 
 // --- Data type encoding/decoding with endian support ---

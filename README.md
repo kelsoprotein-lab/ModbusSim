@@ -24,7 +24,8 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 - **Multiple Slave Devices** — Create connections on any port, add multiple slave devices per connection
 - **Four Register Types** — Coils (FC01), Discrete Inputs (FC02), Holding Registers (FC03), Input Registers (FC04)
 - **Full Protocol Support** — Read (FC01-04), Write Single (FC05/06), Write Multiple (FC15/16), with Modbus exception codes
-- **Register Table** — Address search/filter, inline value editing, Ctrl/Shift multi-select, virtual scrolling (10,000+ registers)
+- **Register Table** — Address search/filter, inline value editing, Ctrl/Shift multi-select, virtual scrolling (20,000+ registers), multi-format display (Auto / U16 / I16 / Hex / Bin / Float32 with 4 byte orders)
+- **Default Initialization** — New slaves pre-fill addresses 0-20,000 across all four register types, batch-add supports up to 50,000 entries per operation
 - **Value Panel** — Multi-format display: Signed/Unsigned/Hex/Binary (16-bit), Long/Float (32-bit), Double (64-bit), all byte orders (AB CD / CD AB / BA DC / DC BA)
 - **Dynamic Data Sources** — Simulate changing register values: Fixed, Random, Sine wave, Sawtooth, Triangle, Counter, CSV playback
 - **Communication Log** — Real-time TX/RX logging with search, direction/function-code filtering, and CSV export

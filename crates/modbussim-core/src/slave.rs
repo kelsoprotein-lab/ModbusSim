@@ -4,8 +4,9 @@ use crate::register::{RegisterDef, RegisterMap};
 use crate::transport::{SlaveTlsConfig, Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::future;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, RwLock};
@@ -411,11 +412,12 @@ impl Service for SlaveService {
     type Request = SlaveRequest<'static>;
     type Response = Option<Response>;
     type Exception = ExceptionCode;
-    type Future = future::Ready<Result<Option<Response>, ExceptionCode>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Option<Response>, ExceptionCode>> + Send>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
         let SlaveRequest { slave, request } = req;
         let devices = self.devices.clone();
+        let log_collector = self.log_collector.clone();
 
         // Log inbound request & save fc for response log
         let fc = Self::get_function_code(&request);
@@ -432,38 +434,44 @@ impl Service for SlaveService {
                 | Request::WriteMultipleRegisters(..)
         );
 
-        let result = if is_write {
-            match devices.try_write() {
-                Ok(mut devices) => match devices.get_mut(&slave) {
+        Box::pin(async move {
+            let result = if is_write {
+                let mut devices = devices.write().await;
+                match devices.get_mut(&slave) {
                     Some(device) => Some(handle_write(&mut device.register_map, request)),
                     None => None,
-                },
-                Err(_) => Some(Err(ExceptionCode::ServerDeviceBusy)),
-            }
-        } else {
-            match devices.try_read() {
-                Ok(devices) => match devices.get(&slave) {
+                }
+            } else {
+                let devices = devices.read().await;
+                match devices.get(&slave) {
                     Some(device) => Some(handle_read(&device.register_map, request)),
                     None => None,
-                },
-                Err(_) => Some(Err(ExceptionCode::ServerDeviceBusy)),
-            }
-        };
+                }
+            };
 
-        // Log outbound response
-        if let Some(fc) = fc {
-            match &result {
-                Some(Ok(_)) => self.log_if_enabled(Direction::Tx, fc, "OK"),
-                Some(Err(exc)) => self.log_if_enabled(Direction::Tx, fc, &format!("ERR: {:?}", exc)),
-                None => {}
+            // Log outbound response
+            if let (Some(fc), Some(collector)) = (fc, &log_collector) {
+                match &result {
+                    Some(Ok(_)) => {
+                        collector.try_add(LogEntry::new(Direction::Tx, fc, "OK"));
+                    }
+                    Some(Err(exc)) => {
+                        collector.try_add(LogEntry::new(
+                            Direction::Tx,
+                            fc,
+                            &format!("ERR: {:?}", exc),
+                        ));
+                    }
+                    None => {}
+                }
             }
-        }
 
-        match result {
-            Some(Ok(response)) => future::ready(Ok(Some(response))),
-            Some(Err(exception)) => future::ready(Err(exception)),
-            None => future::ready(Ok(None)), // Unknown slave ID: silent drop
-        }
+            match result {
+                Some(Ok(response)) => Ok(Some(response)),
+                Some(Err(exception)) => Err(exception),
+                None => Ok(None), // Unknown slave ID: silent drop
+            }
+        })
     }
 }
 

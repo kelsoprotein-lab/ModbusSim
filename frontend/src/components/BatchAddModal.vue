@@ -54,7 +54,7 @@ const existingCount = computed(() => {
 const newCount = computed(() => count.value - existingCount.value)
 
 const isValid = computed(() => {
-  return count.value > 0 && count.value <= 10000
+  return count.value > 0 && count.value <= 50000
 })
 
 async function handleConfirm() {
@@ -70,28 +70,31 @@ async function handleConfirm() {
       .map((r) => r.address)
   )
 
-  let added = 0
+  const registers = []
+  for (let addr = s; addr <= e; addr++) {
+    if (existingSet.has(addr)) continue
+    registers.push({
+      address: addr,
+      register_type: formType.value,
+      data_type: formDataType.value,
+      endian: formEndian.value,
+      name: namePrefix.value ? `${namePrefix.value}_${addr}` : '',
+      comment: '',
+    })
+  }
+
   try {
-    for (let addr = s; addr <= e; addr++) {
-      if (existingSet.has(addr)) continue
-      await invoke('add_register', {
-        request: {
-          connection_id: props.connectionId,
-          slave_id: props.slaveId,
-          address: addr,
-          register_type: formType.value,
-          data_type: formDataType.value,
-          endian: formEndian.value,
-          name: namePrefix.value ? `${namePrefix.value}_${addr}` : null,
-          comment: null,
-        },
-      })
-      added++
-    }
+    await invoke('import_registers', {
+      request: {
+        connection_id: props.connectionId,
+        slave_id: props.slaveId,
+        registers,
+      },
+    })
     emit('saved')
     emit('close')
   } catch (err) {
-    await showAlert(`批量添加失败（已添加 ${added} 个）：${err}`)
+    await showAlert(`批量添加失败：${err}`)
   } finally {
     isSaving.value = false
   }
@@ -163,7 +166,7 @@ function handleBackdropClick(e: MouseEvent) {
           </div>
 
           <div class="count-info">
-            <span v-if="count > 10000" class="count-warn">范围过大（最多 10000）</span>
+            <span v-if="count > 50000" class="count-warn">范围过大（最多 50000）</span>
             <template v-else>
               <span>共 {{ count }} 个地址</span>
               <span v-if="existingCount > 0" class="count-skip">，跳过 {{ existingCount }} 个已存在</span>

@@ -150,8 +150,8 @@ pub async fn create_slave_connection(
 
     // Auto-create default slave device (slave_id=1) with pre-filled registers
     let default_device = match request.init_mode.as_deref() {
-        Some("random") => SlaveDevice::with_random_registers(1, "从站 1", 100),
-        _ => SlaveDevice::with_default_registers(1, "从站 1", 100),
+        Some("random") => SlaveDevice::with_random_registers(1, "从站 1", 20000),
+        _ => SlaveDevice::with_default_registers(1, "从站 1", 20000),
     };
     connection
         .add_device(default_device)
@@ -299,8 +299,8 @@ pub async fn add_slave_device(
 
     let name = request.name.clone();
     let device = match request.init_mode.as_deref() {
-        Some("random") => SlaveDevice::with_random_registers(request.slave_id, name.clone(), 100),
-        Some("zero") => SlaveDevice::with_default_registers(request.slave_id, name.clone(), 100),
+        Some("random") => SlaveDevice::with_random_registers(request.slave_id, name.clone(), 20000),
+        Some("zero") => SlaveDevice::with_default_registers(request.slave_id, name.clone(), 20000),
         _ => SlaveDevice::new(request.slave_id, name.clone()),
     };
     let register_count = device.register_defs.len();
@@ -417,6 +417,7 @@ pub async fn add_register(
         .get_mut(&request.slave_id)
         .ok_or_else(|| format!("slave {} not found", request.slave_id))?;
 
+    device.register_map.ensure_from_def(&def);
     device.register_defs.push(def);
     Ok(())
 }
@@ -576,9 +577,7 @@ pub async fn import_registers(
 
     let count = request.registers.len();
     for reg in request.registers {
-        // Validate register type and data type
-        let _ = parse_register_type(&format!("{:?}", reg.register_type).to_lowercase())?;
-        let _ = parse_data_type(&format!("{:?}", reg.data_type).to_lowercase())?;
+        device.register_map.ensure_from_def(&reg);
         device.register_defs.push(reg);
     }
 
@@ -802,6 +801,7 @@ pub async fn import_app_state(
 
             // Add registers
             for reg in device_input.registers {
+                device.register_map.ensure_from_def(&reg);
                 device.register_defs.push(reg);
             }
 
