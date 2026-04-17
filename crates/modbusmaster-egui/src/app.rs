@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -5,10 +6,14 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::{Direction, LogEntry};
-use modbussim_core::master::{MasterConfig, MasterConnection, MasterState, ReadFunction, ReadResult};
+use modbussim_core::master::{
+    MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
+};
 use modbussim_core::transport::Transport;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
+
+const POLL_GROUP_ID: &str = "default";
 
 pub struct MasterConnectionEntry {
     pub id: String,
@@ -24,8 +29,39 @@ pub enum UiEvent {
     ConnectionStateChanged { id: String, state: MasterState },
     ConnectionRemoved(String),
     ReadDone { id: String, result: ReadResult },
+    PollStarted(String),
+    PollStopped(String),
+    PollUpdate { id: String, result: ReadResult },
+    PollError { id: String, msg: String },
     Info(String),
     Error(String),
+}
+
+#[derive(Clone)]
+pub struct PollUi {
+    pub fc: ReadFunction,
+    pub addr: u16,
+    pub qty: u16,
+    pub interval_ms: u64,
+    pub enabled: bool,
+    pub latest: Option<ReadResult>,
+    pub last_update: Option<Instant>,
+    pub last_error: Option<String>,
+}
+
+impl Default for PollUi {
+    fn default() -> Self {
+        Self {
+            fc: ReadFunction::ReadHoldingRegisters,
+            addr: 0,
+            qty: 10,
+            interval_ms: 500,
+            enabled: false,
+            latest: None,
+            last_update: None,
+            last_error: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -63,6 +99,9 @@ pub struct MasterApp {
     write_value: i32,
     write_is_coil: bool,
 
+    // Polling (per connection)
+    polling: HashMap<String, PollUi>,
+
     // Log panel
     log_panel_open: bool,
     log_cache: Vec<LogEntry>,
@@ -98,6 +137,7 @@ impl MasterApp {
             write_addr: 0,
             write_value: 0,
             write_is_coil: false,
+            polling: HashMap::new(),
             log_panel_open: true,
             log_cache: Vec::new(),
             log_cache_conn_id: None,
@@ -251,6 +291,84 @@ impl MasterApp {
         ctx.request_repaint();
     }
 
+    fn start_poll(&self, id: String, ctx: egui::Context) {
+        let Some(poll) = self.polling.get(&id).cloned() else { return };
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        let ctx2 = ctx.clone();
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.connection.clone());
+            let Some(conn_arc) = conn_arc else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                return;
+            };
+
+            let group = ScanGroup {
+                id: POLL_GROUP_ID.to_string(),
+                name: format!("poll_{id}"),
+                function: poll.fc,
+                start_address: poll.addr,
+                quantity: poll.qty,
+                interval_ms: poll.interval_ms,
+                enabled: true,
+                slave_id: None,
+            };
+
+            let rx = {
+                let mut guard = conn_arc.write().await;
+                match guard.start_scan_group(&group).await {
+                    Ok(rx) => rx,
+                    Err(e) => {
+                        let _ = tx.send(UiEvent::Error(format!("启动轮询失败: {e}")));
+                        return;
+                    }
+                }
+            };
+
+            let _ = tx.send(UiEvent::PollStarted(id.clone()));
+            // Consume PollEvent stream until sender drops (i.e., stop_scan_group was called).
+            let mut rx = rx;
+            while let Some(ev) = rx.recv().await {
+                match ev {
+                    PollEvent::Data(r) => {
+                        let _ = tx.send(UiEvent::PollUpdate { id: id.clone(), result: r });
+                        ctx2.request_repaint();
+                    }
+                    PollEvent::Error(e) => {
+                        let _ = tx.send(UiEvent::PollError { id: id.clone(), msg: e });
+                    }
+                }
+            }
+            let _ = tx.send(UiEvent::PollStopped(id));
+        });
+        ctx.request_repaint();
+    }
+
+    fn stop_poll(&self, id: String, ctx: egui::Context) {
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.connection.clone());
+            if let Some(conn_arc) = conn_arc {
+                let mut guard = conn_arc.write().await;
+                if let Err(e) = guard.stop_scan_group(POLL_GROUP_ID).await {
+                    let _ = tx.send(UiEvent::Error(format!("停止轮询失败: {e}")));
+                }
+            }
+        });
+        ctx.request_repaint();
+    }
+
     fn do_read(&self, id: String, ctx: egui::Context) {
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
@@ -335,9 +453,31 @@ impl MasterApp {
                 }
                 UiEvent::ConnectionRemoved(id) => {
                     self.snap.retain(|s| s.id != id);
+                    self.polling.remove(&id);
                 }
                 UiEvent::ReadDone { id: _, result } => {
                     self.read_result = Some(result);
+                }
+                UiEvent::PollStarted(id) => {
+                    let p = self.polling.entry(id).or_default();
+                    p.enabled = true;
+                    p.last_error = None;
+                }
+                UiEvent::PollStopped(id) => {
+                    if let Some(p) = self.polling.get_mut(&id) {
+                        p.enabled = false;
+                    }
+                }
+                UiEvent::PollUpdate { id, result } => {
+                    let p = self.polling.entry(id).or_default();
+                    p.latest = Some(result);
+                    p.last_update = Some(Instant::now());
+                    p.last_error = None;
+                }
+                UiEvent::PollError { id, msg } => {
+                    if let Some(p) = self.polling.get_mut(&id) {
+                        p.last_error = Some(msg);
+                    }
                 }
                 UiEvent::Info(msg) => self.status_msg = Some(msg),
                 UiEvent::Error(msg) => self.last_error = Some(msg),
@@ -516,6 +656,8 @@ impl eframe::App for MasterApp {
         // Central: read/write forms + result
         let mut do_read_id: Option<String> = None;
         let mut do_write_id: Option<String> = None;
+        let mut do_start_poll_id: Option<String> = None;
+        let mut do_stop_poll_id: Option<String> = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(id) = self.selected.clone() else {
                 ui.heading("ModbusMaster — egui edition");
@@ -620,15 +762,81 @@ impl eframe::App for MasterApp {
 
             ui.separator();
 
-            // Read result
-            if let Some(result) = &self.read_result {
-                ui.strong("读取结果");
+            // Polling
+            let pu = self.polling.entry(id.clone()).or_default();
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("轮询");
+                    if pu.enabled {
+                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), "● 运行中");
+                    }
+                });
+                egui::Grid::new("poll_form")
+                    .num_columns(4)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("功能码");
+                        egui::ComboBox::from_id_salt("poll_fc")
+                            .selected_text(read_fc_label(pu.fc))
+                            .show_ui(ui, |ui| {
+                                for f in [
+                                    ReadFunction::ReadCoils,
+                                    ReadFunction::ReadDiscreteInputs,
+                                    ReadFunction::ReadHoldingRegisters,
+                                    ReadFunction::ReadInputRegisters,
+                                ] {
+                                    ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                                }
+                            });
+                        ui.label("起址");
+                        let mut a = pu.addr as u32;
+                        ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                        pu.addr = a as u16;
+                        ui.end_row();
+
+                        ui.label("数量");
+                        let mut q = pu.qty as u32;
+                        ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                        pu.qty = q as u16;
+                        ui.label("间隔 (ms)");
+                        ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
+                        ui.end_row();
+                    });
+                ui.horizontal(|ui| {
+                    let is_connected = s.state == MasterState::Connected;
+                    if pu.enabled {
+                        if ui.button("停止轮询").clicked() {
+                            do_stop_poll_id = Some(id.clone());
+                        }
+                    } else if ui
+                        .add_enabled(is_connected, egui::Button::new("开始轮询"))
+                        .clicked()
+                    {
+                        do_start_poll_id = Some(id.clone());
+                    }
+                    if let Some(t) = pu.last_update {
+                        let ms = t.elapsed().as_millis();
+                        ui.label(format!("上次更新: {} ms 前", ms));
+                    }
+                    if let Some(err) = &pu.last_error {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                });
+            });
+
+            ui.separator();
+
+            // Latest poll result (fallback to single-read result if no poll).
+            let show_result = pu.latest.clone().or_else(|| self.read_result.clone());
+            if let Some(result) = &show_result {
+                ui.strong(if pu.latest.is_some() { "轮询结果" } else { "读取结果" });
+                let base = if pu.latest.is_some() { pu.addr } else { self.read_addr };
                 match result {
                     ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
-                        render_u16_table(ui, self.read_addr, vs);
+                        render_u16_table(ui, base, vs);
                     }
                     ReadResult::Coils(bs) | ReadResult::DiscreteInputs(bs) => {
-                        render_bool_table(ui, self.read_addr, bs);
+                        render_bool_table(ui, base, bs);
                     }
                 }
             }
@@ -647,6 +855,12 @@ impl eframe::App for MasterApp {
         }
         if let Some(id) = do_write_id {
             self.do_write(id, ctx.clone());
+        }
+        if let Some(id) = do_start_poll_id {
+            self.start_poll(id, ctx.clone());
+        }
+        if let Some(id) = do_stop_poll_id {
+            self.stop_poll(id, ctx.clone());
         }
 
         if !self.events_rx.is_empty() {
