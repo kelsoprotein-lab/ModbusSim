@@ -5,6 +5,7 @@ use std::time::Instant;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
+use modbussim_core::log_entry::{Direction, LogEntry};
 use modbussim_core::register::{DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
@@ -151,6 +152,47 @@ pub struct SlaveApp {
     // Inline edit buffer: keyed by (reg_type, addr); implicitly bound to the
     // currently-selected (conn_id, slave_id) — cleared whenever selection moves.
     pending_edits: HashMap<(RegisterType, u16), i32>,
+
+    // Log panel
+    log_panel_open: bool,
+    log_cache: Vec<LogEntry>,
+    log_cache_conn_id: Option<String>,
+    log_last_refresh: Option<Instant>,
+    log_filter: LogFilter,
+}
+
+#[derive(Default)]
+pub struct LogFilter {
+    pub text: String,
+    pub show_rx: bool,
+    pub show_tx: bool,
+}
+
+impl LogFilter {
+    pub fn new() -> Self {
+        Self {
+            text: String::new(),
+            show_rx: true,
+            show_tx: true,
+        }
+    }
+
+    pub fn accepts(&self, entry: &LogEntry) -> bool {
+        match entry.direction {
+            Direction::Rx if !self.show_rx => return false,
+            Direction::Tx if !self.show_tx => return false,
+            _ => {}
+        }
+        if !self.text.is_empty() {
+            let q = self.text.to_lowercase();
+            if !entry.detail.to_lowercase().contains(&q)
+                && !entry.function_code.name().to_lowercase().contains(&q)
+            {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 pub struct BatchModalState {
@@ -186,7 +228,91 @@ impl SlaveApp {
             batch_modal: None,
             status_msg: None,
             pending_edits: HashMap::new(),
+            log_panel_open: true,
+            log_cache: Vec::new(),
+            log_cache_conn_id: None,
+            log_last_refresh: None,
+            log_filter: LogFilter::new(),
         }
+    }
+
+    /// Pull the most recent N log entries for the selected connection into cache.
+    /// Throttled to ~500ms. Uses sync try_read to stay off the async path.
+    fn refresh_log_cache(&mut self) {
+        let Some(id) = selection_conn_id(&self.selection) else {
+            self.log_cache.clear();
+            self.log_cache_conn_id = None;
+            return;
+        };
+
+        // Throttle when already tracking the same connection.
+        if self.log_cache_conn_id.as_deref() == Some(id) {
+            if let Some(t) = self.log_last_refresh {
+                if t.elapsed().as_millis() < 500 {
+                    return;
+                }
+            }
+        } else {
+            self.log_cache.clear();
+        }
+
+        let Ok(entries) = self.connections.try_read() else { return };
+        let Some(entry) = entries.iter().find(|e| e.id == id) else { return };
+        let Some(mut all) = entry.log_collector.try_get_all() else { return };
+        let start = all.len().saturating_sub(500);
+        self.log_cache = all.drain(start..).collect();
+        self.log_cache_conn_id = Some(id.to_string());
+        self.log_last_refresh = Some(Instant::now());
+    }
+
+    fn clear_logs_for_selection(&self) {
+        let Some(id) = selection_conn_id(&self.selection) else { return };
+        let id = id.to_string();
+        let connections = self.connections.clone();
+        self.rt.spawn(async move {
+            let entries = connections.read().await;
+            if let Some(entry) = entries.iter().find(|e| e.id == id) {
+                entry.log_collector.clear().await;
+            }
+        });
+    }
+
+    fn export_logs_for_selection(&mut self, ctx: egui::Context) {
+        let Some(id) = selection_conn_id(&self.selection) else { return };
+        let id = id.to_string();
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let entries = connections.read().await;
+            let Some(entry) = entries.iter().find(|e| e.id == id) else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                return;
+            };
+            let csv = entry.log_collector.export_csv().await;
+            drop(entries);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let default_name = format!("modbus_log_{}_{}.csv", id, ts);
+            let Some(path) = rfd::AsyncFileDialog::new()
+                .set_file_name(&default_name)
+                .add_filter("CSV", &["csv"])
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            match tokio::fs::write(path.path(), csv).await {
+                Ok(()) => {
+                    let _ = tx.send(UiEvent::Info(format!("日志已导出：{}", path.path().display())));
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
+                }
+            }
+        });
+        ctx.request_repaint();
     }
 
     /// Spawn an async task that writes a single address into the device's
@@ -696,6 +822,15 @@ const DATA_TYPES: &[DataType] = &[
 
 const ENDIANS: &[Endian] = &[Endian::Big, Endian::Little, Endian::MidBig, Endian::MidLittle];
 
+fn selection_conn_id(s: &Selection) -> Option<&str> {
+    match s {
+        Selection::Connection(id)
+        | Selection::Device { conn_id: id, .. }
+        | Selection::RegisterGroup { conn_id: id, .. } => Some(id.as_str()),
+        Selection::None => None,
+    }
+}
+
 fn reg_type_label(rt: RegisterType) -> &'static str {
     REG_GROUPS
         .iter()
@@ -1167,14 +1302,119 @@ impl SlaveApp {
     }
 }
 
+impl SlaveApp {
+    fn render_log_panel(&mut self, ctx: &egui::Context) {
+        if !self.log_panel_open { return; }
+
+        enum LogAction {
+            Clear,
+            Export,
+            Close,
+        }
+        let mut action: Option<LogAction> = None;
+
+        egui::TopBottomPanel::bottom("log_panel")
+            .resizable(true)
+            .default_height(220.0)
+            .min_height(80.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("通信日志");
+                    if let Some(id) = &self.log_cache_conn_id {
+                        ui.label(format!("· 连接 {}", id));
+                        ui.label(format!("({} 条)", self.log_cache.len()));
+                    } else {
+                        ui.label("（选中连接以查看）");
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").on_hover_text("关闭日志面板").clicked() {
+                            action = Some(LogAction::Close);
+                        }
+                        if ui.small_button("导出 CSV").clicked() {
+                            action = Some(LogAction::Export);
+                        }
+                        if ui.small_button("清空").clicked() {
+                            action = Some(LogAction::Clear);
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.log_filter.show_rx, "RX");
+                    ui.checkbox(&mut self.log_filter.show_tx, "TX");
+                    ui.label("过滤");
+                    ui.text_edit_singleline(&mut self.log_filter.text);
+                });
+                ui.separator();
+
+                let filter = &self.log_filter;
+                let entries: Vec<&LogEntry> = self
+                    .log_cache
+                    .iter()
+                    .rev()
+                    .filter(|e| filter.accepts(e))
+                    .collect();
+
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .resizable(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::exact(150.0))
+                    .column(Column::exact(40.0))
+                    .column(Column::exact(60.0))
+                    .column(Column::remainder())
+                    .header(20.0, |mut h| {
+                        h.col(|ui| { ui.strong("时间"); });
+                        h.col(|ui| { ui.strong("方向"); });
+                        h.col(|ui| { ui.strong("FC"); });
+                        h.col(|ui| { ui.strong("详情"); });
+                    })
+                    .body(|body| {
+                        body.rows(18.0, entries.len(), |mut row| {
+                            let e = entries[row.index()];
+                            row.col(|ui| {
+                                ui.monospace(
+                                    e.timestamp.format("%H:%M:%S%.3f").to_string(),
+                                );
+                            });
+                            row.col(|ui| {
+                                let (text, color) = match e.direction {
+                                    Direction::Rx => ("RX", egui::Color32::from_rgb(80, 160, 255)),
+                                    Direction::Tx => ("TX", egui::Color32::from_rgb(255, 160, 80)),
+                                };
+                                ui.colored_label(color, text);
+                            });
+                            row.col(|ui| {
+                                ui.monospace(e.function_code.name());
+                            });
+                            row.col(|ui| {
+                                ui.monospace(&e.detail);
+                            });
+                        });
+                    });
+            });
+
+        match action {
+            Some(LogAction::Clear) => self.clear_logs_for_selection(),
+            Some(LogAction::Export) => self.export_logs_for_selection(ctx.clone()),
+            Some(LogAction::Close) => self.log_panel_open = false,
+            None => {}
+        }
+    }
+}
+
 impl eframe::App for SlaveApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
         self.refresh_reg_view();
+        self.refresh_log_cache();
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("视图", |ui| {
+                    if ui.checkbox(&mut self.log_panel_open, "显示日志面板").clicked() {
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("深色主题").clicked() {
                         ctx.set_visuals(egui::Visuals::dark());
                         ui.close_menu();
@@ -1265,6 +1505,8 @@ impl eframe::App for SlaveApp {
             });
         if clear_error { self.last_error = None; }
         if clear_status { self.status_msg = None; }
+
+        self.render_log_panel(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_main(ui);

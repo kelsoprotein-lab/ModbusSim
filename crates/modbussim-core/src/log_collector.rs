@@ -66,6 +66,12 @@ impl LogCollector {
         self.entries.read().await.clone()
     }
 
+    /// Non-blocking snapshot for sync callers (e.g. the egui render loop).
+    /// Returns None if a writer currently holds the lock.
+    pub fn try_get_all(&self) -> Option<Vec<LogEntry>> {
+        self.entries.try_read().ok().map(|g| g.clone())
+    }
+
     /// Get all log entries (blocking version).
     pub fn get_all_blocking(&self) -> Vec<LogEntry> {
         self.entries.blocking_read().clone()
