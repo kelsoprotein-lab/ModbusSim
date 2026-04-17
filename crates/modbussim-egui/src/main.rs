@@ -41,7 +41,8 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ModbusSlave",
         native_options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            modbussim_ui_shared::fonts::install_cjk_fonts(&cc.egui_ctx);
             let mut app = app::SlaveApp::new(rt.clone());
             if let Some((host, port)) = auto_tcp.clone() {
                 app.auto_start_tcp(host, port);

@@ -23,7 +23,10 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ModbusMaster",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(MasterApp::new(rt.clone())))),
+        Box::new(move |cc| {
+            modbussim_ui_shared::fonts::install_cjk_fonts(&cc.egui_ctx);
+            Ok(Box::new(MasterApp::new(rt.clone())))
+        }),
     )
 }
 

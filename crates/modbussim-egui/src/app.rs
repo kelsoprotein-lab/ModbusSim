@@ -1172,6 +1172,39 @@ impl eframe::App for SlaveApp {
         self.drain_events();
         self.refresh_reg_view();
 
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("视图", |ui| {
+                    if ui.button("深色主题").clicked() {
+                        ctx.set_visuals(egui::Visuals::dark());
+                        ui.close_menu();
+                    }
+                    if ui.button("浅色主题").clicked() {
+                        ctx.set_visuals(egui::Visuals::light());
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    let zoom = ctx.zoom_factor();
+                    if ui.button(format!("放大  ({:.0}%)", zoom * 100.0)).clicked() {
+                        ctx.set_zoom_factor((zoom + 0.1).min(3.0));
+                    }
+                    if ui.button("缩小").clicked() {
+                        ctx.set_zoom_factor((zoom - 0.1).max(0.5));
+                    }
+                    if ui.button("重置缩放").clicked() {
+                        ctx.set_zoom_factor(1.0);
+                    }
+                });
+                ui.menu_button("帮助", |ui| {
+                    ui.label("ModbusSlave (egui) · 开发预览");
+                    ui.hyperlink_to(
+                        "GitHub",
+                        "https://github.com/kelsoprotein-lab/ModbusSim",
+                    );
+                });
+            });
+        });
+
         let mut tree_action: Option<TreeAction> = None;
 
         egui::SidePanel::left("connections")

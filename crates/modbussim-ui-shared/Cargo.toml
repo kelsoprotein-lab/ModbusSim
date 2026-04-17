@@ -12,3 +12,4 @@ arc-swap = { workspace = true }
 crossbeam-channel = { workspace = true }
 modbussim-core = { workspace = true }
 serde = { workspace = true }
+log = { workspace = true }
