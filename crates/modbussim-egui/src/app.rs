@@ -78,6 +78,14 @@ pub enum UiEvent {
         slave_id: u8,
         counts: RegCounts,
     },
+    DeviceAdded {
+        conn_id: String,
+        device: DeviceSnapshot,
+    },
+    DeviceRemoved {
+        conn_id: String,
+        slave_id: u8,
+    },
     Info(String),
     Error(String),
 }
@@ -147,6 +155,7 @@ pub struct SlaveApp {
 
     // Batch add modal
     batch_modal: Option<BatchModalState>,
+    add_device_modal: Option<AddDeviceModalState>,
     status_msg: Option<String>,
 
     // Inline edit buffer: keyed by (reg_type, addr); implicitly bound to the
@@ -207,6 +216,22 @@ pub struct BatchModalState {
     pub busy: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DeviceInitMode {
+    Empty,
+    Default,
+    Random,
+}
+
+pub struct AddDeviceModalState {
+    pub conn_id: String,
+    pub slave_id: u8,
+    pub name: String,
+    pub init_mode: DeviceInitMode,
+    pub max_address: u32,
+    pub busy: bool,
+}
+
 impl SlaveApp {
     pub fn new(rt: Arc<Runtime>) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
@@ -226,6 +251,7 @@ impl SlaveApp {
             reg_view_last_refresh: None,
             reg_view_refresh_interval_ms: 200,
             batch_modal: None,
+            add_device_modal: None,
             status_msg: None,
             pending_edits: HashMap::new(),
             log_panel_open: true,
@@ -367,6 +393,114 @@ impl SlaveApp {
                 slave_id,
                 counts: new_counts,
             });
+        });
+        ctx.request_repaint();
+    }
+
+    fn open_add_device_modal(&mut self, conn_id: String) {
+        let next_slave_id = self
+            .conn_snapshot
+            .iter()
+            .find(|s| s.id == conn_id)
+            .map(|s| {
+                let mut ids: Vec<u8> = s.devices.iter().map(|d| d.slave_id).collect();
+                ids.sort();
+                (1u8..=247)
+                    .find(|id| !ids.contains(id))
+                    .unwrap_or(1)
+            })
+            .unwrap_or(1);
+
+        self.add_device_modal = Some(AddDeviceModalState {
+            conn_id,
+            slave_id: next_slave_id,
+            name: format!("从站 {}", next_slave_id),
+            init_mode: DeviceInitMode::Default,
+            max_address: 20000,
+            busy: false,
+        });
+    }
+
+    fn submit_add_device(&mut self, ctx: egui::Context) {
+        let Some(state) = self.add_device_modal.as_mut() else { return };
+        if state.busy { return; }
+        if state.max_address > u16::MAX as u32 {
+            self.last_error = Some("max_address 超过 65535".to_string());
+            return;
+        }
+        state.busy = true;
+
+        let conn_id = state.conn_id.clone();
+        let slave_id = state.slave_id;
+        let name = state.name.clone();
+        let init_mode = state.init_mode;
+        let max_addr = state.max_address as u16;
+
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == conn_id)
+                .map(|e| e.connection.clone());
+            let Some(conn_arc) = conn_arc else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                return;
+            };
+            let device = match init_mode {
+                DeviceInitMode::Empty => SlaveDevice::new(slave_id, name.clone()),
+                DeviceInitMode::Default => {
+                    SlaveDevice::with_default_registers(slave_id, name.clone(), max_addr)
+                }
+                DeviceInitMode::Random => {
+                    SlaveDevice::with_random_registers(slave_id, name.clone(), max_addr)
+                }
+            };
+            let snap = DeviceSnapshot {
+                slave_id,
+                name: name.clone(),
+                counts: RegCounts::from_device(&device),
+                expanded: true,
+            };
+            let conn = conn_arc.read().await;
+            match conn.add_device(device).await {
+                Ok(()) => {
+                    let _ = tx.send(UiEvent::DeviceAdded { conn_id, device: snap });
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("新增从站失败: {e}")));
+                }
+            }
+        });
+        self.add_device_modal = None;
+        ctx.request_repaint();
+    }
+
+    fn remove_device(&self, conn_id: String, slave_id: u8, ctx: egui::Context) {
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == conn_id)
+                .map(|e| e.connection.clone());
+            let Some(conn_arc) = conn_arc else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                return;
+            };
+            let conn = conn_arc.read().await;
+            match conn.remove_device(slave_id).await {
+                Ok(_) => {
+                    let _ = tx.send(UiEvent::DeviceRemoved { conn_id, slave_id });
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("删除从站失败: {e}")));
+                }
+            }
         });
         ctx.request_repaint();
     }
@@ -783,6 +917,25 @@ impl SlaveApp {
                     // Force cache refresh next frame.
                     self.reg_view_last_refresh = None;
                 }
+                UiEvent::DeviceAdded { conn_id, device } => {
+                    if let Some(s) = self.conn_snapshot.iter_mut().find(|s| s.id == conn_id) {
+                        s.devices.push(device);
+                        s.devices.sort_by_key(|d| d.slave_id);
+                    }
+                }
+                UiEvent::DeviceRemoved { conn_id, slave_id } => {
+                    if let Some(s) = self.conn_snapshot.iter_mut().find(|s| s.id == conn_id) {
+                        s.devices.retain(|d| d.slave_id != slave_id);
+                    }
+                    let refs = matches!(&self.selection,
+                        Selection::Device { conn_id: c, slave_id: sid }
+                        | Selection::RegisterGroup { conn_id: c, slave_id: sid, .. }
+                            if c == &conn_id && *sid == slave_id);
+                    if refs {
+                        self.selection = Selection::Connection(conn_id);
+                        self.pending_edits.clear();
+                    }
+                }
                 UiEvent::Info(msg) => {
                     self.status_msg = Some(msg);
                 }
@@ -987,6 +1140,79 @@ impl SlaveApp {
         }
     }
 
+    fn render_add_device_modal(&mut self, ctx: &egui::Context) {
+        if self.add_device_modal.is_none() { return; }
+
+        enum Act { Submit, Close }
+        let mut act: Option<Act> = None;
+        let mut is_open = true;
+
+        egui::Window::new("新增从站")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                let Some(st) = self.add_device_modal.as_mut() else { return };
+                egui::Grid::new("add_device_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("连接");
+                        ui.label(&st.conn_id);
+                        ui.end_row();
+
+                        ui.label("从站 ID (1-247)");
+                        let mut sid = st.slave_id as u32;
+                        ui.add(egui::DragValue::new(&mut sid).range(1..=247));
+                        st.slave_id = sid as u8;
+                        ui.end_row();
+
+                        ui.label("名称");
+                        ui.text_edit_singleline(&mut st.name);
+                        ui.end_row();
+
+                        ui.label("初始化模式");
+                        egui::ComboBox::from_id_salt("add_device_init")
+                            .selected_text(match st.init_mode {
+                                DeviceInitMode::Empty => "空",
+                                DeviceInitMode::Default => "默认值（全 0）",
+                                DeviceInitMode::Random => "随机",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Empty, "空");
+                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Default, "默认值（全 0）");
+                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Random, "随机");
+                            });
+                        ui.end_row();
+
+                        if !matches!(st.init_mode, DeviceInitMode::Empty) {
+                            ui.label("最大地址");
+                            ui.add(egui::DragValue::new(&mut st.max_address).range(0..=65535));
+                            ui.end_row();
+                        }
+                    });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!st.busy, egui::Button::new("确认")).clicked() {
+                        act = Some(Act::Submit);
+                    }
+                    if ui.button("取消").clicked() {
+                        act = Some(Act::Close);
+                    }
+                    if st.busy { ui.spinner(); }
+                });
+            });
+
+        if !is_open { act = Some(Act::Close); }
+        match act {
+            Some(Act::Submit) => self.submit_add_device(ctx.clone()),
+            Some(Act::Close) => { self.add_device_modal = None; }
+            None => {}
+        }
+    }
+
     fn render_batch_modal(&mut self, ctx: &egui::Context) {
         if self.batch_modal.is_none() { return; }
 
@@ -1097,22 +1323,30 @@ impl SlaveApp {
                 ui.heading("ModbusSlave — egui edition");
                 ui.label("从左侧创建或选中一个连接/设备/寄存器组。");
             }
-            Selection::Connection(id) => match self.conn_snapshot.iter().find(|s| &s.id == id) {
-                Some(s) => {
-                    ui.heading(&s.label);
+            Selection::Connection(id) => {
+                let exists = self.conn_snapshot.iter().any(|s| &s.id == id);
+                if exists {
+                    let (label, state, dev_count) = {
+                        let s = self.conn_snapshot.iter().find(|s| &s.id == id).unwrap();
+                        (s.label.clone(), s.state, s.devices.len())
+                    };
+                    ui.heading(label);
                     ui.label(format!(
                         "状态: {} · 设备数: {}",
-                        match s.state {
+                        match state {
                             ConnectionState::Running => "运行中",
                             ConnectionState::Stopped => "已停止",
                         },
-                        s.devices.len()
+                        dev_count
                     ));
-                }
-                None => {
+                    ui.separator();
+                    if ui.button("新增从站…").clicked() {
+                        self.open_add_device_modal(id.clone());
+                    }
+                } else {
                     ui.label("连接已不存在。");
                 }
-            },
+            }
             Selection::Device { conn_id, slave_id } => {
                 let conn = self.conn_snapshot.iter().find(|s| &s.id == conn_id);
                 match conn.and_then(|c| c.devices.iter().find(|d| d.slave_id == *slave_id)) {
@@ -1136,13 +1370,18 @@ impl SlaveApp {
                                 ui.end_row();
                             });
                         ui.separator();
-                        if ui.button("批量添加寄存器…").clicked() {
-                            self.open_batch_modal(
-                                conn_id.clone(),
-                                *slave_id,
-                                RegisterType::HoldingRegister,
-                            );
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("批量添加寄存器…").clicked() {
+                                self.open_batch_modal(
+                                    conn_id.clone(),
+                                    *slave_id,
+                                    RegisterType::HoldingRegister,
+                                );
+                            }
+                            if ui.button("删除此从站").clicked() {
+                                self.remove_device(conn_id.clone(), *slave_id, ui.ctx().clone());
+                            }
+                        });
                     }
                     None => {
                         ui.label("设备不存在。");
@@ -1512,8 +1751,9 @@ impl eframe::App for SlaveApp {
             self.render_main(ui);
         });
 
-        // Batch add modal
+        // Modals
         self.render_batch_modal(ctx);
+        self.render_add_device_modal(ctx);
 
         if let Some(a) = tree_action {
             self.apply_tree_action(a, ctx);
