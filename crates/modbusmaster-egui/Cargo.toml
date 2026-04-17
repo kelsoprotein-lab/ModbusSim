@@ -1,0 +1,27 @@
+[package]
+name = "modbusmaster-egui"
+version = "0.1.0"
+edition = "2021"
+description = "ModbusMaster — native Rust + egui edition"
+
+[[bin]]
+name = "modbusmaster-egui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { workspace = true }
+egui = { workspace = true }
+egui_extras = { workspace = true }
+egui-modal = { workspace = true }
+egui-toast = { workspace = true }
+arc-swap = { workspace = true }
+crossbeam-channel = { workspace = true }
+rfd = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+modbussim-core = { workspace = true }
+modbussim-ui-shared = { workspace = true }

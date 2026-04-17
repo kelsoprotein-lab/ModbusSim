@@ -1,3 +1,29 @@
 [workspace]
-members = ["crates/modbussim-core", "crates/modbussim-app", "crates/modbusmaster-app"]
+members = [
+    "crates/modbussim-core",
+    "crates/modbussim-app",
+    "crates/modbusmaster-app",
+    "crates/modbussim-ui-shared",
+    "crates/modbussim-egui",
+    "crates/modbusmaster-egui",
+]
 resolver = "2"
+
+[workspace.dependencies]
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11", "persistence"] }
+egui = "0.29"
+egui_extras = { version = "0.29", features = ["default"] }
+egui-modal = "0.5"
+egui-toast = "0.15"
+arc-swap = "1"
+crossbeam-channel = "0.5"
+rfd = "0.15"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+modbussim-core = { path = "crates/modbussim-core" }
+modbussim-ui-shared = { path = "crates/modbussim-ui-shared" }

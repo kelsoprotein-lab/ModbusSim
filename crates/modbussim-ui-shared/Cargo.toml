@@ -1,0 +1,14 @@
+[package]
+name = "modbussim-ui-shared"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui = { workspace = true }
+egui_extras = { workspace = true }
+egui-modal = { workspace = true }
+egui-toast = { workspace = true }
+arc-swap = { workspace = true }
+crossbeam-channel = { workspace = true }
+modbussim-core = { workspace = true }
+serde = { workspace = true }
