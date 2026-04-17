@@ -6,7 +6,7 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::{Direction, LogEntry};
-use modbussim_core::register::{DataType, Endian, RegisterDef, RegisterType};
+use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
@@ -162,6 +162,9 @@ pub struct SlaveApp {
     // currently-selected (conn_id, slave_id) — cleared whenever selection moves.
     pending_edits: HashMap<(RegisterType, u16), i32>,
 
+    // Register table display mode
+    reg_display_mode: ValueDisplayMode,
+
     // Log panel
     log_panel_open: bool,
     log_cache: Vec<LogEntry>,
@@ -254,6 +257,7 @@ impl SlaveApp {
             add_device_modal: None,
             status_msg: None,
             pending_edits: HashMap::new(),
+            reg_display_mode: ValueDisplayMode::U16,
             log_panel_open: true,
             log_cache: Vec::new(),
             log_cache_conn_id: None,
@@ -964,6 +968,57 @@ const REG_GROUPS: &[(RegisterType, &str)] = &[
     (RegisterType::HoldingRegister, "FC03 保持寄存器"),
 ];
 
+/// Which interpretation to apply when rendering u16 register values.
+/// U16/I16 are single-word; F32/U32/I32 consume 2 consecutive words.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ValueDisplayMode {
+    U16,
+    I16,
+    F32(Endian),
+    U32(Endian),
+    I32(Endian),
+}
+
+impl ValueDisplayMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::U16 => "U16",
+            Self::I16 => "I16",
+            Self::F32(Endian::Big) => "F32 AB CD",
+            Self::F32(Endian::Little) => "F32 CD AB",
+            Self::F32(Endian::MidBig) => "F32 BA DC",
+            Self::F32(Endian::MidLittle) => "F32 DC BA",
+            Self::U32(Endian::Big) => "U32 AB CD",
+            Self::U32(Endian::Little) => "U32 CD AB",
+            Self::U32(Endian::MidBig) => "U32 BA DC",
+            Self::U32(Endian::MidLittle) => "U32 DC BA",
+            Self::I32(Endian::Big) => "I32 AB CD",
+            Self::I32(Endian::Little) => "I32 CD AB",
+            Self::I32(Endian::MidBig) => "I32 BA DC",
+            Self::I32(Endian::MidLittle) => "I32 DC BA",
+        }
+    }
+    pub fn is_multi_word(&self) -> bool {
+        matches!(self, Self::F32(_) | Self::U32(_) | Self::I32(_))
+    }
+    pub fn stride(&self) -> usize {
+        if self.is_multi_word() { 2 } else { 1 }
+    }
+}
+
+const DISPLAY_MODES: &[ValueDisplayMode] = &[
+    ValueDisplayMode::U16,
+    ValueDisplayMode::I16,
+    ValueDisplayMode::F32(Endian::Big),
+    ValueDisplayMode::F32(Endian::Little),
+    ValueDisplayMode::F32(Endian::MidBig),
+    ValueDisplayMode::F32(Endian::MidLittle),
+    ValueDisplayMode::U32(Endian::Big),
+    ValueDisplayMode::U32(Endian::Little),
+    ValueDisplayMode::I32(Endian::Big),
+    ValueDisplayMode::I32(Endian::Little),
+];
+
 const DATA_TYPES: &[DataType] = &[
     DataType::Bool,
     DataType::UInt16,
@@ -1419,10 +1474,30 @@ impl SlaveApp {
                     RegisterType::Coil | RegisterType::DiscreteInput
                 );
 
-                ui.label(format!(
-                    "共 {} 行 · 双击/拖动编辑，失焦提交（外部协议写入 200 ms 内可见）",
-                    view.row_count
-                ));
+                // 只有 16-bit 寄存器区（FC03 / FC04）支持多字节序显示；线圈区强制 U16。
+                let mode = if is_bool {
+                    ValueDisplayMode::U16
+                } else {
+                    self.reg_display_mode
+                };
+
+                ui.horizontal(|ui| {
+                    ui.label(format!("共 {} 行", view.row_count));
+                    if !is_bool {
+                        ui.separator();
+                        ui.label("格式");
+                        egui::ComboBox::from_id_salt("reg_display_mode")
+                            .selected_text(mode.label())
+                            .show_ui(ui, |ui| {
+                                for m in DISPLAY_MODES {
+                                    ui.selectable_value(&mut self.reg_display_mode, *m, m.label());
+                                }
+                            });
+                    }
+                });
+                if !is_bool && mode.is_multi_word() {
+                    ui.label("多字格式 · 只读显示；要编辑请切回 U16");
+                }
                 ui.separator();
 
                 let row_h = 20.0;
@@ -1432,99 +1507,183 @@ impl SlaveApp {
                 let pending = &mut self.pending_edits;
                 let mut writes: Vec<(u16, u16)> = Vec::new();
 
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::exact(80.0))
-                    .column(Column::exact(110.0))
-                    .column(Column::exact(100.0))
-                    .column(Column::exact(140.0))
-                    .column(Column::remainder())
-                    .header(22.0, |mut header| {
-                        header.col(|ui| { ui.strong("地址"); });
-                        header.col(|ui| {
-                            ui.strong(if is_bool { "布尔" } else { "值 (U16)" });
-                        });
-                        header.col(|ui| {
-                            ui.strong(if is_bool { "—" } else { "Hex" });
-                        });
-                        header.col(|ui| {
-                            ui.strong(if is_bool { "—" } else { "Binary" });
-                        });
-                        header.col(|ui| { ui.strong(""); });
-                    })
-                    .body(|body| {
-                        body.rows(row_h, view.row_count, |mut row| {
-                            let addr = row.index() as u16;
-                            row.col(|ui| {
-                                ui.monospace(format!("{}", addr));
-                            });
-
-                            let cache_u16 = view
-                                .u16_map
-                                .as_ref()
-                                .and_then(|m| m.get(&addr).copied())
-                                .unwrap_or(0);
-                            let cache_bool = view
-                                .bool_map
-                                .as_ref()
-                                .and_then(|m| m.get(&addr).copied())
-                                .unwrap_or(false);
-                            let key = (reg_type_v, addr);
-
-                            if is_bool {
+                if !is_bool && mode.is_multi_word() {
+                    let stride = mode.stride();
+                    let pair_rows = view.row_count / stride;
+                    let (dtype, endian) = match mode {
+                        ValueDisplayMode::F32(e) => (DataType::Float32, e),
+                        ValueDisplayMode::U32(e) => (DataType::UInt32, e),
+                        ValueDisplayMode::I32(e) => (DataType::Int32, e),
+                        _ => (DataType::UInt16, Endian::Big),
+                    };
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::exact(100.0))
+                        .column(Column::exact(200.0))
+                        .column(Column::exact(160.0))
+                        .column(Column::remainder())
+                        .header(22.0, |mut h| {
+                            h.col(|ui| { ui.strong("地址"); });
+                            h.col(|ui| { ui.strong(mode.label()); });
+                            h.col(|ui| { ui.strong("Raw (Hex)"); });
+                            h.col(|ui| { ui.strong(""); });
+                        })
+                        .body(|body| {
+                            body.rows(row_h, pair_rows, |mut row| {
+                                let base = row.index() as u16 * stride as u16;
+                                let addr0 = base;
+                                let addr1 = base + 1;
+                                let r0 = view
+                                    .u16_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(&addr0).copied());
+                                let r1 = view
+                                    .u16_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(&addr1).copied());
                                 row.col(|ui| {
-                                    let mut tmp = pending
-                                        .get(&key)
-                                        .map(|v| *v != 0)
-                                        .unwrap_or(cache_bool);
-                                    let resp = ui.checkbox(&mut tmp, "");
-                                    if resp.clicked() {
-                                        writes.push((addr, if tmp { 1 } else { 0 }));
-                                        pending.remove(&key);
+                                    ui.monospace(format!("{}..{}", addr0, addr1));
+                                });
+                                row.col(|ui| match (r0, r1) {
+                                    (Some(a), Some(b)) => {
+                                        let decoded = decode_value(&[a, b], dtype, endian)
+                                            .unwrap_or(f64::NAN);
+                                        let text = match dtype {
+                                            DataType::Float32 => format!("{:.6}", decoded as f32),
+                                            DataType::UInt32 => format!("{}", decoded as u32),
+                                            DataType::Int32 => format!("{}", decoded as i32),
+                                            _ => "?".to_string(),
+                                        };
+                                        ui.monospace(text);
                                     }
+                                    _ => { ui.monospace("—"); }
+                                });
+                                row.col(|ui| match (r0, r1) {
+                                    (Some(a), Some(b)) => {
+                                        ui.monospace(format!("{:04X} {:04X}", a, b));
+                                    }
+                                    _ => { ui.monospace(""); }
                                 });
                                 row.col(|_| {});
-                                row.col(|_| {});
-                                row.col(|_| {});
-                            } else {
+                            });
+                        });
+                } else {
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::exact(80.0))
+                        .column(Column::exact(110.0))
+                        .column(Column::exact(100.0))
+                        .column(Column::exact(140.0))
+                        .column(Column::remainder())
+                        .header(22.0, |mut header| {
+                            header.col(|ui| { ui.strong("地址"); });
+                            header.col(|ui| {
+                                ui.strong(if is_bool { "布尔" } else { mode.label() });
+                            });
+                            header.col(|ui| {
+                                ui.strong(if is_bool { "—" } else { "Hex" });
+                            });
+                            header.col(|ui| {
+                                ui.strong(if is_bool { "—" } else { "Binary" });
+                            });
+                            header.col(|ui| { ui.strong(""); });
+                        })
+                        .body(|body| {
+                            body.rows(row_h, view.row_count, |mut row| {
+                                let addr = row.index() as u16;
                                 row.col(|ui| {
-                                    let mut tmp: i32 = pending
+                                    ui.monospace(format!("{}", addr));
+                                });
+
+                                let cache_u16 = view
+                                    .u16_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(&addr).copied())
+                                    .unwrap_or(0);
+                                let cache_bool = view
+                                    .bool_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(&addr).copied())
+                                    .unwrap_or(false);
+                                let key = (reg_type_v, addr);
+
+                                if is_bool {
+                                    row.col(|ui| {
+                                        let mut tmp = pending
+                                            .get(&key)
+                                            .map(|v| *v != 0)
+                                            .unwrap_or(cache_bool);
+                                        let resp = ui.checkbox(&mut tmp, "");
+                                        if resp.clicked() {
+                                            writes.push((addr, if tmp { 1 } else { 0 }));
+                                            pending.remove(&key);
+                                        }
+                                    });
+                                    row.col(|_| {});
+                                    row.col(|_| {});
+                                    row.col(|_| {});
+                                } else {
+                                    row.col(|ui| {
+                                        let (min_i, max_i) = match mode {
+                                            ValueDisplayMode::I16 => (i16::MIN as i32, i16::MAX as i32),
+                                            _ => (0, u16::MAX as i32),
+                                        };
+                                        let cache_as_display = match mode {
+                                            ValueDisplayMode::I16 => cache_u16 as i16 as i32,
+                                            _ => cache_u16 as i32,
+                                        };
+                                        let mut tmp: i32 = pending
+                                            .get(&key)
+                                            .copied()
+                                            .unwrap_or(cache_as_display);
+                                        let resp = ui.add(
+                                            egui::DragValue::new(&mut tmp).range(min_i..=max_i),
+                                        );
+                                        let active = resp.has_focus()
+                                            || resp.dragged()
+                                            || resp.drag_started()
+                                            || resp.gained_focus();
+                                        if active {
+                                            pending.insert(key, tmp);
+                                        } else if let Some(prev) = pending.remove(&key) {
+                                            let v = match mode {
+                                                ValueDisplayMode::I16 => {
+                                                    prev.clamp(i16::MIN as i32, i16::MAX as i32)
+                                                        as i16 as u16
+                                                }
+                                                _ => prev.clamp(0, 65535) as u16,
+                                            };
+                                            if v != cache_u16 {
+                                                writes.push((addr, v));
+                                            }
+                                        }
+                                    });
+                                    let display_u16 = pending
                                         .get(&key)
                                         .copied()
-                                        .unwrap_or(cache_u16 as i32);
-                                    let resp = ui.add(
-                                        egui::DragValue::new(&mut tmp).range(0..=65535),
-                                    );
-                                    let active = resp.has_focus()
-                                        || resp.dragged()
-                                        || resp.drag_started()
-                                        || resp.gained_focus();
-                                    if active {
-                                        pending.insert(key, tmp);
-                                    } else if let Some(prev) = pending.remove(&key) {
-                                        let v = prev.clamp(0, 65535) as u16;
-                                        if v != cache_u16 {
-                                            writes.push((addr, v));
-                                        }
-                                    }
-                                });
-                                let display_u16 = pending
-                                    .get(&key)
-                                    .copied()
-                                    .map(|v| v.clamp(0, 65535) as u16)
-                                    .unwrap_or(cache_u16);
-                                row.col(|ui| {
-                                    ui.monospace(format_u16(display_u16, U16Format::Hex));
-                                });
-                                row.col(|ui| {
-                                    ui.monospace(format_u16(display_u16, U16Format::Binary));
-                                });
-                                row.col(|_| {});
-                            }
+                                        .map(|v| match mode {
+                                            ValueDisplayMode::I16 => {
+                                                v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                                                    as u16
+                                            }
+                                            _ => v.clamp(0, 65535) as u16,
+                                        })
+                                        .unwrap_or(cache_u16);
+                                    row.col(|ui| {
+                                        ui.monospace(format_u16(display_u16, U16Format::Hex));
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(format_u16(display_u16, U16Format::Binary));
+                                    });
+                                    row.col(|_| {});
+                                }
+                            });
                         });
-                    });
+                }
 
                 for (addr, val) in writes {
                     self.commit_write(
