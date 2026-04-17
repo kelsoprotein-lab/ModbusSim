@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -146,6 +147,10 @@ pub struct SlaveApp {
     // Batch add modal
     batch_modal: Option<BatchModalState>,
     status_msg: Option<String>,
+
+    // Inline edit buffer: keyed by (reg_type, addr); implicitly bound to the
+    // currently-selected (conn_id, slave_id) — cleared whenever selection moves.
+    pending_edits: HashMap<(RegisterType, u16), i32>,
 }
 
 pub struct BatchModalState {
@@ -180,7 +185,64 @@ impl SlaveApp {
             reg_view_refresh_interval_ms: 200,
             batch_modal: None,
             status_msg: None,
+            pending_edits: HashMap::new(),
         }
+    }
+
+    /// Spawn an async task that writes a single address into the device's
+    /// RegisterMap. For Coil/DiscreteInput value 0/1 selects false/true.
+    fn commit_write(
+        &self,
+        conn_id: String,
+        slave_id: u8,
+        reg_type: RegisterType,
+        addr: u16,
+        value: u16,
+        ctx: egui::Context,
+    ) {
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == conn_id)
+                .map(|e| e.connection.clone());
+            let Some(conn_arc) = conn_arc else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                return;
+            };
+            let new_counts = {
+                let conn = conn_arc.read().await;
+                let mut devs = conn.devices.write().await;
+                let Some(dev) = devs.get_mut(&slave_id) else {
+                    let _ = tx.send(UiEvent::Error(format!("从站 {slave_id} 未找到")));
+                    return;
+                };
+                match reg_type {
+                    RegisterType::Coil => {
+                        dev.register_map.write_coil(addr, value != 0);
+                    }
+                    RegisterType::DiscreteInput => {
+                        dev.register_map.discrete_inputs.insert(addr, value != 0);
+                    }
+                    RegisterType::HoldingRegister => {
+                        dev.register_map.write_holding_register(addr, value);
+                    }
+                    RegisterType::InputRegister => {
+                        dev.register_map.input_registers.insert(addr, value);
+                    }
+                }
+                RegCounts::from_device(dev)
+            };
+            let _ = tx.send(UiEvent::DeviceCountsUpdated {
+                conn_id,
+                slave_id,
+                counts: new_counts,
+            });
+        });
+        ctx.request_repaint();
     }
 
     fn open_batch_modal(&mut self, conn_id: String, slave_id: u8, reg_type: RegisterType) {
@@ -771,12 +833,17 @@ impl SlaveApp {
                     }
                 }
             }
-            TreeAction::SelectConn(id) => self.selection = Selection::Connection(id),
+            TreeAction::SelectConn(id) => {
+                self.selection = Selection::Connection(id);
+                self.pending_edits.clear();
+            }
             TreeAction::SelectDevice { conn_id, slave_id } => {
-                self.selection = Selection::Device { conn_id, slave_id }
+                self.selection = Selection::Device { conn_id, slave_id };
+                self.pending_edits.clear();
             }
             TreeAction::SelectGroup { conn_id, slave_id, reg_type } => {
-                self.selection = Selection::RegisterGroup { conn_id, slave_id, reg_type }
+                self.selection = Selection::RegisterGroup { conn_id, slave_id, reg_type };
+                self.pending_edits.clear();
             }
             TreeAction::StartConn(id) => self.start_connection(&id, ctx.clone()),
             TreeAction::StopConn(id) => self.stop_connection(&id, ctx.clone()),
@@ -979,25 +1046,31 @@ impl SlaveApp {
                 );
 
                 ui.label(format!(
-                    "共 {} 行 · 只读视图（S2 后续加内联编辑与格式切换）",
+                    "共 {} 行 · 双击/拖动编辑，失焦提交（外部协议写入 200 ms 内可见）",
                     view.row_count
                 ));
                 ui.separator();
 
                 let row_h = 20.0;
+                let reg_type_v = *reg_type;
+                let conn_id_for_writes = conn_id.clone();
+                let slave_id_v = *slave_id;
+                let pending = &mut self.pending_edits;
+                let mut writes: Vec<(u16, u16)> = Vec::new();
+
                 TableBuilder::new(ui)
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::exact(80.0))
-                    .column(Column::exact(100.0))
+                    .column(Column::exact(110.0))
                     .column(Column::exact(100.0))
                     .column(Column::exact(140.0))
                     .column(Column::remainder())
                     .header(22.0, |mut header| {
                         header.col(|ui| { ui.strong("地址"); });
                         header.col(|ui| {
-                            ui.strong(if is_bool { "布尔" } else { "Unsigned" });
+                            ui.strong(if is_bool { "布尔" } else { "值 (U16)" });
                         });
                         header.col(|ui| {
                             ui.strong(if is_bool { "—" } else { "Hex" });
@@ -1014,33 +1087,81 @@ impl SlaveApp {
                                 ui.monospace(format!("{}", addr));
                             });
 
-                            let u16_val = view.u16_map.as_ref().and_then(|m| m.get(&addr).copied());
-                            let bool_val = view.bool_map.as_ref().and_then(|m| m.get(&addr).copied());
+                            let cache_u16 = view
+                                .u16_map
+                                .as_ref()
+                                .and_then(|m| m.get(&addr).copied())
+                                .unwrap_or(0);
+                            let cache_bool = view
+                                .bool_map
+                                .as_ref()
+                                .and_then(|m| m.get(&addr).copied())
+                                .unwrap_or(false);
+                            let key = (reg_type_v, addr);
 
-                            row.col(|ui| match (is_bool, u16_val, bool_val) {
-                                (true, _, Some(b)) => {
-                                    ui.monospace(if b { "true" } else { "false" });
-                                }
-                                (false, Some(v), _) => {
-                                    ui.monospace(format_u16(v, U16Format::Unsigned));
-                                }
-                                _ => { ui.monospace("—"); }
-                            });
-                            row.col(|ui| match (is_bool, u16_val) {
-                                (false, Some(v)) => {
-                                    ui.monospace(format_u16(v, U16Format::Hex));
-                                }
-                                _ => { ui.monospace(""); }
-                            });
-                            row.col(|ui| match (is_bool, u16_val) {
-                                (false, Some(v)) => {
-                                    ui.monospace(format_u16(v, U16Format::Binary));
-                                }
-                                _ => { ui.monospace(""); }
-                            });
-                            row.col(|_| {});
+                            if is_bool {
+                                row.col(|ui| {
+                                    let mut tmp = pending
+                                        .get(&key)
+                                        .map(|v| *v != 0)
+                                        .unwrap_or(cache_bool);
+                                    let resp = ui.checkbox(&mut tmp, "");
+                                    if resp.clicked() {
+                                        writes.push((addr, if tmp { 1 } else { 0 }));
+                                        pending.remove(&key);
+                                    }
+                                });
+                                row.col(|_| {});
+                                row.col(|_| {});
+                                row.col(|_| {});
+                            } else {
+                                row.col(|ui| {
+                                    let mut tmp: i32 = pending
+                                        .get(&key)
+                                        .copied()
+                                        .unwrap_or(cache_u16 as i32);
+                                    let resp = ui.add(
+                                        egui::DragValue::new(&mut tmp).range(0..=65535),
+                                    );
+                                    let active = resp.has_focus()
+                                        || resp.dragged()
+                                        || resp.drag_started()
+                                        || resp.gained_focus();
+                                    if active {
+                                        pending.insert(key, tmp);
+                                    } else if let Some(prev) = pending.remove(&key) {
+                                        let v = prev.clamp(0, 65535) as u16;
+                                        if v != cache_u16 {
+                                            writes.push((addr, v));
+                                        }
+                                    }
+                                });
+                                let display_u16 = pending
+                                    .get(&key)
+                                    .copied()
+                                    .map(|v| v.clamp(0, 65535) as u16)
+                                    .unwrap_or(cache_u16);
+                                row.col(|ui| {
+                                    ui.monospace(format_u16(display_u16, U16Format::Hex));
+                                });
+                                row.col(|ui| {
+                                    ui.monospace(format_u16(display_u16, U16Format::Binary));
+                                });
+                                row.col(|_| {});
+                            }
                         });
                     });
+
+                for (addr, val) in writes {
+                    self.commit_write(
+                        conn_id_for_writes.clone(),
+                        slave_id_v,
+                        reg_type_v,
+                        addr,
+                        val,
+                        ui.ctx().clone(),
+                    );
+                }
             }
         }
     }
