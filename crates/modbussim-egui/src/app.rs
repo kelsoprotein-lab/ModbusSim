@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,6 +11,9 @@ use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, Regi
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
+use modbussim_ui_shared::project::{
+    deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
@@ -145,7 +149,7 @@ pub struct SlaveApp {
 
     // Event-driven snapshot (never read from Arc<RwLock<...>> on the UI thread).
     conn_snapshot: Vec<ConnSnapshot>,
-    next_conn_seq: u64,
+    next_conn_seq: Arc<AtomicU64>,
 
     // Register table view
     reg_view: Option<RegViewCache>,
@@ -248,7 +252,7 @@ impl SlaveApp {
             new_port: "5502".to_string(),
             last_error: None,
             conn_snapshot: Vec::new(),
-            next_conn_seq: 1,
+            next_conn_seq: Arc::new(AtomicU64::new(1)),
             reg_view: None,
             reg_row_limit: 20001,
             reg_view_last_refresh: None,
@@ -688,9 +692,9 @@ impl SlaveApp {
         self.reg_view_last_refresh = Some(Instant::now());
     }
 
-    fn allocate_connection(&mut self) -> (String, String) {
-        let id = format!("slave_{}", self.next_conn_seq);
-        self.next_conn_seq += 1;
+    fn allocate_connection(&self) -> (String, String) {
+        let n = self.next_conn_seq.fetch_add(1, Ordering::Relaxed);
+        let id = format!("slave_{}", n);
         let label = format!("TCP {}:{}", self.new_host.trim(), self.new_port.trim());
         (id, label)
     }
@@ -744,8 +748,8 @@ impl SlaveApp {
     /// Create+start immediately (invoked by `--auto-tcp` CLI arg).
     pub fn auto_start_tcp(&mut self, host: String, port: u16) {
         let (id, label) = {
-            let id = format!("slave_{}", self.next_conn_seq);
-            self.next_conn_seq += 1;
+            let n = self.next_conn_seq.fetch_add(1, Ordering::Relaxed);
+            let id = format!("slave_{}", n);
             let label = format!("TCP {}:{}", host, port);
             (id, label)
         };
@@ -885,6 +889,155 @@ impl SlaveApp {
             let _ = tx.send(UiEvent::ConnectionRemoved(id));
         });
         ctx.request_repaint();
+    }
+
+    fn build_project(&self) -> SlaveProject {
+        let mut proj = SlaveProject::new();
+        for snap in &self.conn_snapshot {
+            let (host, port) = self
+                .connections
+                .try_read()
+                .ok()
+                .and_then(|list| {
+                    list.iter().find(|e| e.id == snap.id).and_then(|e| {
+                        e.connection.try_read().ok().map(|c| match &c.transport {
+                            Transport::Tcp { host, port } => (host.clone(), *port),
+                            _ => ("0.0.0.0".to_string(), 502),
+                        })
+                    })
+                })
+                .unwrap_or_else(|| ("0.0.0.0".to_string(), 502));
+
+            let devices: Vec<SlaveDeviceSave> = snap
+                .devices
+                .iter()
+                .map(|d| SlaveDeviceSave {
+                    slave_id: d.slave_id,
+                    name: d.name.clone(),
+                    max_address: if d.counts.holding_registers > 0 {
+                        Some((d.counts.holding_registers.saturating_sub(1)) as u16)
+                    } else {
+                        None
+                    },
+                })
+                .collect();
+
+            proj.connections.push(SlaveConnectionSave {
+                label: snap.label.clone(),
+                tcp: TcpSpec { host, port },
+                devices,
+            });
+        }
+        proj
+    }
+
+    fn save_project(&self, ctx: egui::Context) {
+        let proj = self.build_project();
+        let tx = self.events_tx.clone();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.rt.spawn(async move {
+            let Some(path) = rfd::AsyncFileDialog::new()
+                .set_file_name(&format!("slave_{}.modbusproj", ts))
+                .add_filter("ModbusProj", &["modbusproj"])
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            match serialize_slave(&proj) {
+                Ok(json) => match tokio::fs::write(path.path(), json).await {
+                    Ok(()) => {
+                        let _ = tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
+                    }
+                },
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("序列化失败: {e}")));
+                }
+            }
+        });
+        ctx.request_repaint();
+    }
+
+    fn load_project(&mut self, ctx: egui::Context) {
+        let tx = self.events_tx.clone();
+        let rt = self.rt.clone();
+        let connections_arc = self.connections.clone();
+        let next_seq = self.next_conn_seq.clone();
+        let ctx2 = ctx.clone();
+        rt.spawn(async move {
+            let Some(file) = rfd::AsyncFileDialog::new()
+                .add_filter("ModbusProj", &["modbusproj"])
+                .pick_file()
+                .await
+            else {
+                return;
+            };
+            let text = match tokio::fs::read_to_string(file.path()).await {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("读取失败: {e}")));
+                    return;
+                }
+            };
+            let project = match deserialize_slave(&text) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("解析失败: {e}")));
+                    return;
+                }
+            };
+            for c in project.connections {
+                let id = format!("slave_{}", next_seq.fetch_add(1, Ordering::Relaxed));
+                let label = c.label.clone();
+                let log_collector = Arc::new(LogCollector::new());
+                let connection = SlaveConnection::new(Transport::Tcp {
+                    host: c.tcp.host.clone(),
+                    port: c.tcp.port,
+                })
+                .with_log_collector(log_collector.clone());
+
+                let mut device_snapshots = Vec::new();
+                for ds in &c.devices {
+                    let device = match ds.max_address {
+                        Some(max) => {
+                            SlaveDevice::with_default_registers(ds.slave_id, ds.name.clone(), max)
+                        }
+                        None => SlaveDevice::new(ds.slave_id, ds.name.clone()),
+                    };
+                    let snap = DeviceSnapshot {
+                        slave_id: ds.slave_id,
+                        name: ds.name.clone(),
+                        counts: RegCounts::from_device(&device),
+                        expanded: true,
+                    };
+                    if let Err(e) = connection.add_device(device).await {
+                        let _ = tx.send(UiEvent::Error(format!("加载设备失败: {e}")));
+                        continue;
+                    }
+                    device_snapshots.push(snap);
+                }
+
+                connections_arc.write().await.push(SlaveConnectionEntry {
+                    id: id.clone(),
+                    label: label.clone(),
+                    connection: Arc::new(RwLock::new(connection)),
+                    log_collector,
+                });
+                let _ = tx.send(UiEvent::ConnectionCreated {
+                    id,
+                    label,
+                    devices: device_snapshots,
+                });
+            }
+            let _ = tx.send(UiEvent::Info(format!("已加载：{}", file.path().display())));
+            ctx2.request_repaint();
+        });
     }
 
     fn drain_events(&mut self) {
@@ -1806,8 +1959,20 @@ impl eframe::App for SlaveApp {
         self.refresh_reg_view();
         self.refresh_log_cache();
 
+        let mut do_save = false;
+        let mut do_load = false;
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
+                ui.menu_button("文件", |ui| {
+                    if ui.button("保存工程…").clicked() {
+                        do_save = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("加载工程…").clicked() {
+                        do_load = true;
+                        ui.close_menu();
+                    }
+                });
                 ui.menu_button("视图", |ui| {
                     if ui.checkbox(&mut self.log_panel_open, "显示日志面板").clicked() {
                         ui.close_menu();
@@ -1916,6 +2081,13 @@ impl eframe::App for SlaveApp {
 
         if let Some(a) = tree_action {
             self.apply_tree_action(a, ctx);
+        }
+
+        if do_save {
+            self.save_project(ctx.clone());
+        }
+        if do_load {
+            self.load_project(ctx.clone());
         }
 
         if !self.events_rx.is_empty() {

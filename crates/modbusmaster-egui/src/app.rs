@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,6 +11,9 @@ use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
 };
 use modbussim_core::transport::Transport;
+use modbussim_ui_shared::project::{
+    deserialize_master, serialize_master, MasterConnectionSave, MasterProject, PollSave, TcpSpec,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
@@ -25,7 +29,7 @@ pub struct MasterConnectionEntry {
 pub type SharedConnections = Arc<RwLock<Vec<MasterConnectionEntry>>>;
 
 pub enum UiEvent {
-    ConnectionCreated { id: String, label: String },
+    ConnectionCreated { id: String, label: String, slave_id: u8 },
     ConnectionStateChanged { id: String, state: MasterState },
     ConnectionRemoved(String),
     ReadDone { id: String, result: ReadResult },
@@ -33,6 +37,13 @@ pub enum UiEvent {
     PollStopped(String),
     PollUpdate { id: String, result: ReadResult },
     PollError { id: String, msg: String },
+    PollConfigLoaded {
+        id: String,
+        fc: ReadFunction,
+        addr: u16,
+        qty: u16,
+        interval_ms: u64,
+    },
     Info(String),
     Error(String),
 }
@@ -80,7 +91,7 @@ pub struct MasterApp {
 
     selected: Option<String>,
     snap: Vec<ConnSnap>,
-    next_seq: u64,
+    next_seq: Arc<AtomicU64>,
 
     // New-connection form
     new_host: String,
@@ -125,7 +136,7 @@ impl MasterApp {
             events_rx,
             selected: None,
             snap: Vec::new(),
-            next_seq: 1,
+            next_seq: Arc::new(AtomicU64::new(1)),
             new_host: "127.0.0.1".to_string(),
             new_port: "5502".to_string(),
             new_slave_id: 1,
@@ -150,18 +161,19 @@ impl MasterApp {
         }
     }
 
-    fn allocate_id(&mut self) -> String {
-        let id = format!("master_{}", self.next_seq);
-        self.next_seq += 1;
-        id
+    fn allocate_id(&self) -> String {
+        let n = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        format!("master_{}", n)
     }
 
-    fn create_connection(&mut self, ctx: egui::Context) {
+    fn create_connection(&self, ctx: egui::Context) {
         let host = self.new_host.trim().to_string();
         let port: u16 = match self.new_port.trim().parse() {
             Ok(p) => p,
             Err(_) => {
-                self.last_error = Some(format!("无效端口: {}", self.new_port));
+                let _ = self
+                    .events_tx
+                    .send(UiEvent::Error(format!("无效端口: {}", self.new_port)));
                 return;
             }
         };
@@ -194,6 +206,7 @@ impl MasterApp {
             let _ = tx.send(UiEvent::ConnectionCreated {
                 id: id_c,
                 label: label_c,
+                slave_id,
             });
         });
         ctx.request_repaint();
@@ -435,15 +448,180 @@ impl MasterApp {
         ctx.request_repaint();
     }
 
+    /// Gather the current connection list + poll configs into a serializable project.
+    fn build_project(&self) -> MasterProject {
+        let mut proj = MasterProject::new();
+        for s in &self.snap {
+            // Parse "TCP host:port · 从站 N" back into parts is fragile; instead
+            // rebuild host/port from polling's conn entry via the core MasterConnection
+            // is awkward. We keep the label plus conservative defaults.
+            //
+            // For the MVP we store what the UI currently knows: label + slave_id + poll.
+            // host/port is unknown at the snapshot level — we fetch from the async side
+            // synchronously via try_read. Fallback to 127.0.0.1:502 if contended.
+            let (host, port, timeout_ms) = self
+                .connections
+                .try_read()
+                .ok()
+                .and_then(|list| {
+                    list.iter().find(|e| e.id == s.id).and_then(|e| {
+                        e.connection.try_read().ok().map(|c| {
+                            let (h, p) = match &c.transport {
+                                Transport::Tcp { host, port } => (host.clone(), *port),
+                                _ => ("127.0.0.1".to_string(), 502),
+                            };
+                            (h, p, c.config.timeout_ms)
+                        })
+                    })
+                })
+                .unwrap_or_else(|| ("127.0.0.1".to_string(), 502, 3000));
+
+            let poll = self.polling.get(&s.id).map(|p| PollSave {
+                function: match p.fc {
+                    ReadFunction::ReadCoils => "read_coils",
+                    ReadFunction::ReadDiscreteInputs => "read_discrete_inputs",
+                    ReadFunction::ReadHoldingRegisters => "read_holding_registers",
+                    ReadFunction::ReadInputRegisters => "read_input_registers",
+                }
+                .to_string(),
+                addr: p.addr,
+                qty: p.qty,
+                interval_ms: p.interval_ms,
+            });
+
+            proj.connections.push(MasterConnectionSave {
+                label: s.label.clone(),
+                tcp: TcpSpec { host, port },
+                slave_id: s.slave_id,
+                timeout_ms,
+                poll,
+            });
+        }
+        proj
+    }
+
+    fn save_project(&mut self, ctx: egui::Context) {
+        let proj = self.build_project();
+        let tx = self.events_tx.clone();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.rt.spawn(async move {
+            let Some(path) = rfd::AsyncFileDialog::new()
+                .set_file_name(&format!("master_{}.modbusproj", ts))
+                .add_filter("ModbusProj", &["modbusproj"])
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            match serialize_master(&proj) {
+                Ok(json) => match tokio::fs::write(path.path(), json).await {
+                    Ok(()) => {
+                        let _ = tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
+                    }
+                },
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("序列化失败: {e}")));
+                }
+            }
+        });
+        ctx.request_repaint();
+    }
+
+    fn load_project(&mut self, ctx: egui::Context) {
+        let tx = self.events_tx.clone();
+        let rt = self.rt.clone();
+        let connections_arc = self.connections.clone();
+        let next_seq = self.next_seq.clone();
+        let ctx2 = ctx.clone();
+        rt.spawn(async move {
+            let Some(file) = rfd::AsyncFileDialog::new()
+                .add_filter("ModbusProj", &["modbusproj"])
+                .pick_file()
+                .await
+            else {
+                return;
+            };
+            let text = match tokio::fs::read_to_string(file.path()).await {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("读取失败: {e}")));
+                    return;
+                }
+            };
+            let project = match deserialize_master(&text) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("解析失败: {e}")));
+                    return;
+                }
+            };
+            // Push each saved connection into the app state.
+            for c in project.connections {
+                let label = c.label.clone();
+                let tcp = c.tcp.clone();
+                let slave_id = c.slave_id;
+                let timeout_ms = c.timeout_ms;
+                let log_collector = Arc::new(LogCollector::new());
+                let config = MasterConfig {
+                    target_address: tcp.host.clone(),
+                    port: tcp.port,
+                    slave_id,
+                    timeout_ms,
+                    ..Default::default()
+                };
+                let connection = MasterConnection::new(
+                    config,
+                    Transport::Tcp { host: tcp.host.clone(), port: tcp.port },
+                )
+                .with_log_collector(log_collector.clone());
+                let id = format!("master_{}", next_seq.fetch_add(1, Ordering::Relaxed));
+                connections_arc.write().await.push(MasterConnectionEntry {
+                    id: id.clone(),
+                    label: label.clone(),
+                    connection: Arc::new(RwLock::new(connection)),
+                    log_collector,
+                });
+                let _ = tx.send(UiEvent::ConnectionCreated {
+                    id: id.clone(),
+                    label,
+                    slave_id,
+                });
+                if let Some(ps) = &c.poll {
+                    let fc = match ps.function.as_str() {
+                        "read_coils" => ReadFunction::ReadCoils,
+                        "read_discrete_inputs" => ReadFunction::ReadDiscreteInputs,
+                        "read_input_registers" => ReadFunction::ReadInputRegisters,
+                        _ => ReadFunction::ReadHoldingRegisters,
+                    };
+                    let _ = tx.send(UiEvent::PollConfigLoaded {
+                        id,
+                        fc,
+                        addr: ps.addr,
+                        qty: ps.qty,
+                        interval_ms: ps.interval_ms,
+                    });
+                }
+            }
+            let _ = tx.send(UiEvent::Info(format!("已加载：{}", file.path().display())));
+            ctx2.request_repaint();
+        });
+    }
+
     fn drain_events(&mut self) {
         while let Ok(ev) = self.events_rx.try_recv() {
             match ev {
-                UiEvent::ConnectionCreated { id, label } => {
+                UiEvent::ConnectionCreated { id, label, slave_id } => {
                     self.snap.push(ConnSnap {
                         id,
                         label,
                         state: MasterState::Disconnected,
-                        slave_id: self.new_slave_id,
+                        slave_id,
                     });
                 }
                 UiEvent::ConnectionStateChanged { id, state } => {
@@ -478,6 +656,13 @@ impl MasterApp {
                     if let Some(p) = self.polling.get_mut(&id) {
                         p.last_error = Some(msg);
                     }
+                }
+                UiEvent::PollConfigLoaded { id, fc, addr, qty, interval_ms } => {
+                    let p = self.polling.entry(id).or_default();
+                    p.fc = fc;
+                    p.addr = addr;
+                    p.qty = qty;
+                    p.interval_ms = interval_ms;
                 }
                 UiEvent::Info(msg) => self.status_msg = Some(msg),
                 UiEvent::Error(msg) => self.last_error = Some(msg),
@@ -516,8 +701,20 @@ impl eframe::App for MasterApp {
         self.refresh_log_cache();
 
         // Menu
+        let mut do_save = false;
+        let mut do_load = false;
         egui::TopBottomPanel::top("master_menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
+                ui.menu_button("文件", |ui| {
+                    if ui.button("保存工程…").clicked() {
+                        do_save = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("加载工程…").clicked() {
+                        do_load = true;
+                        ui.close_menu();
+                    }
+                });
                 ui.menu_button("视图", |ui| {
                     ui.checkbox(&mut self.log_panel_open, "显示日志面板");
                     ui.separator();
@@ -861,6 +1058,12 @@ impl eframe::App for MasterApp {
         }
         if let Some(id) = do_stop_poll_id {
             self.stop_poll(id, ctx.clone());
+        }
+        if do_save {
+            self.save_project(ctx.clone());
+        }
+        if do_load {
+            self.load_project(ctx.clone());
         }
 
         if !self.events_rx.is_empty() {
