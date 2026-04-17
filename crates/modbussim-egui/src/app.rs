@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::register::RegisterType;
+use modbussim_core::register::{DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
@@ -70,6 +71,12 @@ pub enum UiEvent {
     ConnectionStarted(String),
     ConnectionStopped(String),
     ConnectionRemoved(String),
+    DeviceCountsUpdated {
+        conn_id: String,
+        slave_id: u8,
+        counts: RegCounts,
+    },
+    Info(String),
     Error(String),
 }
 
@@ -99,14 +106,19 @@ enum Selection {
     },
 }
 
-/// Per-frame cache of the currently displayed register group.
+/// Per-frame cache of the currently displayed register group. We keep an
+/// Arc-cloned snapshot of the source HashMap (cheap vs. materializing a
+/// Vec<Option<u16>> across 20K rows every frame) — UI renders only the
+/// visible window via TableBuilder, so HashMap::get stays O(1) per row.
 pub struct RegViewCache {
     pub conn_id: String,
     pub slave_id: u8,
     pub reg_type: RegisterType,
-    /// Values indexed by address. For FC01/FC02 only the first element per
-    /// address is populated (as u16 = 0/1). Sized lazily to max_addr+1.
-    pub values: Vec<Option<u16>>,
+    pub row_count: usize,
+    /// Snapshot for FC03 / FC04.
+    pub u16_map: Option<Arc<std::collections::HashMap<u16, u16>>>,
+    /// Snapshot for FC01 / FC02.
+    pub bool_map: Option<Arc<std::collections::HashMap<u16, bool>>>,
 }
 
 pub struct SlaveApp {
@@ -128,6 +140,24 @@ pub struct SlaveApp {
     // Register table view
     reg_view: Option<RegViewCache>,
     reg_row_limit: usize,
+    reg_view_last_refresh: Option<Instant>,
+    reg_view_refresh_interval_ms: u64,
+
+    // Batch add modal
+    batch_modal: Option<BatchModalState>,
+    status_msg: Option<String>,
+}
+
+pub struct BatchModalState {
+    pub conn_id: String,
+    pub slave_id: u8,
+    pub start_addr: u32,
+    pub end_addr: u32,
+    pub reg_type: RegisterType,
+    pub data_type: DataType,
+    pub endian: Endian,
+    pub name_prefix: String,
+    pub busy: bool,
 }
 
 impl SlaveApp {
@@ -145,17 +175,144 @@ impl SlaveApp {
             conn_snapshot: Vec::new(),
             next_conn_seq: 1,
             reg_view: None,
-            reg_row_limit: 1000,
+            reg_row_limit: 20001,
+            reg_view_last_refresh: None,
+            reg_view_refresh_interval_ms: 200,
+            batch_modal: None,
+            status_msg: None,
         }
+    }
+
+    fn open_batch_modal(&mut self, conn_id: String, slave_id: u8, reg_type: RegisterType) {
+        self.batch_modal = Some(BatchModalState {
+            conn_id,
+            slave_id,
+            start_addr: 0,
+            end_addr: 99,
+            reg_type,
+            data_type: match reg_type {
+                RegisterType::Coil | RegisterType::DiscreteInput => DataType::Bool,
+                _ => DataType::UInt16,
+            },
+            endian: Endian::Big,
+            name_prefix: String::new(),
+            busy: false,
+        });
+    }
+
+    fn submit_batch_add(&mut self, ctx: egui::Context) {
+        let Some(state) = self.batch_modal.as_mut() else { return };
+        if state.busy { return; }
+        if state.end_addr < state.start_addr {
+            self.last_error = Some("结束地址必须 ≥ 起始地址".to_string());
+            return;
+        }
+        let count = state.end_addr - state.start_addr + 1;
+        if count > 50_000 {
+            self.last_error = Some(format!("范围过大（最多 50000，当前 {count}）"));
+            return;
+        }
+        if state.end_addr > u16::MAX as u32 {
+            self.last_error = Some("地址超过 65535".to_string());
+            return;
+        }
+        state.busy = true;
+
+        let conn_id = state.conn_id.clone();
+        let slave_id = state.slave_id;
+        let reg_type = state.reg_type;
+        let data_type = state.data_type;
+        let endian = state.endian;
+        let name_prefix = state.name_prefix.clone();
+        let start = state.start_addr as u16;
+        let end = state.end_addr as u16;
+
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+
+        self.rt.spawn(async move {
+            let conn_arc = connections
+                .read()
+                .await
+                .iter()
+                .find(|e| e.id == conn_id)
+                .map(|e| e.connection.clone());
+            let Some(conn_arc) = conn_arc else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                return;
+            };
+
+            let stride = data_type.register_count().max(1);
+            let mut added = 0usize;
+
+            let new_counts = {
+                let conn = conn_arc.read().await;
+                let mut devs = conn.devices.write().await;
+                let Some(dev) = devs.get_mut(&slave_id) else {
+                    let _ = tx.send(UiEvent::Error(format!("从站 {slave_id} 未找到")));
+                    return;
+                };
+                let mut addr = start as u32;
+                while addr <= end as u32 {
+                    let def = RegisterDef {
+                        address: addr as u16,
+                        register_type: reg_type,
+                        data_type,
+                        endian,
+                        name: if name_prefix.is_empty() {
+                            String::new()
+                        } else {
+                            format!("{}_{}", name_prefix, addr)
+                        },
+                        comment: String::new(),
+                    };
+                    dev.register_map.ensure_from_def(&def);
+                    dev.register_defs.push(def);
+                    added += 1;
+                    addr += stride as u32;
+                }
+                RegCounts::from_device(dev)
+            };
+
+            let _ = tx.send(UiEvent::DeviceCountsUpdated {
+                conn_id: conn_id.clone(),
+                slave_id,
+                counts: new_counts,
+            });
+            let _ = tx.send(UiEvent::Info(format!(
+                "批量添加完成：{}，共 {added} 个条目",
+                conn_id
+            )));
+        });
+
+        ctx.request_repaint();
     }
 
     /// Try to refresh the register view cache from the authoritative state.
     /// Uses sync `try_read` on the async RwLocks — skip this frame if contended.
+    /// Clones the target HashMap into an Arc (cheap: shares buckets via Arc,
+    /// no per-cell copy in the UI render path).
     fn refresh_reg_view(&mut self) {
         let Selection::RegisterGroup { conn_id, slave_id, reg_type } = self.selection.clone() else {
             self.reg_view = None;
+            self.reg_view_last_refresh = None;
             return;
         };
+
+        // Throttle: if the current cache matches and last refresh was recent, skip clone.
+        let cache_matches = self
+            .reg_view
+            .as_ref()
+            .map(|v| v.conn_id == conn_id && v.slave_id == slave_id && v.reg_type == reg_type)
+            .unwrap_or(false);
+        if cache_matches {
+            if let Some(t) = self.reg_view_last_refresh {
+                if t.elapsed().as_millis() < self.reg_view_refresh_interval_ms as u128 {
+                    return;
+                }
+            }
+        }
+
         let Ok(entries) = self.connections.try_read() else { return };
         let Some(entry) = entries.iter().find(|e| e.id == conn_id) else {
             self.reg_view = None;
@@ -168,46 +325,41 @@ impl SlaveApp {
             return;
         };
 
-        let limit = self.reg_row_limit;
         let map = &dev.register_map;
-        let mut values: Vec<Option<u16>> = vec![None; limit];
-        match reg_type {
+        let (u16_map, bool_map, row_count) = match reg_type {
             RegisterType::HoldingRegister => {
-                for addr in 0..limit as u16 {
-                    if let Some(v) = map.holding_registers.get(&addr) {
-                        values[addr as usize] = Some(*v);
-                    }
-                }
+                let m = map.holding_registers.clone();
+                let rc = m.keys().copied().max().map(|k| k as usize + 1).unwrap_or(0);
+                (Some(Arc::new(m)), None, rc)
             }
             RegisterType::InputRegister => {
-                for addr in 0..limit as u16 {
-                    if let Some(v) = map.input_registers.get(&addr) {
-                        values[addr as usize] = Some(*v);
-                    }
-                }
+                let m = map.input_registers.clone();
+                let rc = m.keys().copied().max().map(|k| k as usize + 1).unwrap_or(0);
+                (Some(Arc::new(m)), None, rc)
             }
             RegisterType::Coil => {
-                for addr in 0..limit as u16 {
-                    if let Some(b) = map.coils.get(&addr) {
-                        values[addr as usize] = Some(if *b { 1 } else { 0 });
-                    }
-                }
+                let m = map.coils.clone();
+                let rc = m.keys().copied().max().map(|k| k as usize + 1).unwrap_or(0);
+                (None, Some(Arc::new(m)), rc)
             }
             RegisterType::DiscreteInput => {
-                for addr in 0..limit as u16 {
-                    if let Some(b) = map.discrete_inputs.get(&addr) {
-                        values[addr as usize] = Some(if *b { 1 } else { 0 });
-                    }
-                }
+                let m = map.discrete_inputs.clone();
+                let rc = m.keys().copied().max().map(|k| k as usize + 1).unwrap_or(0);
+                (None, Some(Arc::new(m)), rc)
             }
-        }
+        };
+
+        let row_count = row_count.min(self.reg_row_limit.max(1));
 
         self.reg_view = Some(RegViewCache {
             conn_id,
             slave_id,
             reg_type,
-            values,
+            row_count,
+            u16_map,
+            bool_map,
         });
+        self.reg_view_last_refresh = Some(Instant::now());
     }
 
     fn allocate_connection(&mut self) -> (String, String) {
@@ -434,6 +586,18 @@ impl SlaveApp {
                 UiEvent::ConnectionRemoved(id) => {
                     self.conn_snapshot.retain(|s| s.id != id);
                 }
+                UiEvent::DeviceCountsUpdated { conn_id, slave_id, counts } => {
+                    if let Some(s) = self.conn_snapshot.iter_mut().find(|s| s.id == conn_id) {
+                        if let Some(d) = s.devices.iter_mut().find(|d| d.slave_id == slave_id) {
+                            d.counts = counts;
+                        }
+                    }
+                    // Force cache refresh next frame.
+                    self.reg_view_last_refresh = None;
+                }
+                UiEvent::Info(msg) => {
+                    self.status_msg = Some(msg);
+                }
                 UiEvent::Error(msg) => self.last_error = Some(msg),
             }
         }
@@ -458,6 +622,45 @@ const REG_GROUPS: &[(RegisterType, &str)] = &[
     (RegisterType::InputRegister, "FC04 输入寄存器"),
     (RegisterType::HoldingRegister, "FC03 保持寄存器"),
 ];
+
+const DATA_TYPES: &[DataType] = &[
+    DataType::Bool,
+    DataType::UInt16,
+    DataType::Int16,
+    DataType::UInt32,
+    DataType::Int32,
+    DataType::Float32,
+];
+
+const ENDIANS: &[Endian] = &[Endian::Big, Endian::Little, Endian::MidBig, Endian::MidLittle];
+
+fn reg_type_label(rt: RegisterType) -> &'static str {
+    REG_GROUPS
+        .iter()
+        .find(|(r, _)| *r == rt)
+        .map(|(_, l)| *l)
+        .unwrap_or("?")
+}
+
+fn data_type_label(dt: DataType) -> &'static str {
+    match dt {
+        DataType::Bool => "Bool",
+        DataType::UInt16 => "UInt16",
+        DataType::Int16 => "Int16",
+        DataType::UInt32 => "UInt32",
+        DataType::Int32 => "Int32",
+        DataType::Float32 => "Float32",
+    }
+}
+
+fn endian_label(e: Endian) -> &'static str {
+    match e {
+        Endian::Big => "AB CD",
+        Endian::Little => "CD AB",
+        Endian::MidBig => "BA DC",
+        Endian::MidLittle => "DC BA",
+    }
+}
 
 impl SlaveApp {
     fn render_tree(&mut self, ui: &mut egui::Ui) -> Option<TreeAction> {
@@ -582,8 +785,112 @@ impl SlaveApp {
         }
     }
 
-    fn render_main(&self, ui: &mut egui::Ui) {
-        match &self.selection {
+    fn render_batch_modal(&mut self, ctx: &egui::Context) {
+        if self.batch_modal.is_none() { return; }
+
+        enum ModalAction { Submit, Close }
+        let mut action: Option<ModalAction> = None;
+        let mut is_open = true;
+
+        egui::Window::new("批量添加寄存器")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                let Some(state) = self.batch_modal.as_mut() else { return };
+                egui::Grid::new("batch_add_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("连接 / 从站");
+                        ui.label(format!("{} · 从站 {}", state.conn_id, state.slave_id));
+                        ui.end_row();
+
+                        ui.label("起始地址");
+                        ui.add(egui::DragValue::new(&mut state.start_addr).range(0..=65535));
+                        ui.end_row();
+
+                        ui.label("结束地址");
+                        ui.add(egui::DragValue::new(&mut state.end_addr).range(0..=65535));
+                        ui.end_row();
+
+                        ui.label("寄存器类型");
+                        egui::ComboBox::from_id_salt("batch_reg_type")
+                            .selected_text(reg_type_label(state.reg_type))
+                            .show_ui(ui, |ui| {
+                                for (rt, label) in REG_GROUPS {
+                                    ui.selectable_value(&mut state.reg_type, *rt, *label);
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("数据类型");
+                        egui::ComboBox::from_id_salt("batch_data_type")
+                            .selected_text(data_type_label(state.data_type))
+                            .show_ui(ui, |ui| {
+                                for dt in DATA_TYPES {
+                                    ui.selectable_value(&mut state.data_type, *dt, data_type_label(*dt));
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("字节序");
+                        egui::ComboBox::from_id_salt("batch_endian")
+                            .selected_text(endian_label(state.endian))
+                            .show_ui(ui, |ui| {
+                                for e in ENDIANS {
+                                    ui.selectable_value(&mut state.endian, *e, endian_label(*e));
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("名称前缀（可选）");
+                        ui.text_edit_singleline(&mut state.name_prefix);
+                        ui.end_row();
+                    });
+
+                let stride = state.data_type.register_count().max(1) as u32;
+                let raw_count = if state.end_addr >= state.start_addr {
+                    (state.end_addr - state.start_addr) / stride + 1
+                } else { 0 };
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if raw_count == 0 {
+                        ui.colored_label(egui::Color32::RED, "范围无效");
+                    } else if raw_count > 50_000 {
+                        ui.colored_label(egui::Color32::RED, format!("范围过大（最多 50000，当前 {raw_count}）"));
+                    } else {
+                        ui.label(format!("将添加 {raw_count} 个条目"));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!state.busy && raw_count > 0 && raw_count <= 50_000,
+                                      egui::Button::new("确认添加")).clicked() {
+                        action = Some(ModalAction::Submit);
+                    }
+                    if ui.button("取消").clicked() {
+                        action = Some(ModalAction::Close);
+                    }
+                    if state.busy { ui.spinner(); }
+                });
+            });
+
+        if !is_open { action = Some(ModalAction::Close); }
+        match action {
+            Some(ModalAction::Submit) => {
+                self.submit_batch_add(ctx.clone());
+                self.batch_modal = None;
+            }
+            Some(ModalAction::Close) => { self.batch_modal = None; }
+            None => {}
+        }
+    }
+
+    fn render_main(&mut self, ui: &mut egui::Ui) {
+        // Snapshot what's selected; later we might mutate self.batch_modal.
+        let selection = self.selection.clone();
+        match &selection {
             Selection::None => {
                 ui.heading("ModbusSlave — egui edition");
                 ui.label("从左侧创建或选中一个连接/设备/寄存器组。");
@@ -626,6 +933,14 @@ impl SlaveApp {
                                 ui.label(d.counts.holding_registers.to_string());
                                 ui.end_row();
                             });
+                        ui.separator();
+                        if ui.button("批量添加寄存器…").clicked() {
+                            self.open_batch_modal(
+                                conn_id.clone(),
+                                *slave_id,
+                                RegisterType::HoldingRegister,
+                            );
+                        }
                     }
                     None => {
                         ui.label("设备不存在。");
@@ -638,7 +953,12 @@ impl SlaveApp {
                     .find(|(rt, _)| rt == reg_type)
                     .map(|(_, l)| *l)
                     .unwrap_or("?");
-                ui.heading(format!("{} · 连接 {} · 从站 {}", group_label, conn_id, slave_id));
+                ui.horizontal(|ui| {
+                    ui.heading(format!("{} · 连接 {} · 从站 {}", group_label, conn_id, slave_id));
+                    if ui.button("批量添加…").clicked() {
+                        self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
+                    }
+                });
                 ui.separator();
 
                 let Some(view) = &self.reg_view else {
@@ -659,8 +979,8 @@ impl SlaveApp {
                 );
 
                 ui.label(format!(
-                    "显示前 {} 个地址 · 只读视图（S2 将加内联编辑）",
-                    view.values.len()
+                    "共 {} 行 · 只读视图（S2 后续加内联编辑与格式切换）",
+                    view.row_count
                 ));
                 ui.separator();
 
@@ -688,31 +1008,32 @@ impl SlaveApp {
                         header.col(|ui| { ui.strong(""); });
                     })
                     .body(|body| {
-                        body.rows(row_h, view.values.len(), |mut row| {
-                            let addr = row.index();
+                        body.rows(row_h, view.row_count, |mut row| {
+                            let addr = row.index() as u16;
                             row.col(|ui| {
                                 ui.monospace(format!("{}", addr));
                             });
-                            let val = view.values.get(addr).copied().flatten();
-                            row.col(|ui| match val {
-                                Some(v) if is_bool => {
-                                    ui.monospace(if v != 0 { "true" } else { "false" });
+
+                            let u16_val = view.u16_map.as_ref().and_then(|m| m.get(&addr).copied());
+                            let bool_val = view.bool_map.as_ref().and_then(|m| m.get(&addr).copied());
+
+                            row.col(|ui| match (is_bool, u16_val, bool_val) {
+                                (true, _, Some(b)) => {
+                                    ui.monospace(if b { "true" } else { "false" });
                                 }
-                                Some(v) => {
+                                (false, Some(v), _) => {
                                     ui.monospace(format_u16(v, U16Format::Unsigned));
                                 }
-                                None => {
-                                    ui.monospace("—");
-                                }
+                                _ => { ui.monospace("—"); }
                             });
-                            row.col(|ui| match val {
-                                Some(v) if !is_bool => {
+                            row.col(|ui| match (is_bool, u16_val) {
+                                (false, Some(v)) => {
                                     ui.monospace(format_u16(v, U16Format::Hex));
                                 }
                                 _ => { ui.monospace(""); }
                             });
-                            row.col(|ui| match val {
-                                Some(v) if !is_bool => {
+                            row.col(|ui| match (is_bool, u16_val) {
+                                (false, Some(v)) => {
                                     ui.monospace(format_u16(v, U16Format::Binary));
                                 }
                                 _ => { ui.monospace(""); }
@@ -766,28 +1087,37 @@ impl eframe::App for SlaveApp {
             });
 
         let mut clear_error = false;
+        let mut clear_status = false;
         egui::TopBottomPanel::bottom("status_bar")
             .resizable(false)
-            .show(ctx, |ui| match &self.last_error {
-                Some(err) => {
+            .show(ctx, |ui| {
+                if let Some(err) = &self.last_error {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::RED, err);
                         if ui.small_button("清除").clicked() {
                             clear_error = true;
                         }
                     });
-                }
-                None => {
+                } else if let Some(msg) = &self.status_msg {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
+                        if ui.small_button("清除").clicked() {
+                            clear_status = true;
+                        }
+                    });
+                } else {
                     ui.label("就绪");
                 }
             });
-        if clear_error {
-            self.last_error = None;
-        }
+        if clear_error { self.last_error = None; }
+        if clear_status { self.status_msg = None; }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_main(ui);
         });
+
+        // Batch add modal
+        self.render_batch_modal(ctx);
 
         if let Some(a) = tree_action {
             self.apply_tree_action(a, ctx);
@@ -795,6 +1125,13 @@ impl eframe::App for SlaveApp {
 
         if !self.events_rx.is_empty() {
             ctx.request_repaint();
+        }
+
+        // Poll for register value updates while a group is selected.
+        if matches!(self.selection, Selection::RegisterGroup { .. }) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                self.reg_view_refresh_interval_ms,
+            ));
         }
     }
 }
