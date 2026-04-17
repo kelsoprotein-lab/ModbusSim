@@ -1,3 +1,5 @@
+mod app;
+
 use std::sync::Arc;
 
 use eframe::egui;
@@ -25,28 +27,7 @@ fn main() -> eframe::Result<()> {
         native_options,
         Box::new(move |cc| {
             modbussim_ui_shared::fonts::install_cjk_fonts(&cc.egui_ctx);
-            Ok(Box::new(MasterApp::new(rt.clone())))
+            Ok(Box::new(app::MasterApp::new(rt.clone())))
         }),
     )
-}
-
-struct MasterApp {
-    _rt: Arc<tokio::runtime::Runtime>,
-}
-
-impl MasterApp {
-    fn new(rt: Arc<tokio::runtime::Runtime>) -> Self {
-        Self { _rt: rt }
-    }
-}
-
-impl eframe::App for MasterApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("ModbusMaster — egui edition");
-            ui.label("S0 skeleton: empty window is running.");
-            ui.separator();
-            ui.label("Next up: scan groups, poll view, write operations.");
-        });
-    }
 }
