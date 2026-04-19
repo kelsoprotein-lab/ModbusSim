@@ -11,10 +11,13 @@ use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
 };
 use modbussim_core::transport::Transport;
+use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
     deserialize_master, serialize_master, MasterConnectionSave, MasterProject, PollSave, TcpSpec,
 };
+use modbussim_ui_shared::theme::{self, Flavor};
+use modbussim_ui_shared::ui as uikit;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
@@ -84,6 +87,23 @@ struct ConnSnap {
     slave_id: u8,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MasterTab {
+    Read,
+    Write,
+    Poll,
+}
+
+impl MasterTab {
+    fn label(self) -> &'static str {
+        match self {
+            MasterTab::Read => "读取",
+            MasterTab::Write => "写入",
+            MasterTab::Poll => "轮询",
+        }
+    }
+}
+
 pub struct MasterApp {
     rt: Arc<Runtime>,
     connections: SharedConnections,
@@ -122,10 +142,13 @@ pub struct MasterApp {
 
     last_error: Option<String>,
     status_msg: Option<String>,
+
+    pub flavor: Flavor,
+    active_tab: MasterTab,
 }
 
 impl MasterApp {
-    pub fn new(rt: Arc<Runtime>) -> Self {
+    pub fn new(rt: Arc<Runtime>, flavor: Flavor) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         Self {
             rt,
@@ -153,6 +176,8 @@ impl MasterApp {
             log_last_refresh: None,
             last_error: None,
             status_msg: None,
+            flavor,
+            active_tab: MasterTab::Read,
         }
     }
 
@@ -691,6 +716,10 @@ impl MasterApp {
 }
 
 impl eframe::App for MasterApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "flavor", &self.flavor);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
         self.refresh_log_cache();
@@ -713,14 +742,14 @@ impl eframe::App for MasterApp {
                 ui.menu_button("视图", |ui| {
                     ui.checkbox(&mut self.log_state.open, "显示日志面板");
                     ui.separator();
-                    if ui.button("深色主题").clicked() {
-                        ctx.set_visuals(egui::Visuals::dark());
-                        ui.close_menu();
+                    ui.label("主题 (Catppuccin)");
+                    for f in [Flavor::Mocha, Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
+                        if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
+                            theme::apply(ctx, self.flavor);
+                            ui.close_menu();
+                        }
                     }
-                    if ui.button("浅色主题").clicked() {
-                        ctx.set_visuals(egui::Visuals::light());
-                        ui.close_menu();
-                    }
+                    ui.separator();
                     let zoom = ctx.zoom_factor();
                     if ui.button(format!("放大 ({:.0}%)", zoom * 100.0)).clicked() {
                         ctx.set_zoom_factor((zoom + 0.1).min(3.0));
@@ -751,7 +780,8 @@ impl eframe::App for MasterApp {
         // Left sidebar
         egui::SidePanel::left("master_connections")
             .resizable(true)
-            .default_width(320.0)
+            .default_width(240.0)
+            .min_width(200.0)
             .show(ctx, |ui| {
                 ui.heading("连接");
                 ui.separator();
@@ -850,179 +880,207 @@ impl eframe::App for MasterApp {
         let mut do_write_id: Option<String> = None;
         let mut do_start_poll_id: Option<String> = None;
         let mut do_stop_poll_id: Option<String> = None;
+        let flavor = self.flavor;
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(id) = self.selected.clone() else {
-                ui.heading("ModbusMaster — egui edition");
-                ui.label("从左侧创建并连接一个会话。");
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.label(
+                        egui::RichText::new("ModbusMaster")
+                            .size(18.0)
+                            .strong(),
+                    );
+                    uikit::caption(ui, flavor, "从左侧创建并连接一个会话。");
+                });
                 return;
             };
             let Some(s) = self.snap.iter().find(|s| s.id == id).cloned() else {
                 ui.label("连接已不存在。");
                 return;
             };
-            ui.heading(&s.label);
-            ui.label(format!(
-                "状态: {}",
-                match s.state {
-                    MasterState::Connected => "已连接",
-                    MasterState::Disconnected => "未连接",
-                    MasterState::Reconnecting => "重连中",
-                    MasterState::Error => "错误",
-                }
-            ));
-            ui.separator();
-
+            // Compact header: address + status pill in one line
             ui.horizontal(|ui| {
-                ui.group(|ui| {
-                    ui.vertical(|ui| {
-                        ui.strong("单次读取");
-                        egui::Grid::new("read_form")
-                            .num_columns(2)
-                            .spacing([8.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.label("功能码");
-                                egui::ComboBox::from_id_salt("read_fc")
-                                    .selected_text(read_fc_label(self.read_fc))
-                                    .show_ui(ui, |ui| {
-                                        for f in [
-                                            ReadFunction::ReadCoils,
-                                            ReadFunction::ReadDiscreteInputs,
-                                            ReadFunction::ReadHoldingRegisters,
-                                            ReadFunction::ReadInputRegisters,
-                                        ] {
-                                            ui.selectable_value(&mut self.read_fc, f, read_fc_label(f));
-                                        }
-                                    });
-                                ui.end_row();
-                                ui.label("起始地址");
-                                let mut a = self.read_addr as u32;
-                                ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                self.read_addr = a as u16;
-                                ui.end_row();
-                                ui.label("数量");
-                                let mut q = self.read_qty as u32;
-                                ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                                self.read_qty = q as u16;
-                                ui.end_row();
-                            });
-                        if ui.add_enabled(s.state == MasterState::Connected, egui::Button::new("读取"))
-                            .clicked()
-                        {
+                ui.label(egui::RichText::new(&s.label).strong().size(13.5));
+                let (txt, color) = match s.state {
+                    MasterState::Connected => ("已连接", theme::success(flavor)),
+                    MasterState::Disconnected => ("未连接", theme::subtext(flavor)),
+                    MasterState::Reconnecting => ("重连中", theme::accent(flavor)),
+                    MasterState::Error => ("错误", theme::danger(flavor)),
+                };
+                uikit::status_pill(ui, txt, color);
+            });
+            ui.add_space(6.0);
+
+            // Tab bar: Read / Write / Poll
+            ui.horizontal(|ui| {
+                for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
+                    let selected = self.active_tab == tab;
+                    let text = if selected {
+                        egui::RichText::new(tab.label())
+                            .strong()
+                            .color(theme::accent(flavor))
+                    } else {
+                        egui::RichText::new(tab.label()).color(theme::subtext(flavor))
+                    };
+                    if ui
+                        .add(egui::SelectableLabel::new(selected, text))
+                        .clicked()
+                    {
+                        self.active_tab = tab;
+                    }
+                }
+            });
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Tab content
+            match self.active_tab {
+                MasterTab::Read => {
+                    egui::Grid::new("read_form")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("功能码");
+                            egui::ComboBox::from_id_salt("read_fc")
+                                .selected_text(read_fc_label(self.read_fc))
+                                .show_ui(ui, |ui| {
+                                    for f in [
+                                        ReadFunction::ReadCoils,
+                                        ReadFunction::ReadDiscreteInputs,
+                                        ReadFunction::ReadHoldingRegisters,
+                                        ReadFunction::ReadInputRegisters,
+                                    ] {
+                                        ui.selectable_value(&mut self.read_fc, f, read_fc_label(f));
+                                    }
+                                });
+                            ui.end_row();
+                            ui.label("起始地址");
+                            let mut a = self.read_addr as u32;
+                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                            self.read_addr = a as u16;
+                            ui.end_row();
+                            ui.label("数量");
+                            let mut q = self.read_qty as u32;
+                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                            self.read_qty = q as u16;
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
+                        if uikit::primary_button(ui, flavor, "读取").clicked() {
                             do_read_id = Some(id.clone());
                         }
                     });
-                });
-
-                ui.group(|ui| {
-                    ui.vertical(|ui| {
-                        ui.strong("单次写入");
-                        egui::Grid::new("write_form")
-                            .num_columns(2)
-                            .spacing([8.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.label("类型");
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut self.write_is_coil, false, "FC06 (保持寄存器)");
-                                    ui.radio_value(&mut self.write_is_coil, true, "FC05 (线圈)");
-                                });
-                                ui.end_row();
-                                ui.label("地址");
-                                let mut a = self.write_addr as u32;
-                                ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                self.write_addr = a as u16;
-                                ui.end_row();
-                                ui.label("值");
-                                if self.write_is_coil {
-                                    let mut b = self.write_value != 0;
-                                    ui.checkbox(&mut b, "true / false");
-                                    self.write_value = if b { 1 } else { 0 };
-                                } else {
-                                    ui.add(
-                                        egui::DragValue::new(&mut self.write_value).range(0..=65535),
-                                    );
-                                }
-                                ui.end_row();
+                }
+                MasterTab::Write => {
+                    egui::Grid::new("write_form")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("类型");
+                            ui.horizontal(|ui| {
+                                ui.radio_value(&mut self.write_is_coil, false, "FC06 寄存器");
+                                ui.radio_value(&mut self.write_is_coil, true, "FC05 线圈");
                             });
-                        if ui.add_enabled(s.state == MasterState::Connected, egui::Button::new("写入"))
-                            .clicked()
-                        {
+                            ui.end_row();
+                            ui.label("地址");
+                            let mut a = self.write_addr as u32;
+                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                            self.write_addr = a as u16;
+                            ui.end_row();
+                            ui.label("值");
+                            if self.write_is_coil {
+                                let mut b = self.write_value != 0;
+                                ui.checkbox(&mut b, "true / false");
+                                self.write_value = if b { 1 } else { 0 };
+                            } else {
+                                ui.add(
+                                    egui::DragValue::new(&mut self.write_value).range(0..=65535),
+                                );
+                            }
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
+                        if uikit::primary_button(ui, flavor, "写入").clicked() {
                             do_write_id = Some(id.clone());
                         }
                     });
-                });
-            });
-
-            ui.separator();
-
-            // Polling
-            let pu = self.polling.entry(id.clone()).or_default();
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("轮询");
-                    if pu.enabled {
-                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), "● 运行中");
-                    }
-                });
-                egui::Grid::new("poll_form")
-                    .num_columns(4)
-                    .spacing([8.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label("功能码");
-                        egui::ComboBox::from_id_salt("poll_fc")
-                            .selected_text(read_fc_label(pu.fc))
-                            .show_ui(ui, |ui| {
-                                for f in [
-                                    ReadFunction::ReadCoils,
-                                    ReadFunction::ReadDiscreteInputs,
-                                    ReadFunction::ReadHoldingRegisters,
-                                    ReadFunction::ReadInputRegisters,
-                                ] {
-                                    ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                }
+                MasterTab::Poll => {
+                    let pu = self.polling.entry(id.clone()).or_default();
+                    egui::Grid::new("poll_form")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("功能码");
+                            egui::ComboBox::from_id_salt("poll_fc")
+                                .selected_text(read_fc_label(pu.fc))
+                                .show_ui(ui, |ui| {
+                                    for f in [
+                                        ReadFunction::ReadCoils,
+                                        ReadFunction::ReadDiscreteInputs,
+                                        ReadFunction::ReadHoldingRegisters,
+                                        ReadFunction::ReadInputRegisters,
+                                    ] {
+                                        ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                                    }
+                                });
+                            ui.end_row();
+                            ui.label("起址");
+                            let mut a = pu.addr as u32;
+                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                            pu.addr = a as u16;
+                            ui.end_row();
+                            ui.label("数量");
+                            let mut q = pu.qty as u32;
+                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                            pu.qty = q as u16;
+                            ui.end_row();
+                            ui.label("间隔 (ms)");
+                            ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    let is_connected = s.state == MasterState::Connected;
+                    ui.horizontal(|ui| {
+                        if pu.enabled {
+                            if uikit::danger_button(ui, flavor, "停止轮询").clicked() {
+                                do_stop_poll_id = Some(id.clone());
+                            }
+                            uikit::status_pill(ui, "运行中", theme::success(flavor));
+                        } else {
+                            ui.add_enabled_ui(is_connected, |ui| {
+                                if uikit::primary_button(ui, flavor, "开始轮询").clicked() {
+                                    do_start_poll_id = Some(id.clone());
                                 }
                             });
-                        ui.label("起址");
-                        let mut a = pu.addr as u32;
-                        ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                        pu.addr = a as u16;
-                        ui.end_row();
-
-                        ui.label("数量");
-                        let mut q = pu.qty as u32;
-                        ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                        pu.qty = q as u16;
-                        ui.label("间隔 (ms)");
-                        ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
-                        ui.end_row();
-                    });
-                ui.horizontal(|ui| {
-                    let is_connected = s.state == MasterState::Connected;
-                    if pu.enabled {
-                        if ui.button("停止轮询").clicked() {
-                            do_stop_poll_id = Some(id.clone());
                         }
-                    } else if ui
-                        .add_enabled(is_connected, egui::Button::new("开始轮询"))
-                        .clicked()
-                    {
-                        do_start_poll_id = Some(id.clone());
-                    }
-                    if let Some(t) = pu.last_update {
-                        let ms = t.elapsed().as_millis();
-                        ui.label(format!("上次更新: {} ms 前", ms));
-                    }
-                    if let Some(err) = &pu.last_error {
-                        ui.colored_label(egui::Color32::RED, err);
-                    }
-                });
-            });
+                        if let Some(t) = pu.last_update {
+                            uikit::caption(
+                                ui,
+                                flavor,
+                                format!("· {} ms 前更新", t.elapsed().as_millis()),
+                            );
+                        }
+                        if let Some(err) = &pu.last_error {
+                            ui.colored_label(theme::danger(flavor), err);
+                        }
+                    });
+                }
+            }
 
-            ui.separator();
-
-            // Latest poll result (fallback to single-read result if no poll).
-            let show_result = pu.latest.clone().or_else(|| self.read_result.clone());
+            // Result section — always shown if there's any result, below the tab pane
+            let poll_latest = self.polling.get(&id).and_then(|p| p.latest.clone());
+            let poll_addr = self.polling.get(&id).map(|p| p.addr).unwrap_or(0);
+            let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
-                ui.strong(if pu.latest.is_some() { "轮询结果" } else { "读取结果" });
-                let base = if pu.latest.is_some() { pu.addr } else { self.read_addr };
+                ui.add_space(12.0);
+                ui.separator();
+                let title = if poll_latest.is_some() { "轮询结果" } else { "读取结果" };
+                let base = if poll_latest.is_some() { poll_addr } else { self.read_addr };
+                ui.label(egui::RichText::new(title).strong().size(12.5));
+                ui.add_space(2.0);
                 match result {
                     ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
                         render_u16_table(ui, base, vs);

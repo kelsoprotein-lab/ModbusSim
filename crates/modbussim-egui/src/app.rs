@@ -12,7 +12,10 @@ use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, Regi
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
+use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
+use modbussim_ui_shared::theme::{self, Flavor};
+use modbussim_ui_shared::ui as uikit;
 use modbussim_ui_shared::project::{
     deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
 };
@@ -246,6 +249,8 @@ pub struct SlaveApp {
     ds_add_kind: DsKind,
     ds_add_interval_ms: u64,
 
+    pub flavor: Flavor,
+
     // Register table display mode
     reg_display_mode: ValueDisplayMode,
 
@@ -285,7 +290,7 @@ pub struct AddDeviceModalState {
 }
 
 impl SlaveApp {
-    pub fn new(rt: Arc<Runtime>) -> Self {
+    pub fn new(rt: Arc<Runtime>, flavor: Flavor) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         let connections: SharedConnections = Arc::new(RwLock::new(Vec::new()));
         let data_sources: SharedSources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -365,6 +370,7 @@ impl SlaveApp {
             ds_add_addr: 0,
             ds_add_kind: DsKind::Counter,
             ds_add_interval_ms: 1000,
+            flavor,
             reg_display_mode: ValueDisplayMode::U16,
             log_state: LogPanelState::new(),
             log_cache: Vec::new(),
@@ -1706,8 +1712,11 @@ impl SlaveApp {
         let selection = self.selection.clone();
         match &selection {
             Selection::None => {
-                ui.heading("ModbusSlave — egui edition");
-                ui.label("从左侧创建或选中一个连接/设备/寄存器组。");
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.heading(format!("{}  ModbusSlave", icons::CPU));
+                    uikit::caption(ui, self.flavor, "从左侧创建或选中一个连接 / 设备 / 寄存器组。");
+                });
             }
             Selection::Connection(id) => {
                 let exists = self.conn_snapshot.iter().any(|s| &s.id == id);
@@ -1716,17 +1725,29 @@ impl SlaveApp {
                         let s = self.conn_snapshot.iter().find(|s| &s.id == id).unwrap();
                         (s.label.clone(), s.state, s.devices.len())
                     };
-                    ui.heading(label);
-                    ui.label(format!(
-                        "状态: {} · 设备数: {}",
-                        match state {
-                            ConnectionState::Running => "运行中",
-                            ConnectionState::Stopped => "已停止",
-                        },
-                        dev_count
-                    ));
+                    ui.horizontal(|ui| {
+                        ui.heading(format!("{}  {}", icons::BROADCAST, label));
+                        let (txt, color) = match state {
+                            ConnectionState::Running => (
+                                format!("{}  运行中", icons::CIRCLE),
+                                theme::success(self.flavor),
+                            ),
+                            ConnectionState::Stopped => (
+                                format!("{}  已停止", icons::PAUSE),
+                                theme::subtext(self.flavor),
+                            ),
+                        };
+                        uikit::status_pill(ui, txt, color);
+                    });
+                    uikit::caption(ui, self.flavor, format!("设备数: {}", dev_count));
                     ui.separator();
-                    if ui.button("新增从站…").clicked() {
+                    if uikit::primary_button(
+                        ui,
+                        self.flavor,
+                        format!("{}  新增从站", icons::PLUS_CIRCLE),
+                    )
+                    .clicked()
+                    {
                         self.open_add_device_modal(id.clone());
                     }
                 } else {
@@ -1756,21 +1777,34 @@ impl SlaveApp {
                                 ui.end_row();
                             });
                         ui.separator();
+                        let flavor = self.flavor;
                         ui.horizontal(|ui| {
-                            if ui.button("批量添加寄存器…").clicked() {
+                            if uikit::primary_button(
+                                ui,
+                                flavor,
+                                format!("{}  批量添加", icons::PLUS_CIRCLE),
+                            )
+                            .clicked()
+                            {
                                 self.open_batch_modal(
                                     conn_id.clone(),
                                     *slave_id,
                                     RegisterType::HoldingRegister,
                                 );
                             }
-                            if ui.button("删除此从站").clicked() {
+                            if uikit::danger_button(
+                                ui,
+                                flavor,
+                                format!("{}  删除从站", icons::TRASH),
+                            )
+                            .clicked()
+                            {
                                 self.remove_device(conn_id.clone(), *slave_id, ui.ctx().clone());
                             }
                         });
 
                         ui.separator();
-                        ui.strong("数据源");
+                        uikit::section_heading(ui, icons::GEAR, "数据源");
 
                         // Snapshot sources belonging to this device.
                         let snap: Vec<(u64, u16, RegisterType, String, u64, bool)> =
@@ -1888,11 +1922,27 @@ impl SlaveApp {
                     .find(|(rt, _)| rt == reg_type)
                     .map(|(_, l)| *l)
                     .unwrap_or("?");
+                let flavor = self.flavor;
+                let reg_icon = match reg_type {
+                    RegisterType::Coil => icons::TOGGLE_LEFT,
+                    RegisterType::DiscreteInput => icons::LIST_BULLETS,
+                    RegisterType::InputRegister => icons::DATABASE,
+                    RegisterType::HoldingRegister => icons::HARD_DRIVES,
+                };
                 ui.horizontal(|ui| {
-                    ui.heading(format!("{} · 连接 {} · 从站 {}", group_label, conn_id, slave_id));
-                    if ui.button("批量添加…").clicked() {
-                        self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
-                    }
+                    ui.heading(format!("{}  {}", reg_icon, group_label));
+                    uikit::caption(ui, flavor, format!("连接 {} · 从站 {}", conn_id, slave_id));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if uikit::primary_button(
+                            ui,
+                            flavor,
+                            format!("{}  批量添加", icons::PLUS_CIRCLE),
+                        )
+                        .clicked()
+                        {
+                            self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
+                        }
+                    });
                 });
                 ui.separator();
 
@@ -2157,6 +2207,10 @@ impl SlaveApp {
 }
 
 impl eframe::App for SlaveApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "flavor", &self.flavor);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events();
         self.refresh_reg_view();
@@ -2181,13 +2235,12 @@ impl eframe::App for SlaveApp {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("深色主题").clicked() {
-                        ctx.set_visuals(egui::Visuals::dark());
-                        ui.close_menu();
-                    }
-                    if ui.button("浅色主题").clicked() {
-                        ctx.set_visuals(egui::Visuals::light());
-                        ui.close_menu();
+                    ui.label("主题 (Catppuccin)");
+                    for f in [Flavor::Mocha, Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
+                        if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
+                            theme::apply(ctx, self.flavor);
+                            ui.close_menu();
+                        }
                     }
                     ui.separator();
                     let zoom = ctx.zoom_factor();

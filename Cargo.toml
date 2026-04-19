@@ -15,6 +15,8 @@ egui = "0.29"
 egui_extras = { version = "0.29", features = ["default"] }
 egui-modal = "0.5"
 egui-toast = "0.15"
+catppuccin-egui = { version = "5", default-features = false, features = ["egui29"] }
+egui-phosphor = "0.7"
 arc-swap = "1"
 crossbeam-channel = "0.5"
 rfd = "0.15"

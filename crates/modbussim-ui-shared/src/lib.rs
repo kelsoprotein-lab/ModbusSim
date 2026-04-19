@@ -8,3 +8,8 @@ pub mod fonts;
 pub mod format;
 pub mod log_panel;
 pub mod project;
+pub mod theme;
+pub mod ui;
+
+/// Phosphor icon constants (re-export for convenience).
+pub use egui_phosphor::regular as icons;
