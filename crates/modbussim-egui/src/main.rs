@@ -18,6 +18,17 @@ fn parse_auto_tcp() -> Option<(String, u16)> {
     None
 }
 
+/// `--auto-counter <addr>` for dev smoke-tests: seed a counter data source at addr.
+fn parse_auto_counter() -> Option<u16> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--auto-counter" {
+            return args.next()?.parse().ok();
+        }
+    }
+    None
+}
+
 fn main() -> eframe::Result<()> {
     env_logger::init();
 
@@ -29,6 +40,7 @@ fn main() -> eframe::Result<()> {
     );
 
     let auto_tcp = parse_auto_tcp();
+    let auto_counter_addr = parse_auto_counter();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -46,6 +58,9 @@ fn main() -> eframe::Result<()> {
             let mut app = app::SlaveApp::new(rt.clone());
             if let Some((host, port)) = auto_tcp.clone() {
                 app.auto_start_tcp(host, port);
+                if let Some(addr) = auto_counter_addr {
+                    app.auto_add_counter(addr);
+                }
             }
             Ok(Box::new(app))
         }),

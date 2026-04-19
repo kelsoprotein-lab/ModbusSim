@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
+use modbussim_core::data_source::{DataSource, DataSourceConfig, DataSourceState};
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, RegisterType};
@@ -30,6 +31,77 @@ pub struct SlaveConnectionEntry {
 }
 
 pub type SharedConnections = Arc<RwLock<Vec<SlaveConnectionEntry>>>;
+
+/// One active data-source binding: periodically writes next_value() into a
+/// specific register address of a specific device.
+pub struct ActiveSource {
+    pub id: u64,
+    pub conn_id: String,
+    pub slave_id: u8,
+    pub reg_type: RegisterType, // FC03 / FC04 only (we don't drive coils here)
+    pub addr: u16,
+    pub enabled: bool,
+    pub state: DataSourceState,
+    pub last_output: Option<Instant>,
+}
+
+pub type SharedSources = Arc<tokio::sync::Mutex<Vec<ActiveSource>>>;
+
+/// Minimal "kind" dropdown for the quick-add form; each kind maps to a
+/// DataSource variant with sensible defaults.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DsKind {
+    Counter,
+    Sine,
+    Random,
+    Fixed,
+}
+
+impl DsKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DsKind::Counter => "计数器 (+1)",
+            DsKind::Sine => "正弦波",
+            DsKind::Random => "随机 U16",
+            DsKind::Fixed => "固定值",
+        }
+    }
+
+    pub fn default_source(&self) -> DataSource {
+        match self {
+            DsKind::Counter => DataSource::Counter {
+                start: 0,
+                step: 1,
+                wrap: true,
+            },
+            DsKind::Sine => DataSource::Sine {
+                amplitude: 10000.0,
+                frequency: 0.5,
+                offset: 32768.0,
+                phase: 0.0,
+            },
+            DsKind::Random => DataSource::Random {
+                min: 0,
+                max: 65535,
+            },
+            DsKind::Fixed => DataSource::Fixed { value: 42 },
+        }
+    }
+}
+
+fn source_short_desc(s: &DataSource) -> String {
+    match s {
+        DataSource::Fixed { value } => format!("Fixed={}", value),
+        DataSource::Random { min, max } => format!("Rand[{}..{}]", min, max),
+        DataSource::Sine { amplitude, frequency, offset, .. } => {
+            format!("Sine A={} f={}Hz off={}", amplitude, frequency, offset)
+        }
+        DataSource::Sawtooth { period_ms, .. } => format!("Sawtooth T={}ms", period_ms),
+        DataSource::Triangle { period_ms, .. } => format!("Triangle T={}ms", period_ms),
+        DataSource::Counter { step, wrap, .. } => format!("Counter +{} wrap={}", step, wrap),
+        DataSource::CsvPlayback { values, .. } => format!("CSV ({} pts)", values.len()),
+    }
+}
 
 /// Snapshot of register counts for a device, used when rendering the tree.
 #[derive(Clone, Default)]
@@ -139,6 +211,8 @@ pub struct RegViewCache {
 pub struct SlaveApp {
     rt: Arc<Runtime>,
     connections: SharedConnections,
+    data_sources: SharedSources,
+    next_source_id: Arc<AtomicU64>,
     events_tx: crossbeam_channel::Sender<UiEvent>,
     events_rx: crossbeam_channel::Receiver<UiEvent>,
 
@@ -166,6 +240,11 @@ pub struct SlaveApp {
     // Inline edit buffer: keyed by (reg_type, addr); implicitly bound to the
     // currently-selected (conn_id, slave_id) — cleared whenever selection moves.
     pending_edits: HashMap<(RegisterType, u16), i32>,
+
+    // Data source "add" form
+    ds_add_addr: u32,
+    ds_add_kind: DsKind,
+    ds_add_interval_ms: u64,
 
     // Register table display mode
     reg_display_mode: ValueDisplayMode,
@@ -208,9 +287,65 @@ pub struct AddDeviceModalState {
 impl SlaveApp {
     pub fn new(rt: Arc<Runtime>) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
+        let connections: SharedConnections = Arc::new(RwLock::new(Vec::new()));
+        let data_sources: SharedSources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+        // Background runner: every 50 ms, iterate active sources and write
+        // their next_value into the target device's RegisterMap when due.
+        {
+            let connections = connections.clone();
+            let sources = data_sources.clone();
+            rt.spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let mut srcs = sources.lock().await;
+                    if srcs.is_empty() { continue }
+                    let now = Instant::now();
+                    // Collect writes first so we don't hold the sources lock while touching connections.
+                    let mut updates: Vec<(String, u8, RegisterType, u16, u16)> = Vec::new();
+                    for s in srcs.iter_mut() {
+                        if !s.enabled { continue }
+                        let interval = std::time::Duration::from_millis(
+                            s.state.config.update_interval_ms.max(10),
+                        );
+                        let due = match s.last_output {
+                            Some(t) => now.duration_since(t) >= interval,
+                            None => true,
+                        };
+                        if due {
+                            let v = s.state.next_value();
+                            s.last_output = Some(now);
+                            updates.push((s.conn_id.clone(), s.slave_id, s.reg_type, s.addr, v));
+                        }
+                    }
+                    drop(srcs);
+                    if updates.is_empty() { continue }
+                    let conns = connections.read().await;
+                    for (conn_id, slave_id, rtype, addr, v) in updates {
+                        let Some(entry) = conns.iter().find(|e| e.id == conn_id) else { continue };
+                        let conn = entry.connection.read().await;
+                        let mut devs = conn.devices.write().await;
+                        if let Some(dev) = devs.get_mut(&slave_id) {
+                            match rtype {
+                                RegisterType::HoldingRegister => {
+                                    dev.register_map.holding_registers.insert(addr, v);
+                                }
+                                RegisterType::InputRegister => {
+                                    dev.register_map.input_registers.insert(addr, v);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         Self {
             rt,
-            connections: Arc::new(RwLock::new(Vec::new())),
+            connections,
+            data_sources,
+            next_source_id: Arc::new(AtomicU64::new(1)),
             events_tx,
             events_rx,
             selection: Selection::None,
@@ -227,6 +362,9 @@ impl SlaveApp {
             add_device_modal: None,
             status_msg: None,
             pending_edits: HashMap::new(),
+            ds_add_addr: 0,
+            ds_add_kind: DsKind::Counter,
+            ds_add_interval_ms: 1000,
             reg_display_mode: ValueDisplayMode::U16,
             log_state: LogPanelState::new(),
             log_cache: Vec::new(),
@@ -368,6 +506,54 @@ impl SlaveApp {
             });
         });
         ctx.request_repaint();
+    }
+
+    fn add_data_source(
+        &self,
+        conn_id: String,
+        slave_id: u8,
+        reg_type: RegisterType,
+        addr: u16,
+        kind: DsKind,
+        interval_ms: u64,
+    ) {
+        let id = self.next_source_id.fetch_add(1, Ordering::Relaxed);
+        let cfg = DataSourceConfig {
+            source: kind.default_source(),
+            update_interval_ms: interval_ms.max(10),
+        };
+        let state = DataSourceState::new(cfg);
+        let sources = self.data_sources.clone();
+        self.rt.spawn(async move {
+            sources.lock().await.push(ActiveSource {
+                id,
+                conn_id,
+                slave_id,
+                reg_type,
+                addr,
+                enabled: true,
+                state,
+                last_output: None,
+            });
+        });
+    }
+
+    fn toggle_data_source(&self, id: u64) {
+        let sources = self.data_sources.clone();
+        self.rt.spawn(async move {
+            let mut g = sources.lock().await;
+            if let Some(s) = g.iter_mut().find(|s| s.id == id) {
+                s.enabled = !s.enabled;
+                s.last_output = None; // immediate output after re-enable
+            }
+        });
+    }
+
+    fn remove_data_source(&self, id: u64) {
+        let sources = self.data_sources.clone();
+        self.rt.spawn(async move {
+            sources.lock().await.retain(|s| s.id != id);
+        });
     }
 
     fn open_add_device_modal(&mut self, conn_id: String) {
@@ -708,6 +894,33 @@ impl SlaveApp {
         let (id, label) = self.allocate_connection();
         self.spawn_create_tcp(id, label, host, port);
         ctx.request_repaint();
+    }
+
+    /// Attach a counter data source to the first auto-created slave (slave_id=1)
+    /// at the given holding register address. Useful for smoke-testing the
+    /// runner without going through the modal UI.
+    pub fn auto_add_counter(&mut self, addr: u16) {
+        // Wait 500 ms asynchronously for auto_start_tcp to register slave_1.
+        let sources = self.data_sources.clone();
+        let seq = self.next_source_id.clone();
+        self.rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let id = seq.fetch_add(1, Ordering::Relaxed);
+            let cfg = DataSourceConfig {
+                source: DsKind::Counter.default_source(),
+                update_interval_ms: 200,
+            };
+            sources.lock().await.push(ActiveSource {
+                id,
+                conn_id: "slave_1".to_string(),
+                slave_id: 1,
+                reg_type: RegisterType::HoldingRegister,
+                addr,
+                enabled: true,
+                state: DataSourceState::new(cfg),
+                last_output: None,
+            });
+        });
     }
 
     /// Create+start immediately (invoked by `--auto-tcp` CLI arg).
@@ -1555,6 +1768,114 @@ impl SlaveApp {
                                 self.remove_device(conn_id.clone(), *slave_id, ui.ctx().clone());
                             }
                         });
+
+                        ui.separator();
+                        ui.strong("数据源");
+
+                        // Snapshot sources belonging to this device.
+                        let snap: Vec<(u64, u16, RegisterType, String, u64, bool)> =
+                            match self.data_sources.try_lock() {
+                                Ok(g) => g
+                                    .iter()
+                                    .filter(|s| s.conn_id == *conn_id && s.slave_id == *slave_id)
+                                    .map(|s| {
+                                        (
+                                            s.id,
+                                            s.addr,
+                                            s.reg_type,
+                                            source_short_desc(&s.state.config.source),
+                                            s.state.config.update_interval_ms,
+                                            s.enabled,
+                                        )
+                                    })
+                                    .collect(),
+                                Err(_) => Vec::new(),
+                            };
+
+                        let mut toggle_id: Option<u64> = None;
+                        let mut remove_id: Option<u64> = None;
+                        if snap.is_empty() {
+                            ui.label("（无）");
+                        } else {
+                            egui::Grid::new("ds_list")
+                                .num_columns(6)
+                                .spacing([10.0, 4.0])
+                                .striped(true)
+                                .show(ui, |ui| {
+                                    ui.strong("类型区");
+                                    ui.strong("地址");
+                                    ui.strong("源");
+                                    ui.strong("间隔 (ms)");
+                                    ui.strong("启用");
+                                    ui.strong("");
+                                    ui.end_row();
+                                    for (sid, addr, rt, desc, ivl, en) in &snap {
+                                        ui.monospace(match rt {
+                                            RegisterType::HoldingRegister => "FC03",
+                                            RegisterType::InputRegister => "FC04",
+                                            _ => "?",
+                                        });
+                                        ui.monospace(format!("{}", addr));
+                                        ui.label(desc);
+                                        ui.monospace(format!("{}", ivl));
+                                        let mut en_mut = *en;
+                                        if ui.checkbox(&mut en_mut, "").clicked() {
+                                            toggle_id = Some(*sid);
+                                        }
+                                        if ui.small_button("删除").clicked() {
+                                            remove_id = Some(*sid);
+                                        }
+                                        ui.end_row();
+                                    }
+                                });
+                        }
+
+                        let mut do_add = false;
+                        ui.horizontal(|ui| {
+                            ui.label("+");
+                            ui.add(
+                                egui::DragValue::new(&mut self.ds_add_addr)
+                                    .range(0..=65535)
+                                    .prefix("地址 "),
+                            );
+                            egui::ComboBox::from_id_salt("ds_kind")
+                                .selected_text(self.ds_add_kind.label())
+                                .show_ui(ui, |ui| {
+                                    for k in [
+                                        DsKind::Counter,
+                                        DsKind::Sine,
+                                        DsKind::Random,
+                                        DsKind::Fixed,
+                                    ] {
+                                        ui.selectable_value(&mut self.ds_add_kind, k, k.label());
+                                    }
+                                });
+                            ui.add(
+                                egui::DragValue::new(&mut self.ds_add_interval_ms)
+                                    .range(50..=60_000)
+                                    .suffix(" ms"),
+                            );
+                            if ui.button("添加到 FC03").clicked() {
+                                do_add = true;
+                            }
+                        });
+
+                        if let Some(sid) = toggle_id {
+                            self.toggle_data_source(sid);
+                        }
+                        if let Some(sid) = remove_id {
+                            self.remove_data_source(sid);
+                        }
+                        if do_add {
+                            self.add_data_source(
+                                conn_id.clone(),
+                                *slave_id,
+                                RegisterType::HoldingRegister,
+                                self.ds_add_addr as u16,
+                                self.ds_add_kind,
+                                self.ds_add_interval_ms,
+                            );
+                        }
                     }
                     None => {
                         ui.label("设备不存在。");
