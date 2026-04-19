@@ -6,11 +6,12 @@ use std::time::Instant;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::log_entry::{Direction, LogEntry};
+use modbussim_core::log_entry::LogEntry;
 use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
 };
 use modbussim_core::transport::Transport;
+use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
     deserialize_master, serialize_master, MasterConnectionSave, MasterProject, PollSave, TcpSpec,
 };
@@ -114,13 +115,10 @@ pub struct MasterApp {
     polling: HashMap<String, PollUi>,
 
     // Log panel
-    log_panel_open: bool,
+    log_state: LogPanelState,
     log_cache: Vec<LogEntry>,
     log_cache_conn_id: Option<String>,
     log_last_refresh: Option<Instant>,
-    log_show_rx: bool,
-    log_show_tx: bool,
-    log_filter_text: String,
 
     last_error: Option<String>,
     status_msg: Option<String>,
@@ -149,13 +147,10 @@ impl MasterApp {
             write_value: 0,
             write_is_coil: false,
             polling: HashMap::new(),
-            log_panel_open: true,
+            log_state: LogPanelState::new(),
             log_cache: Vec::new(),
             log_cache_conn_id: None,
             log_last_refresh: None,
-            log_show_rx: true,
-            log_show_tx: true,
-            log_filter_text: String::new(),
             last_error: None,
             status_msg: None,
         }
@@ -716,7 +711,7 @@ impl eframe::App for MasterApp {
                     }
                 });
                 ui.menu_button("视图", |ui| {
-                    ui.checkbox(&mut self.log_panel_open, "显示日志面板");
+                    ui.checkbox(&mut self.log_state.open, "显示日志面板");
                     ui.separator();
                     if ui.button("深色主题").clicked() {
                         ctx.set_visuals(egui::Visuals::dark());
@@ -1077,74 +1072,65 @@ impl eframe::App for MasterApp {
 
 impl MasterApp {
     fn render_log_panel(&mut self, ctx: &egui::Context) {
-        if !self.log_panel_open { return; }
-        egui::TopBottomPanel::bottom("master_log_panel")
-            .resizable(true)
-            .default_height(200.0)
-            .min_height(80.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("通信日志");
-                    if let Some(id) = &self.log_cache_conn_id {
-                        ui.label(format!("· {} ({} 条)", id, self.log_cache.len()));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.log_show_rx, "RX");
-                    ui.checkbox(&mut self.log_show_tx, "TX");
-                    ui.label("过滤");
-                    ui.text_edit_singleline(&mut self.log_filter_text);
-                });
-                ui.separator();
+        let action = log_panel::render(
+            ctx,
+            &mut self.log_state,
+            &self.log_cache,
+            self.log_cache_conn_id.as_deref(),
+        );
+        match action {
+            LogPanelAction::Clear => self.clear_logs_for_selection(),
+            LogPanelAction::Export => self.export_logs_for_selection(ctx.clone()),
+            LogPanelAction::Close => self.log_state.open = false,
+            LogPanelAction::None => {}
+        }
+    }
 
-                let q = self.log_filter_text.to_lowercase();
-                let show_rx = self.log_show_rx;
-                let show_tx = self.log_show_tx;
-                let entries: Vec<&LogEntry> = self
-                    .log_cache
-                    .iter()
-                    .rev()
-                    .filter(|e| match e.direction {
-                        Direction::Rx if !show_rx => false,
-                        Direction::Tx if !show_tx => false,
-                        _ => q.is_empty()
-                            || e.detail.to_lowercase().contains(&q)
-                            || e.function_code.name().to_lowercase().contains(&q),
-                    })
-                    .collect();
+    fn clear_logs_for_selection(&self) {
+        let Some(id) = self.selected.clone() else { return };
+        let connections = self.connections.clone();
+        self.rt.spawn(async move {
+            let entries = connections.read().await;
+            if let Some(entry) = entries.iter().find(|e| e.id == id) {
+                entry.log_collector.clear().await;
+            }
+        });
+    }
 
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::exact(150.0))
-                    .column(Column::exact(40.0))
-                    .column(Column::exact(60.0))
-                    .column(Column::remainder())
-                    .header(20.0, |mut h| {
-                        h.col(|ui| { ui.strong("时间"); });
-                        h.col(|ui| { ui.strong("方向"); });
-                        h.col(|ui| { ui.strong("FC"); });
-                        h.col(|ui| { ui.strong("详情"); });
-                    })
-                    .body(|body| {
-                        body.rows(18.0, entries.len(), |mut row| {
-                            let e = entries[row.index()];
-                            row.col(|ui| {
-                                ui.monospace(e.timestamp.format("%H:%M:%S%.3f").to_string());
-                            });
-                            row.col(|ui| {
-                                let (t, c) = match e.direction {
-                                    Direction::Rx => ("RX", egui::Color32::from_rgb(80, 160, 255)),
-                                    Direction::Tx => ("TX", egui::Color32::from_rgb(255, 160, 80)),
-                                };
-                                ui.colored_label(c, t);
-                            });
-                            row.col(|ui| { ui.monospace(e.function_code.name()); });
-                            row.col(|ui| { ui.monospace(&e.detail); });
-                        });
-                    });
-            });
+    fn export_logs_for_selection(&mut self, ctx: egui::Context) {
+        let Some(id) = self.selected.clone() else { return };
+        let connections = self.connections.clone();
+        let tx = self.events_tx.clone();
+        self.rt.spawn(async move {
+            let entries = connections.read().await;
+            let Some(entry) = entries.iter().find(|e| e.id == id) else {
+                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                return;
+            };
+            let csv = entry.log_collector.export_csv().await;
+            drop(entries);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let Some(path) = rfd::AsyncFileDialog::new()
+                .set_file_name(&format!("master_log_{}_{}.csv", id, ts))
+                .add_filter("CSV", &["csv"])
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            match tokio::fs::write(path.path(), csv).await {
+                Ok(()) => {
+                    let _ = tx.send(UiEvent::Info(format!("日志已导出：{}", path.path().display())));
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
+                }
+            }
+        });
+        ctx.request_repaint();
     }
 }
 

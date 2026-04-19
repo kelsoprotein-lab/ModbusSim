@@ -6,11 +6,12 @@ use std::time::Instant;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::log_entry::{Direction, LogEntry};
+use modbussim_core::log_entry::LogEntry;
 use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
+use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
     deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
 };
@@ -170,45 +171,10 @@ pub struct SlaveApp {
     reg_display_mode: ValueDisplayMode,
 
     // Log panel
-    log_panel_open: bool,
+    log_state: LogPanelState,
     log_cache: Vec<LogEntry>,
     log_cache_conn_id: Option<String>,
     log_last_refresh: Option<Instant>,
-    log_filter: LogFilter,
-}
-
-#[derive(Default)]
-pub struct LogFilter {
-    pub text: String,
-    pub show_rx: bool,
-    pub show_tx: bool,
-}
-
-impl LogFilter {
-    pub fn new() -> Self {
-        Self {
-            text: String::new(),
-            show_rx: true,
-            show_tx: true,
-        }
-    }
-
-    pub fn accepts(&self, entry: &LogEntry) -> bool {
-        match entry.direction {
-            Direction::Rx if !self.show_rx => return false,
-            Direction::Tx if !self.show_tx => return false,
-            _ => {}
-        }
-        if !self.text.is_empty() {
-            let q = self.text.to_lowercase();
-            if !entry.detail.to_lowercase().contains(&q)
-                && !entry.function_code.name().to_lowercase().contains(&q)
-            {
-                return false;
-            }
-        }
-        true
-    }
 }
 
 pub struct BatchModalState {
@@ -262,11 +228,10 @@ impl SlaveApp {
             status_msg: None,
             pending_edits: HashMap::new(),
             reg_display_mode: ValueDisplayMode::U16,
-            log_panel_open: true,
+            log_state: LogPanelState::new(),
             log_cache: Vec::new(),
             log_cache_conn_id: None,
             log_last_refresh: None,
-            log_filter: LogFilter::new(),
         }
     }
 
@@ -1855,100 +1820,17 @@ impl SlaveApp {
 
 impl SlaveApp {
     fn render_log_panel(&mut self, ctx: &egui::Context) {
-        if !self.log_panel_open { return; }
-
-        enum LogAction {
-            Clear,
-            Export,
-            Close,
-        }
-        let mut action: Option<LogAction> = None;
-
-        egui::TopBottomPanel::bottom("log_panel")
-            .resizable(true)
-            .default_height(220.0)
-            .min_height(80.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("通信日志");
-                    if let Some(id) = &self.log_cache_conn_id {
-                        ui.label(format!("· 连接 {}", id));
-                        ui.label(format!("({} 条)", self.log_cache.len()));
-                    } else {
-                        ui.label("（选中连接以查看）");
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").on_hover_text("关闭日志面板").clicked() {
-                            action = Some(LogAction::Close);
-                        }
-                        if ui.small_button("导出 CSV").clicked() {
-                            action = Some(LogAction::Export);
-                        }
-                        if ui.small_button("清空").clicked() {
-                            action = Some(LogAction::Clear);
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.log_filter.show_rx, "RX");
-                    ui.checkbox(&mut self.log_filter.show_tx, "TX");
-                    ui.label("过滤");
-                    ui.text_edit_singleline(&mut self.log_filter.text);
-                });
-                ui.separator();
-
-                let filter = &self.log_filter;
-                let entries: Vec<&LogEntry> = self
-                    .log_cache
-                    .iter()
-                    .rev()
-                    .filter(|e| filter.accepts(e))
-                    .collect();
-
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::exact(150.0))
-                    .column(Column::exact(40.0))
-                    .column(Column::exact(60.0))
-                    .column(Column::remainder())
-                    .header(20.0, |mut h| {
-                        h.col(|ui| { ui.strong("时间"); });
-                        h.col(|ui| { ui.strong("方向"); });
-                        h.col(|ui| { ui.strong("FC"); });
-                        h.col(|ui| { ui.strong("详情"); });
-                    })
-                    .body(|body| {
-                        body.rows(18.0, entries.len(), |mut row| {
-                            let e = entries[row.index()];
-                            row.col(|ui| {
-                                ui.monospace(
-                                    e.timestamp.format("%H:%M:%S%.3f").to_string(),
-                                );
-                            });
-                            row.col(|ui| {
-                                let (text, color) = match e.direction {
-                                    Direction::Rx => ("RX", egui::Color32::from_rgb(80, 160, 255)),
-                                    Direction::Tx => ("TX", egui::Color32::from_rgb(255, 160, 80)),
-                                };
-                                ui.colored_label(color, text);
-                            });
-                            row.col(|ui| {
-                                ui.monospace(e.function_code.name());
-                            });
-                            row.col(|ui| {
-                                ui.monospace(&e.detail);
-                            });
-                        });
-                    });
-            });
-
+        let action = log_panel::render(
+            ctx,
+            &mut self.log_state,
+            &self.log_cache,
+            self.log_cache_conn_id.as_deref(),
+        );
         match action {
-            Some(LogAction::Clear) => self.clear_logs_for_selection(),
-            Some(LogAction::Export) => self.export_logs_for_selection(ctx.clone()),
-            Some(LogAction::Close) => self.log_panel_open = false,
-            None => {}
+            LogPanelAction::Clear => self.clear_logs_for_selection(),
+            LogPanelAction::Export => self.export_logs_for_selection(ctx.clone()),
+            LogPanelAction::Close => self.log_state.open = false,
+            LogPanelAction::None => {}
         }
     }
 }
@@ -1974,7 +1856,7 @@ impl eframe::App for SlaveApp {
                     }
                 });
                 ui.menu_button("视图", |ui| {
-                    if ui.checkbox(&mut self.log_panel_open, "显示日志面板").clicked() {
+                    if ui.checkbox(&mut self.log_state.open, "显示日志面板").clicked() {
                         ui.close_menu();
                     }
                     ui.separator();

@@ -6,4 +6,5 @@
 
 pub mod fonts;
 pub mod format;
+pub mod log_panel;
 pub mod project;
