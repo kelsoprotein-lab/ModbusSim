@@ -67,9 +67,11 @@ pub fn render(
 
     egui::TopBottomPanel::bottom("shared_log_panel")
         .resizable(true)
-        .default_height(220.0)
-        .min_height(80.0)
+        .default_height(240.0)
+        .min_height(90.0)
+        .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(10.0, 8.0)))
         .show(ctx, |ui| {
+            crate::ui::card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("通信日志");
                 if let Some(label) = conn_label {
@@ -131,6 +133,7 @@ pub fn render(
                         row.col(|ui| { ui.monospace(&e.detail); });
                     });
                 });
+            }); // end card
         });
 
     action

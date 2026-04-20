@@ -79,18 +79,18 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     text: rgb(204, 204, 204),      // #cccccc
     subtext1: rgb(170, 170, 170),
     subtext0: rgb(133, 133, 133),   // #858585
-    // Borders / strokes
-    overlay2: rgb(80, 80, 80),
-    overlay1: rgb(70, 70, 70),
-    overlay0: rgb(60, 60, 60),      // #3c3c3c (input bg too)
-    // Surfaces
-    surface2: rgb(55, 55, 55),
-    surface1: rgb(45, 45, 48),      // #2d2d30
-    surface0: rgb(37, 37, 38),      // #252526 (sidebar/panel)
-    // Backgrounds
-    base: rgb(30, 30, 30),          // #1e1e1e (editor)
-    mantle: rgb(37, 37, 38),        // #252526 (panels)
-    crust: rgb(51, 51, 51),         // #333333 (activity bar)
+    // Borders / strokes (slightly cooler)
+    overlay2: rgb(74, 78, 88),
+    overlay1: rgb(56, 60, 70),
+    overlay0: rgb(42, 46, 54),       // #2a2e36 — card stroke
+    // Surfaces — cards sit one step above base
+    surface2: rgb(55, 59, 70),
+    surface1: rgb(45, 49, 60),
+    surface0: rgb(37, 41, 50),       // #252932 — card fill
+    // Backgrounds — deeper than VS Code default so cards stand out
+    base: rgb(22, 24, 28),           // #16181c (central panel)
+    mantle: rgb(28, 31, 38),         // #1c1f26 (side panels)
+    crust: rgb(15, 17, 21),          // #0f1115 (darkest)
 };
 
 pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {

@@ -975,19 +975,22 @@ impl eframe::App for MasterApp {
                 ui.label("连接已不存在。");
                 return;
             };
-            // Compact header: address + status pill in one line
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&s.label).strong().size(13.5));
-                let (txt, color) = match s.state {
-                    MasterState::Connected => ("已连接", theme::success(flavor)),
-                    MasterState::Disconnected => ("未连接", theme::subtext(flavor)),
-                    MasterState::Reconnecting => ("重连中", theme::accent(flavor)),
-                    MasterState::Error => ("错误", theme::danger(flavor)),
-                };
-                uikit::status_pill(ui, txt, color);
+            // Header card: address + status pill, with accent stripe
+            uikit::accent_card(ui, flavor, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&s.label).strong().size(13.5));
+                    let (txt, color) = match s.state {
+                        MasterState::Connected => ("已连接", theme::success(flavor)),
+                        MasterState::Disconnected => ("未连接", theme::subtext(flavor)),
+                        MasterState::Reconnecting => ("重连中", theme::accent(flavor)),
+                        MasterState::Error => ("错误", theme::danger(flavor)),
+                    };
+                    uikit::status_pill(ui, txt, color);
+                });
             });
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
+            uikit::card(ui, |ui| {
             // Tab bar: Read / Write / Poll
             ui.horizontal(|ui| {
                 for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
@@ -1008,7 +1011,6 @@ impl eframe::App for MasterApp {
                 }
             });
             ui.separator();
-            ui.add_space(4.0);
 
             // Tab content
             match self.active_tab {
@@ -1226,6 +1228,8 @@ impl eframe::App for MasterApp {
                     });
                 }
             }
+            }); // end tab card
+            ui.add_space(6.0);
 
             // Result section — shows selected group's latest, or one-shot read result.
             let sel = *self.selected_group.get(&id).unwrap_or(&0);
@@ -1237,12 +1241,11 @@ impl eframe::App for MasterApp {
                 .unwrap_or((None, 0));
             let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
-                ui.add_space(12.0);
-                ui.separator();
+                uikit::card(ui, |ui| {
                 let title = if poll_latest.is_some() { "轮询结果" } else { "读取结果" };
                 let base = if poll_latest.is_some() { poll_addr } else { self.read_addr };
                 ui.label(egui::RichText::new(title).strong().size(12.5));
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 match result {
                     ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
                         render_u16_table(ui, base, vs);
@@ -1251,6 +1254,7 @@ impl eframe::App for MasterApp {
                         render_bool_table(ui, base, bs);
                     }
                 }
+                }); // end result card
             }
         });
 

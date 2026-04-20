@@ -1937,22 +1937,30 @@ impl SlaveApp {
                     RegisterType::InputRegister => icons::DATABASE,
                     RegisterType::HoldingRegister => icons::HARD_DRIVES,
                 };
-                ui.horizontal(|ui| {
-                    ui.heading(format!("{}  {}", reg_icon, group_label));
-                    uikit::caption(ui, flavor, format!("连接 {} · 从站 {}", conn_id, slave_id));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if uikit::primary_button(
-                            ui,
-                            flavor,
-                            format!("{}  批量添加", icons::PLUS_CIRCLE),
-                        )
-                        .clicked()
-                        {
-                            self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
-                        }
+                let mut open_batch = false;
+                uikit::accent_card(ui, flavor, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading(format!("{}  {}", reg_icon, group_label));
+                        uikit::caption(ui, flavor, format!("连接 {} · 从站 {}", conn_id, slave_id));
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if uikit::primary_button(
+                                    ui,
+                                    flavor,
+                                    format!("{}  批量添加", icons::PLUS_CIRCLE),
+                                )
+                                .clicked()
+                                {
+                                    open_batch = true;
+                                }
+                            },
+                        );
                     });
                 });
-                ui.separator();
+                if open_batch {
+                    self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
+                }
 
                 let Some(view) = &self.reg_view else {
                     ui.label("正在加载…（或未选中有效组）");
@@ -1995,7 +2003,6 @@ impl SlaveApp {
                 if !is_bool && mode.is_multi_word() {
                     ui.label("多字格式 · 只读显示；要编辑请切回 U16");
                 }
-                ui.separator();
 
                 let row_h = 20.0;
                 let reg_type_v = *reg_type;
@@ -2019,6 +2026,7 @@ impl SlaveApp {
                     .size(Size::remainder().at_least(260.0))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
+                            uikit::card(ui, |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let pair_rows = view.row_count / stride;
@@ -2212,9 +2220,11 @@ impl SlaveApp {
                         });
                 }
 
+                            }); // end left card
                         }); // end StripBuilder left cell
-                        strip.cell(|ui| { ui.separator(); });
+                        strip.cell(|_ui| { });
                         strip.cell(|ui| {
+                            uikit::card(ui, |ui| {
                             let mut selected_vals: Vec<u16> = Vec::new();
                             let mut base: Option<u16> = None;
                             // Only take up to 4 selected, in address order, and
@@ -2239,6 +2249,7 @@ impl SlaveApp {
                                     writes.push(w);
                                 }
                             }
+                            }); // end right card
                         });
                     }); // end StripBuilder horizontal
 

@@ -7,18 +7,64 @@ use egui::{Color32, Response, RichText, Ui};
 
 use crate::theme::Flavor;
 
-/// Render content inside a rounded "card" frame using the flavor's surface0
-/// color. Thin 1px border, 10px padding, 4px radius.
+/// Rounded "card" frame that visually lifts its content above the panel
+/// background. Surface0 fill + visible stroke + soft shadow + 8px corners.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let frame = egui::Frame::none()
-        .fill(ui.visuals().extreme_bg_color) // already surface0-ish on dark themes
-        .rounding(4.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-        .stroke(egui::Stroke::new(
-            1.0,
-            ui.visuals().widgets.noninteractive.bg_stroke.color,
-        ));
-    frame.show(ui, add).inner
+    // Surface0 sits one step above the panel base color.
+    let fill = ui.visuals().widgets.inactive.bg_fill;
+    let stroke_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
+    let shadow = egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 2.0),
+        blur: 10.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(80),
+    };
+    egui::Frame::none()
+        .fill(fill)
+        .rounding(8.0)
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .stroke(egui::Stroke::new(1.0, stroke_color))
+        .shadow(shadow)
+        .show(ui, add)
+        .inner
+}
+
+/// Card variant with a 3px accent stripe along the left edge — useful for
+/// highlighting the primary action card on a page.
+pub fn accent_card<R>(
+    ui: &mut Ui,
+    flavor: Flavor,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let accent = crate::theme::accent(flavor);
+    let fill = ui.visuals().widgets.inactive.bg_fill;
+    let stroke_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
+    let shadow = egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 2.0),
+        blur: 10.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(80),
+    };
+    let resp = egui::Frame::none()
+        .fill(fill)
+        .rounding(8.0)
+        .inner_margin(egui::Margin {
+            left: 16.0,
+            right: 14.0,
+            top: 12.0,
+            bottom: 12.0,
+        })
+        .stroke(egui::Stroke::new(1.0, stroke_color))
+        .shadow(shadow)
+        .show(ui, add);
+    // Paint the 3px accent stripe on the left edge.
+    let rect = resp.response.rect;
+    let stripe = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.left() + 3.0, rect.bottom()),
+    );
+    ui.painter().rect_filled(stripe, 2.0, accent);
+    resp.inner
 }
 
 /// Primary action button: solid accent fill, white text, tight padding.
