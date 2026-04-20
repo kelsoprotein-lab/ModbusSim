@@ -40,13 +40,13 @@
 
 ## 5. Slave RegisterGroup 视图改造（视觉 + Bool 圆点）
 
-- [ ] 5.1 `Selection::RegisterGroup` 的 `accent_card` / `uikit::card` 两层嵌套改 `region(L1)` 外层 + `region(L2)` 表格区
-- [ ] 5.2 heading 行调整：左 icon + 名称 + 地址范围 + 右端留位给搜索框（本 task 先不加搜索框，Task 6 加）+ "批量添加" primary_button
-- [ ] 5.3 ValuePanel 侧栏改 `region(L1)` 外层，内部 Grid 不动
-- [ ] 5.4 Bool 列（FC01 / FC02）自绘：`ui.allocate_exact_size(vec2(full_col_width, row_h), Sense::click())`；`painter.circle_filled(center, 4.0, success_or_subtext)` + `painter.text(..., "ON"|"OFF", font, color)`；命中 `resp.clicked()` 翻转并写回
-- [ ] 5.5 ValuePanel 内部背景用 `bg_of(flavor, L1)`（与外层略同色，用内 padding 区分即可）；删除内部 `ui.separator()`
-- [ ] 5.6 启动目视 FC01 / FC02 圆点切换工作；FC03 / FC04 表格层级正确
-- [ ] 5.7 commit：`style(slave): RegisterGroup 去 card + Bool 列自绘圆点 ON/OFF`
+- [x] 5.1 `Selection::RegisterGroup` 的 `accent_card` / `uikit::card` 两层嵌套改 `region(L1)` 外层 + `region(L2)` 表格区
+- [x] 5.2 heading 行调整：左 icon + 名称 + 地址范围 + 右端留位给搜索框（本 task 先不加搜索框，Task 6 加）+ "批量添加" primary_button
+- [x] 5.3 ValuePanel 侧栏改 `region(L1)` 外层，内部 Grid 不动
+- [x] 5.4 Bool 列（FC01 / FC02）自绘：`ui.allocate_exact_size(vec2(full_col_width, row_h), Sense::click())`；`painter.circle_filled(center, 4.0, success_or_subtext)` + `painter.text(..., "ON"|"OFF", font, color)`；命中 `resp.clicked()` 翻转并写回
+- [x] 5.5 ValuePanel 内部背景用 `bg_of(flavor, L1)`（与外层略同色，用内 padding 区分即可）；删除内部 `ui.separator()`
+- [x] 5.6 启动目视 FC01 / FC02 圆点切换工作；FC03 / FC04 表格层级正确
+- [x] 5.7 commit：`style(slave): RegisterGroup 去 card + Bool 列自绘圆点 ON/OFF`
 
 ## 6. Slave RegisterGroup 搜索功能
 

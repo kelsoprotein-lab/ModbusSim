@@ -2107,26 +2107,36 @@ impl SlaveApp {
                     RegisterType::HoldingRegister => icons::HARD_DRIVES,
                 };
                 let mut open_batch = false;
-                uikit::accent_card(ui, flavor, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading(format!("{}  {}", reg_icon, group_label));
-                        uikit::caption(ui, flavor, format!("连接 {} · 从站 {}", conn_id, slave_id));
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if uikit::primary_button(
-                                    ui,
-                                    flavor,
-                                    format!("{}  批量添加", icons::PLUS_CIRCLE),
-                                )
-                                .clicked()
-                                {
-                                    open_batch = true;
-                                }
-                            },
-                        );
-                    });
-                });
+                uikit::region(
+                    ui,
+                    flavor,
+                    theme::Layer::L1,
+                    egui::Margin::symmetric(14.0, 10.0),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading(format!("{}  {}", reg_icon, group_label));
+                            uikit::caption(
+                                ui,
+                                flavor,
+                                format!("连接 {} · 从站 {}", conn_id, slave_id),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if uikit::primary_button(
+                                        ui,
+                                        flavor,
+                                        format!("{}  批量添加", icons::PLUS_CIRCLE),
+                                    )
+                                    .clicked()
+                                    {
+                                        open_batch = true;
+                                    }
+                                },
+                            );
+                        });
+                    },
+                );
                 if open_batch {
                     self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
                 }
@@ -2195,7 +2205,7 @@ impl SlaveApp {
                     .size(Size::remainder().at_least(260.0))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            uikit::card(ui, flavor, |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0, 6.0), |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let group_rows = view.row_count / stride;
@@ -2362,33 +2372,38 @@ impl SlaveApp {
                                             .get(&key)
                                             .map(|v| *v != 0)
                                             .unwrap_or(cache_bool);
-                                        let (label, fill, fg) = if current {
+                                        // Self-drawn ○/● + ON/OFF — no Button frame.
+                                        let (glyph, label, dot_color, text_color) = if current {
                                             (
-                                                "TRUE",
+                                                "●",
+                                                "ON",
                                                 theme::success(flavor),
-                                                egui::Color32::WHITE,
+                                                egui::Color32::from_rgb(220, 223, 228),
                                             )
                                         } else {
                                             (
-                                                "FALSE",
-                                                egui::Color32::from_rgb(49, 51, 53),
-                                                egui::Color32::from_rgb(156, 160, 164),
+                                                "○",
+                                                "OFF",
+                                                egui::Color32::from_rgb(139, 143, 151),
+                                                egui::Color32::from_rgb(139, 143, 151),
                                             )
                                         };
-                                        let btn = egui::Button::new(
-                                            egui::RichText::new(label)
-                                                .color(fg)
-                                                .size(12.5)
-                                                .monospace(),
-                                        )
-                                        .fill(fill)
-                                        .stroke(egui::Stroke::new(
-                                            1.0,
-                                            egui::Color32::from_rgb(81, 86, 89),
-                                        ))
-                                        .rounding(3.0)
-                                        .min_size(egui::vec2(64.0, 22.0));
-                                        let resp = ui.add(btn);
+                                        let resp = ui
+                                            .horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                ui.add(egui::Label::new(
+                                                    egui::RichText::new(glyph)
+                                                        .color(dot_color)
+                                                        .size(13.0),
+                                                ).sense(egui::Sense::click()));
+                                                ui.add(egui::Label::new(
+                                                    egui::RichText::new(label)
+                                                        .color(text_color)
+                                                        .size(12.0)
+                                                        .monospace(),
+                                                ).sense(egui::Sense::click()))
+                                            })
+                                            .inner;
                                         if resp.clicked() {
                                             let new_val = !current;
                                             writes.push((addr, if new_val { 1 } else { 0 }));
@@ -2457,11 +2472,11 @@ impl SlaveApp {
                         });
                 }
 
-                            }); // end left card
+                            }); // end left region
                         }); // end StripBuilder left cell
                         strip.cell(|_ui| { });
                         strip.cell(|ui| {
-                            uikit::card(ui, flavor, |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0, 10.0), |ui| {
                             let mut selected_vals: Vec<u16> = Vec::new();
                             let mut base: Option<u16> = None;
                             // Only take up to 4 selected, in address order, and
@@ -2486,7 +2501,7 @@ impl SlaveApp {
                                     writes.push(w);
                                 }
                             }
-                            }); // end right card
+                            }); // end right region
                         });
                     }); // end StripBuilder horizontal
 
