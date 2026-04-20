@@ -30,13 +30,13 @@
 
 ## 4. Slave 非 RegisterGroup 三个分支改造（None / Connection / Device）
 
-- [ ] 4.1 `modbussim-egui/src/app.rs` `Selection::None` 分支的 `uikit::card` / `accent_card` 全部替换为 `region`；heading 左侧 padding 统一 16 px
-- [ ] 4.2 `Selection::Connection` 分支同样改造；"停止 / 删除"按钮改 secondary / danger
-- [ ] 4.3 `Selection::Device` 分支改造：去 `accent_card` 顶色条；"批量添加 / 删除从站"改 primary / danger；数据源列表 `ds_list` 外层改 `region(L2)`；寄存器抖动卡片（Task 5 已加）外层改 `region(L2)`
-- [ ] 4.4 删除 Slave 左侧 SidePanel 自带的 1 px 粗竖线（改 `SidePanel::left("connections").resizable(true).show_separator_line(false)`）
-- [ ] 4.5 SidePanel 内部 bg 改 `bg_of(flavor, L0)`（手动 `Frame::none().fill(L0)` 覆盖）
-- [ ] 4.6 `cargo build -p modbussim-egui` 通过；启动目视三分支一致
-- [ ] 4.7 commit：`style(slave): None / Connection / Device 视图去 card，SidePanel 去粗竖线`
+- [x] 4.1 `modbussim-egui/src/app.rs` `Selection::None` 分支的 `uikit::card` / `accent_card` 全部替换为 `region`；heading 左侧 padding 统一 16 px
+- [x] 4.2 `Selection::Connection` 分支同样改造；"停止 / 删除"按钮改 secondary / danger
+- [x] 4.3 `Selection::Device` 分支改造：去 `accent_card` 顶色条；"批量添加 / 删除从站"改 primary / danger；数据源列表 `ds_list` 外层改 `region(L2)`；寄存器抖动卡片（Task 5 已加）外层改 `region(L2)`
+- [x] 4.4 删除 Slave 左侧 SidePanel 自带的 1 px 粗竖线（改 `SidePanel::left("connections").resizable(true).show_separator_line(false)`）
+- [x] 4.5 SidePanel 内部 bg 改 `bg_of(flavor, L0)`（手动 `Frame::none().fill(L0)` 覆盖）
+- [x] 4.6 `cargo build -p modbussim-egui` 通过；启动目视三分支一致
+- [x] 4.7 commit：`style(slave): None / Connection / Device 视图去 card，SidePanel 去粗竖线`
 
 ## 5. Slave RegisterGroup 视图改造（视觉 + Bool 圆点）
 

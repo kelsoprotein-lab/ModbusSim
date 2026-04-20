@@ -1853,7 +1853,7 @@ impl SlaveApp {
                         uikit::status_pill(ui, txt, color);
                     });
                     uikit::caption(ui, self.flavor, format!("设备数: {}", dev_count));
-                    ui.separator();
+                    ui.add_space(8.0);
                     if uikit::primary_button(
                         ui,
                         self.flavor,
@@ -1889,7 +1889,7 @@ impl SlaveApp {
                                 ui.label(d.counts.holding_registers.to_string());
                                 ui.end_row();
                             });
-                        ui.separator();
+                        ui.add_space(8.0);
                         let flavor = self.flavor;
                         ui.horizontal(|ui| {
                             if uikit::primary_button(
@@ -2364,13 +2364,13 @@ impl SlaveApp {
                                             .unwrap_or(cache_bool);
                                         let (label, fill, fg) = if current {
                                             (
-                                                "1",
+                                                "TRUE",
                                                 theme::success(flavor),
                                                 egui::Color32::WHITE,
                                             )
                                         } else {
                                             (
-                                                "0",
+                                                "FALSE",
                                                 egui::Color32::from_rgb(49, 51, 53),
                                                 egui::Color32::from_rgb(156, 160, 164),
                                             )
@@ -2387,7 +2387,7 @@ impl SlaveApp {
                                             egui::Color32::from_rgb(81, 86, 89),
                                         ))
                                         .rounding(3.0)
-                                        .min_size(egui::vec2(34.0, 18.0));
+                                        .min_size(egui::vec2(64.0, 22.0));
                                         let resp = ui.add(btn);
                                         if resp.clicked() {
                                             let new_val = !current;
@@ -2613,6 +2613,12 @@ impl eframe::App for SlaveApp {
         egui::SidePanel::left("connections")
             .resizable(true)
             .default_width(320.0)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::bg_of(self.flavor, theme::Layer::L0))
+                    .inner_margin(egui::Margin::symmetric(12.0, 10.0)),
+            )
             .show(ctx, |ui| {
                 ui.heading("连接");
                 ui.separator();
@@ -2671,9 +2677,15 @@ impl eframe::App for SlaveApp {
 
         self.render_log_panel(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_main(ui);
-        });
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::bg_of(self.flavor, theme::Layer::L1))
+                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+            )
+            .show(ctx, |ui| {
+                self.render_main(ui);
+            });
 
         // Modals
         self.render_batch_modal(ctx);
