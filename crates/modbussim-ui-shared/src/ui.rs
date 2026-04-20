@@ -9,32 +9,18 @@ use egui::{Color32, Response, RichText, Ui};
 use crate::theme::{self, Flavor, Layer};
 
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
-    // Flat panel. Dark mode = Darcula tool-window fill #3c3f41 on editor
-    // #2b2b2b with #515659 stroke (same as IDE "chrome panel" contrast).
-    if flavor.is_dark() {
-        (
-            Color32::from_rgb(60, 63, 65),   // #3c3f41
-            Color32::from_rgb(81, 86, 89),   // #515659
-        )
-    } else {
-        (
-            Color32::from_rgb(255, 255, 255),
-            Color32::from_rgb(208, 208, 208),
-        )
-    }
+    // Industrial HMI: raised L2 background + subtle border. Same look in both
+    // flavors — token routing handles dark/light.
+    (theme::bg_of(flavor, Layer::L2), theme::border_subtle(flavor))
 }
 
-/// Flat bordered panel. No shadow, 2 px corner radius, 10 px padding — mimics
-/// the GroupBox / section divider used in desktop industrial tools.
-///
-/// Kept for backward compatibility; prefer `region` for new code which uses
-/// background-layer differences instead of stroke borders.
+/// Flat panel with raised bg + subtle border. Used for grouped content.
 pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let (fill, stroke_color) = card_colors(flavor);
     egui::Frame::new()
         .fill(fill)
-        .corner_radius(2.0)
-        .inner_margin(egui::Margin::symmetric(10.0 as i8, 8.0 as i8))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(14.0 as i8, 12.0 as i8))
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add)
         .inner
@@ -68,12 +54,12 @@ pub fn accent_card<R>(
     let (fill, stroke_color) = card_colors(flavor);
     let resp = egui::Frame::new()
         .fill(fill)
-        .corner_radius(2.0)
+        .corner_radius(4.0)
         .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: 10,
-            bottom: 8,
+            left: 14,
+            right: 14,
+            top: 12,
+            bottom: 10,
         })
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add);
@@ -100,31 +86,30 @@ fn shadcn_theme(flavor: Flavor) -> egui_shadcn::Theme {
         ColorPalette::shadcn_light(ShadcnBaseColor::Neutral)
     };
     if flavor.is_dark() {
-        // Darcula orange accent + Layer::L1/L2 background alignment
-        palette.primary = Color32::from_rgb(0xcc, 0x78, 0x32);
-        palette.primary_foreground = Color32::from_rgb(0x1e, 0x1e, 0x1e);
-        palette.destructive = Color32::from_rgb(0xbc, 0x3f, 0x3c);
-        palette.destructive_foreground = Color32::WHITE;
-        palette.ring = Color32::from_rgb(0xcc, 0x78, 0x32);
-        palette.border = Color32::from_rgb(0x51, 0x56, 0x59);
-        palette.background = Color32::from_rgb(0x2b, 0x2d, 0x30);
-        palette.foreground = Color32::from_rgb(0xd4, 0xd7, 0xdb);
-        palette.muted_foreground = Color32::from_rgb(0x9c, 0xa0, 0xa4);
-        palette.accent = palette.primary;
-        palette.accent_foreground = palette.primary_foreground;
-    } else {
-        // redisant industrial blue accent
-        palette.primary = Color32::from_rgb(0x3b, 0x9a, 0xe8);
+        // Industrial HMI: cool blue primary + green action accent + L1/L2 bg
+        palette.primary = Color32::from_rgb(0x3f, 0xb9, 0x50);  // 主操作绿（"+ 批量添加"）
         palette.primary_foreground = Color32::WHITE;
-        palette.destructive = Color32::from_rgb(0xc8, 0x33, 0x36);
+        palette.destructive = Color32::from_rgb(0xf8, 0x51, 0x49);
         palette.destructive_foreground = Color32::WHITE;
-        palette.ring = Color32::from_rgb(0x3b, 0x9a, 0xe8);
-        palette.border = Color32::from_rgb(0xd0, 0xd0, 0xd0);
-        palette.background = Color32::from_rgb(0xf5, 0xf5, 0xf5);
-        palette.foreground = Color32::from_rgb(0x33, 0x33, 0x33);
-        palette.muted_foreground = Color32::from_rgb(0x66, 0x66, 0x66);
-        palette.accent = palette.primary;
-        palette.accent_foreground = palette.primary_foreground;
+        palette.ring = Color32::from_rgb(0x1f, 0x6f, 0xeb);     // focus 蓝
+        palette.border = Color32::from_rgb(0x30, 0x36, 0x3d);
+        palette.background = Color32::from_rgb(0x0d, 0x11, 0x17);
+        palette.foreground = Color32::from_rgb(0xc9, 0xd1, 0xd9);
+        palette.muted_foreground = Color32::from_rgb(0x6e, 0x76, 0x81);
+        palette.accent = Color32::from_rgb(0x1f, 0x6f, 0xeb);   // 蓝 accent（链接/选中）
+        palette.accent_foreground = Color32::WHITE;
+    } else {
+        palette.primary = Color32::from_rgb(0x15, 0x80, 0x3d);  // 浅色主操作深绿
+        palette.primary_foreground = Color32::WHITE;
+        palette.destructive = Color32::from_rgb(0xb9, 0x1c, 0x1c);
+        palette.destructive_foreground = Color32::WHITE;
+        palette.ring = Color32::from_rgb(0x25, 0x63, 0xeb);
+        palette.border = Color32::from_rgb(0xd4, 0xd4, 0xd8);
+        palette.background = Color32::from_rgb(0xfa, 0xfa, 0xfa);
+        palette.foreground = Color32::from_rgb(0x3f, 0x3f, 0x46);
+        palette.muted_foreground = Color32::from_rgb(0x71, 0x71, 0x7a);
+        palette.accent = Color32::from_rgb(0x25, 0x63, 0xeb);
+        palette.accent_foreground = Color32::WHITE;
     }
     egui_shadcn::Theme::new(palette)
 }
@@ -238,4 +223,44 @@ pub fn toggle_switch(ui: &mut Ui, flavor: Flavor, value: &mut bool) -> Response 
         },
     )
     .inner
+}
+
+/// Panel header: heading title + optional muted breadcrumb on a second line.
+/// Used by Slave's CentralPanel header ("FC03 保持寄存器" / "slave_1 · 20001 行").
+pub fn panel_header(ui: &mut Ui, flavor: Flavor, title: &str, crumb: Option<&str>) {
+    ui.vertical(|ui| {
+        ui.label(
+            RichText::new(title)
+                .heading()
+                .color(theme::text_primary(flavor)),
+        );
+        if let Some(c) = crumb {
+            theme::text::crumb(ui, flavor, c);
+        }
+    });
+}
+
+/// Borderless text-action: "停止" / "删除连接" / "关闭". Hovers to accent_fg
+/// (or `danger(flavor)` when `danger=true`). Returns the click `Response`.
+pub fn link_action(ui: &mut Ui, flavor: Flavor, label: &str, danger: bool) -> Response {
+    let base = theme::text_muted(flavor);
+    let resp = ui.add(
+        egui::Label::new(RichText::new(label).color(base).size(11.5))
+            .sense(egui::Sense::click()),
+    );
+    if resp.hovered() {
+        let hover = if danger {
+            theme::danger(flavor)
+        } else {
+            theme::accent_fg(flavor)
+        };
+        ui.painter().text(
+            resp.rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(11.5),
+            hover,
+        );
+    }
+    resp
 }
