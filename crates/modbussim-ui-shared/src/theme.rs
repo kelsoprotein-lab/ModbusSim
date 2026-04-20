@@ -130,6 +130,75 @@ pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
 pub fn apply(ctx: &egui::Context, flavor: Flavor) {
     catppuccin_egui::set_theme(ctx, flavor.palette());
 
+    // catppuccin_egui::set_theme does not always map `panel_fill` / `window_fill`
+    // / widget backgrounds correctly in light mode, so we force the critical
+    // fields ourselves to match the target industrial palette.
+    ctx.style_mut(|s| {
+        if flavor.is_dark() {
+            let panel = Color32::from_rgb(30, 30, 30);       // #1e1e1e
+            let panel_alt = Color32::from_rgb(37, 37, 38);   // #252526
+            let stroke = Color32::from_rgb(64, 64, 66);      // #404042
+            let fg = Color32::from_rgb(220, 220, 220);
+            let sel_bg = Color32::from_rgb(52, 73, 103);     // mild blue
+            let accent = Color32::from_rgb(59, 154, 232);
+            s.visuals.panel_fill = panel;
+            s.visuals.window_fill = panel_alt;
+            s.visuals.extreme_bg_color = panel;
+            s.visuals.faint_bg_color = Color32::from_rgb(40, 40, 40);
+            s.visuals.widgets.noninteractive.bg_fill = panel_alt;
+            s.visuals.widgets.noninteractive.weak_bg_fill = panel;
+            s.visuals.widgets.noninteractive.bg_stroke.color = stroke;
+            s.visuals.widgets.noninteractive.fg_stroke.color = fg;
+            s.visuals.widgets.inactive.bg_fill = Color32::from_rgb(45, 45, 48);
+            s.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 37, 38);
+            s.visuals.widgets.inactive.bg_stroke.color = stroke;
+            s.visuals.widgets.inactive.fg_stroke.color = fg;
+            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(62, 62, 66);
+            s.visuals.widgets.hovered.bg_stroke.color = stroke;
+            s.visuals.widgets.active.bg_fill = accent;
+            s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+            s.visuals.window_stroke.color = stroke;
+            s.visuals.selection.bg_fill = sel_bg;
+            s.visuals.selection.stroke.color = accent;
+            s.visuals.override_text_color = Some(fg);
+        } else {
+            let panel = Color32::from_rgb(245, 245, 245);    // #f5f5f5
+            let white = Color32::from_rgb(255, 255, 255);    // #ffffff
+            let stroke = Color32::from_rgb(208, 208, 208);   // #d0d0d0
+            let stroke_strong = Color32::from_rgb(190, 190, 190);
+            let fg = Color32::from_rgb(51, 51, 51);          // #333333
+            let sel_bg = Color32::from_rgb(201, 218, 248);   // #c9daf8 row highlight
+            let accent = Color32::from_rgb(59, 154, 232);    // #3b9ae8
+            s.visuals.panel_fill = panel;
+            s.visuals.window_fill = white;
+            s.visuals.extreme_bg_color = white;
+            s.visuals.faint_bg_color = Color32::from_rgb(248, 248, 248);
+            s.visuals.code_bg_color = Color32::from_rgb(240, 240, 240);
+            s.visuals.widgets.noninteractive.bg_fill = panel;
+            s.visuals.widgets.noninteractive.weak_bg_fill = panel;
+            s.visuals.widgets.noninteractive.bg_stroke.color = stroke;
+            s.visuals.widgets.noninteractive.fg_stroke.color = fg;
+            s.visuals.widgets.inactive.bg_fill = Color32::from_rgb(240, 240, 240);
+            s.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(245, 245, 245);
+            s.visuals.widgets.inactive.bg_stroke.color = stroke;
+            s.visuals.widgets.inactive.fg_stroke.color = fg;
+            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(230, 230, 230);
+            s.visuals.widgets.hovered.bg_stroke.color = stroke_strong;
+            s.visuals.widgets.hovered.fg_stroke.color = fg;
+            s.visuals.widgets.active.bg_fill = accent;
+            s.visuals.widgets.active.bg_stroke.color = accent;
+            s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+            s.visuals.widgets.open.bg_fill = Color32::from_rgb(230, 230, 230);
+            s.visuals.window_stroke.color = stroke;
+            s.visuals.selection.bg_fill = sel_bg;
+            s.visuals.selection.stroke.color = accent;
+            s.visuals.override_text_color = Some(fg);
+            s.visuals.hyperlink_color = accent;
+            s.visuals.error_fg_color = Color32::from_rgb(200, 51, 54);
+            s.visuals.warn_fg_color = Color32::from_rgb(175, 82, 0);
+        }
+    });
+
     ctx.style_mut(|s| {
         // Tight spacing — VS Code-like density
         s.spacing.item_spacing = egui::vec2(8.0, 4.0);
