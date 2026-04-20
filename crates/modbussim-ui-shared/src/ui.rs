@@ -89,13 +89,43 @@ pub fn accent_card<R>(
 
 /// Lazily constructed shadcn Theme (dark / light variant derived from Flavor).
 /// Theme creation is not free (computes palette tables), so cache it per frame.
+/// Overrides shadcn's Neutral base palette with our Darcula orange / industrial
+/// blue tokens so buttons and switches pick up our accent color instead of
+/// rendering as washed-out gray.
 fn shadcn_theme(flavor: Flavor) -> egui_shadcn::Theme {
     use egui_shadcn::tokens::{ColorPalette, ShadcnBaseColor};
-    let palette = if flavor.is_dark() {
+    let mut palette = if flavor.is_dark() {
         ColorPalette::shadcn_dark(ShadcnBaseColor::Neutral)
     } else {
         ColorPalette::shadcn_light(ShadcnBaseColor::Neutral)
     };
+    if flavor.is_dark() {
+        // Darcula orange accent + Layer::L1/L2 background alignment
+        palette.primary = Color32::from_rgb(0xcc, 0x78, 0x32);
+        palette.primary_foreground = Color32::from_rgb(0x1e, 0x1e, 0x1e);
+        palette.destructive = Color32::from_rgb(0xbc, 0x3f, 0x3c);
+        palette.destructive_foreground = Color32::WHITE;
+        palette.ring = Color32::from_rgb(0xcc, 0x78, 0x32);
+        palette.border = Color32::from_rgb(0x51, 0x56, 0x59);
+        palette.background = Color32::from_rgb(0x2b, 0x2d, 0x30);
+        palette.foreground = Color32::from_rgb(0xd4, 0xd7, 0xdb);
+        palette.muted_foreground = Color32::from_rgb(0x9c, 0xa0, 0xa4);
+        palette.accent = palette.primary;
+        palette.accent_foreground = palette.primary_foreground;
+    } else {
+        // redisant industrial blue accent
+        palette.primary = Color32::from_rgb(0x3b, 0x9a, 0xe8);
+        palette.primary_foreground = Color32::WHITE;
+        palette.destructive = Color32::from_rgb(0xc8, 0x33, 0x36);
+        palette.destructive_foreground = Color32::WHITE;
+        palette.ring = Color32::from_rgb(0x3b, 0x9a, 0xe8);
+        palette.border = Color32::from_rgb(0xd0, 0xd0, 0xd0);
+        palette.background = Color32::from_rgb(0xf5, 0xf5, 0xf5);
+        palette.foreground = Color32::from_rgb(0x33, 0x33, 0x33);
+        palette.muted_foreground = Color32::from_rgb(0x66, 0x66, 0x66);
+        palette.accent = palette.primary;
+        palette.accent_foreground = palette.primary_foreground;
+    }
     egui_shadcn::Theme::new(palette)
 }
 
