@@ -11,12 +11,12 @@
 
 ## 2. 日志面板（log_panel）改造
 
-- [ ] 2.1 `modbussim-ui-shared/src/log_panel.rs` 外层 `uikit::card` 调用替换为 `ui::region(ui, flavor, Layer::L0, Margin::symmetric(14, 10), ...)`
-- [ ] 2.2 日志表格列标题行 bg 用 `bg_of(flavor, L1)`，body 用 `bg_of(flavor, L2)` — 靠 Frame 包裹
-- [ ] 2.3 删除日志面板内部任何 `ui.separator()` 调用（bg 色差已经分区）
-- [ ] 2.4 "清空 / 导出 CSV / 关闭" 三个按钮改用 `secondary_button`，配色跟新规范
-- [ ] 2.5 `cargo build -p modbussim-egui -p modbusmaster-egui` 通过
-- [ ] 2.6 commit：`style(ui-shared): log_panel 去 card，三级背景分层`
+- [x] 2.1 `modbussim-ui-shared/src/log_panel.rs` 外层 `uikit::card` 调用替换为 `ui::region(ui, flavor, Layer::L0, Margin::symmetric(14, 10), ...)`
+- [x] 2.2 日志表格列标题行 bg 用 `bg_of(flavor, L1)`，body 用 `bg_of(flavor, L2)` — 靠 Frame 包裹
+- [x] 2.3 删除日志面板内部任何 `ui.separator()` 调用（bg 色差已经分区）
+- [x] 2.4 "清空 / 导出 CSV / 关闭" 三个按钮改用 `secondary_button`，配色跟新规范
+- [x] 2.5 `cargo build -p modbussim-egui -p modbusmaster-egui` 通过
+- [x] 2.6 commit：`style(ui-shared): log_panel 去 card，三级背景分层`
 
 ## 3. Master 三个 Tab 改造
 

@@ -70,9 +70,13 @@ pub fn render(
         .resizable(true)
         .default_height(240.0)
         .min_height(90.0)
-        .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(10.0, 8.0)))
+        // Panel bg = L0 chrome layer; inner padding substitutes for the old card stroke.
+        .frame(
+            egui::Frame::none()
+                .fill(crate::theme::bg_of(flavor, crate::theme::Layer::L0))
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
         .show(ctx, |ui| {
-            crate::ui::card(ui, flavor, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("通信日志");
                 if let Some(label) = conn_label {
@@ -81,13 +85,16 @@ pub fn render(
                     ui.label("（选中连接以查看）");
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("关闭").on_hover_text("关闭日志面板").clicked() {
+                    if crate::ui::secondary_button(ui, flavor, "关闭")
+                        .on_hover_text("关闭日志面板")
+                        .clicked()
+                    {
                         action = LogPanelAction::Close;
                     }
-                    if ui.small_button("导出 CSV").clicked() {
+                    if crate::ui::secondary_button(ui, flavor, "导出 CSV").clicked() {
                         action = LogPanelAction::Export;
                     }
-                    if ui.small_button("清空").clicked() {
+                    if crate::ui::secondary_button(ui, flavor, "清空").clicked() {
                         action = LogPanelAction::Clear;
                     }
                 });
@@ -98,7 +105,7 @@ pub fn render(
                 ui.label("过滤");
                 ui.text_edit_singleline(&mut state.filter_text);
             });
-            ui.separator();
+            ui.add_space(4.0);
 
             let entries: Vec<&LogEntry> =
                 cache.iter().rev().filter(|e| accepts(state, e)).collect();
@@ -134,7 +141,6 @@ pub fn render(
                         row.col(|ui| { ui.monospace(&e.detail); });
                     });
                 });
-            }); // end card
         });
 
     action
