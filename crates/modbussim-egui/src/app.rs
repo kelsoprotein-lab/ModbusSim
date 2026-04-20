@@ -2375,15 +2375,30 @@ impl SlaveApp {
                 // the TableBuilder closure releases borrows.
                 let mut row_clicks: Vec<(u16, egui::Modifiers)> = Vec::new();
 
-                // Left = table (~62% wide, fills vertical), right = ValuePanel.
+                // Left = table, right = ValuePanel (按 self.value_parse_open 切换)。
                 // StripBuilder is the right primitive here — a plain
                 // ui.horizontal + allocate_ui collapses to 0 height inside a
                 // CentralPanel and draws the debug red warning box.
                 use egui_extras::{Size, StripBuilder};
+                let value_open = self.value_parse_open;
+                let (table_size, gap_size, panel_size) = if value_open {
+                    (
+                        Size::relative(0.62).at_least(360.0),
+                        Size::exact(8.0),
+                        Size::remainder().at_least(260.0),
+                    )
+                } else {
+                    // Hidden: 表格独占全宽；右 cell 仍占 0 宽，保持三段链结构。
+                    (
+                        Size::remainder().at_least(360.0),
+                        Size::exact(0.0),
+                        Size::exact(0.0),
+                    )
+                };
                 StripBuilder::new(ui)
-                    .size(Size::relative(0.62).at_least(360.0))
-                    .size(Size::exact(8.0))
-                    .size(Size::remainder().at_least(260.0))
+                    .size(table_size)
+                    .size(gap_size)
+                    .size(panel_size)
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
                             uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0 as i8, 6.0 as i8), |ui| {
