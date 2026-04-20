@@ -1327,7 +1327,7 @@ impl SlaveApp {
             .unwrap_or(0);
         self.rt.spawn(async move {
             let Some(path) = rfd::AsyncFileDialog::new()
-                .set_file_name(&format!("slave_{}.modbusproj", ts))
+                .set_file_name(format!("slave_{}.modbusproj", ts))
                 .add_filter("ModbusProj", &["modbusproj"])
                 .save_file()
                 .await
@@ -2474,22 +2474,70 @@ impl SlaveApp {
                     self.reg_display_mode
                 };
 
+                // ── fmt-pill 工具栏 ──────────────────────────────────────────
                 ui.horizontal(|ui| {
-                    ui.label(format!("共 {} 行", view.row_count));
                     if !is_bool {
-                        ui.separator();
-                        ui.label("格式");
-                        egui::ComboBox::from_id_salt("reg_display_mode")
-                            .selected_text(mode.label())
-                            .show_ui(ui, |ui| {
-                                for m in DISPLAY_MODES {
-                                    ui.selectable_value(&mut self.reg_display_mode, *m, m.label());
-                                }
+                        theme::text::tiny_caps(ui, flavor, "格式");
+                        ui.add_space(4.0);
+                        egui::Frame::new()
+                            .fill(theme::bg_of(flavor, theme::Layer::L2))
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                theme::border_strong(flavor),
+                            ))
+                            .corner_radius(12.0)
+                            .inner_margin(egui::Margin::symmetric(8, 2))
+                            .show(ui, |ui| {
+                                egui::ComboBox::from_id_salt("reg_display_mode")
+                                    .selected_text(
+                                        egui::RichText::new(mode.label())
+                                            .color(theme::accent_fg(flavor))
+                                            .monospace()
+                                            .size(11.5),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        for m in DISPLAY_MODES {
+                                            ui.selectable_value(
+                                                &mut self.reg_display_mode,
+                                                *m,
+                                                m.label(),
+                                            );
+                                        }
+                                    });
                             });
+                        ui.add_space(12.0);
+                    }
+                    theme::text::crumb(
+                        ui,
+                        flavor,
+                        &format!(
+                            "共 {} 行{}",
+                            view.row_count,
+                            if self.selected_addrs.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · 已选 {} 行", self.selected_addrs.len())
+                            }
+                        ),
+                    );
+                    if !is_bool {
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if uikit::link_action(ui, flavor, "清零选中", false).clicked() {
+                                    self.selected_addrs.clear();
+                                    self.click_anchor = None;
+                                }
+                            },
+                        );
                     }
                 });
                 if !is_bool && mode.is_multi_word() {
-                    ui.label("多字格式 · 只读显示；要编辑请切回 U16");
+                    theme::text::crumb(
+                        ui,
+                        flavor,
+                        "多字格式 · 只读显示；要编辑请切回 U16",
+                    );
                 }
 
                 let row_h = 20.0;
@@ -2570,7 +2618,21 @@ impl SlaveApp {
                                                 h.col(|ui| {
                                                     theme::text::tiny_caps(ui, flavor, "Raw HEX")
                                                 });
-                                                h.col(|_| {});
+                                                h.col(|ui| {
+                                                    // 表头下方 2px 蓝线
+                                                    let r = ui.max_rect();
+                                                    let y = r.max.y - 1.0;
+                                                    ui.painter().line_segment(
+                                                        [
+                                                            egui::pos2(-8000.0, y),
+                                                            egui::pos2(8000.0, y),
+                                                        ],
+                                                        egui::Stroke::new(
+                                                            2.0,
+                                                            theme::accent(flavor),
+                                                        ),
+                                                    );
+                                                });
                                             })
                                             .body(|body| {
                                                 body.rows(row_h, group_rows, |mut row| {
@@ -2599,12 +2661,16 @@ impl SlaveApp {
                                                         } else {
                                                             format!("{}..{}", base, base + 1)
                                                         };
-                                                        let resp =
-                                                            ui.add(egui::SelectableLabel::new(
+                                                        let resp = ui.add(
+                                                            egui::Button::selectable(
                                                                 sel,
                                                                 egui::RichText::new(label)
-                                                                    .monospace(),
-                                                            ));
+                                                                    .monospace()
+                                                                    .color(theme::text_muted(
+                                                                        flavor,
+                                                                    )),
+                                                            ),
+                                                        );
                                                         if resp.clicked() {
                                                             row_clicks.push((
                                                                 base,
@@ -2669,7 +2735,11 @@ impl SlaveApp {
                                                             .map(|w| format!("{:04X}", w))
                                                             .collect::<Vec<_>>()
                                                             .join(" ");
-                                                        ui.monospace(joined);
+                                                        ui.add(egui::Label::new(
+                                                            egui::RichText::new(joined)
+                                                                .monospace()
+                                                                .color(theme::warn(flavor)),
+                                                        ));
                                                     });
                                                     row.col(|_| {});
                                                 });
@@ -2804,7 +2874,16 @@ impl SlaveApp {
                                                     theme::text::tiny_caps(ui, flavor, "名称")
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "注释")
+                                                    theme::text::tiny_caps(ui, flavor, "注释");
+                                                    // 表头下方 2px 蓝线（跨整行，画在最后一列底边）
+                                                    let r = ui.max_rect();
+                                                    let y = r.max.y - 1.0;
+                                                    let x0 = -8000.0_f32; // 超出左界以覆盖全行
+                                                    let x1 = 8000.0_f32;
+                                                    ui.painter().line_segment(
+                                                        [egui::pos2(x0, y), egui::pos2(x1, y)],
+                                                        egui::Stroke::new(2.0, theme::accent(flavor)),
+                                                    );
                                                 });
                                             } else {
                                                 header.col(|ui| {
@@ -2816,7 +2895,17 @@ impl SlaveApp {
                                                 header.col(|ui| {
                                                     theme::text::tiny_caps(ui, flavor, "二进制")
                                                 });
-                                                header.col(|_| {});
+                                                header.col(|ui| {
+                                                    // 表头下方 2px 蓝线（画在尾列底边，覆盖全行）
+                                                    let r = ui.max_rect();
+                                                    let y = r.max.y - 1.0;
+                                                    let x0 = -8000.0_f32;
+                                                    let x1 = 8000.0_f32;
+                                                    ui.painter().line_segment(
+                                                        [egui::pos2(x0, y), egui::pos2(x1, y)],
+                                                        egui::Stroke::new(2.0, theme::accent(flavor)),
+                                                    );
+                                                });
                                             }
                                         })
                                         .body(|body| {
@@ -2831,11 +2920,14 @@ impl SlaveApp {
                                                 }
                                                 row.col(|ui| {
                                                     let sel = selected_addrs.contains(&addr);
-                                                    let resp = ui.add(egui::SelectableLabel::new(
-                                                        sel,
-                                                        egui::RichText::new(format!("{}", addr))
-                                                            .monospace(),
-                                                    ));
+                                                    let resp = ui.add(
+                                                        egui::Button::selectable(
+                                                            sel,
+                                                            egui::RichText::new(format!("{}", addr))
+                                                                .monospace()
+                                                                .color(theme::text_muted(flavor)),
+                                                        ),
+                                                    );
                                                     if resp.clicked() {
                                                         row_clicks.push((
                                                             addr,
@@ -2953,15 +3045,24 @@ impl SlaveApp {
                                                         })
                                                         .unwrap_or(cache_u16);
                                                     row.col(|ui| {
-                                                        ui.monospace(format_u16(
-                                                            display_u16,
-                                                            U16Format::Hex,
+                                                        ui.add(egui::Label::new(
+                                                            egui::RichText::new(format_u16(
+                                                                display_u16,
+                                                                U16Format::Hex,
+                                                            ))
+                                                            .monospace()
+                                                            .color(theme::warn(flavor)),
                                                         ));
                                                     });
                                                     row.col(|ui| {
-                                                        ui.monospace(format_u16(
-                                                            display_u16,
-                                                            U16Format::Binary,
+                                                        ui.add(egui::Label::new(
+                                                            egui::RichText::new(format_u16(
+                                                                display_u16,
+                                                                U16Format::Binary,
+                                                            ))
+                                                            .monospace()
+                                                            .size(11.0)
+                                                            .color(theme::text_muted(flavor)),
                                                         ));
                                                     });
                                                     row.col(|_| {});
@@ -3141,23 +3242,37 @@ impl eframe::App for SlaveApp {
         let mut do_save = false;
         let mut do_load = false;
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("文件", |ui| {
                     if ui.button("保存工程…").clicked() {
                         do_save = true;
-                        ui.close_menu();
+                        ui.close_kind(egui::UiKind::Menu);
                     }
                     if ui.button("加载工程…").clicked() {
                         do_load = true;
-                        ui.close_menu();
+                        ui.close_kind(egui::UiKind::Menu);
                     }
                 });
                 ui.menu_button("视图", |ui| {
+                    ui.checkbox(&mut self.value_parse_open, "显示值解析 (V)");
                     if ui
-                        .checkbox(&mut self.log_state.open, "显示日志面板")
+                        .checkbox(&mut self.log_state.open, "显示通信日志")
                         .clicked()
                     {
-                        ui.close_menu();
+                        if !self.log_state.open {
+                            self.log_state.collapsed = false;
+                        }
+                        ui.close_kind(egui::UiKind::Menu);
+                    }
+                    ui.separator();
+                    if ui.button("浅色 / 深色切换").clicked() {
+                        self.flavor = if self.flavor.is_dark() {
+                            Flavor::Latte
+                        } else {
+                            Flavor::Mocha
+                        };
+                        theme::apply(ctx, self.flavor);
+                        ui.close_kind(egui::UiKind::Menu);
                     }
                     ui.separator();
                     ui.label("主题 (Catppuccin)");
@@ -3169,7 +3284,7 @@ impl eframe::App for SlaveApp {
                     ] {
                         if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
                             theme::apply(ctx, self.flavor);
-                            ui.close_menu();
+                            ui.close_kind(egui::UiKind::Menu);
                         }
                     }
                     ui.separator();
