@@ -278,6 +278,7 @@ pub struct SlaveApp {
     selection: Selection,
     new_host: String,
     new_port: String,
+    show_new_tcp_dialog: bool,
     last_error: Option<String>,
 
     // Event-driven snapshot (never read from Arc<RwLock<...>> on the UI thread).
@@ -474,6 +475,7 @@ impl SlaveApp {
             selection: Selection::None,
             new_host: "0.0.0.0".to_string(),
             new_port: "5502".to_string(),
+            show_new_tcp_dialog: false,
             last_error: None,
             conn_snapshot: Vec::new(),
             next_conn_seq: Arc::new(AtomicU64::new(1)),
@@ -2180,11 +2182,11 @@ impl SlaveApp {
                     egui::Margin::symmetric(14.0 as i8, 10.0 as i8),
                     |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(format!("{}  {}", reg_icon, group_label));
-                            uikit::caption(
+                            uikit::panel_header(
                                 ui,
                                 flavor,
-                                format!("连接 {} · 从站 {}", conn_id, slave_id),
+                                &format!("{}  {}", reg_icon, group_label),
+                                Some(&format!("{} · 从站 {}", conn_id, slave_id)),
                             );
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -2202,7 +2204,7 @@ impl SlaveApp {
                                     let resp = ui.add(
                                         egui::TextEdit::singleline(&mut search_text)
                                             .hint_text("地址 / 名称…")
-                                            .desired_width(160.0),
+                                            .desired_width(220.0),
                                     );
                                     if want_focus {
                                         resp.request_focus();
@@ -2313,7 +2315,7 @@ impl SlaveApp {
                     };
                     let avail_h = ui.available_height();
                     TableBuilder::new(ui)
-                        .striped(true)
+                        .striped(false)
                         .resizable(true)
                         .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -2321,11 +2323,11 @@ impl SlaveApp {
                         .column(Column::exact(220.0))
                         .column(Column::exact(200.0))
                         .column(Column::remainder())
-                        .header(22.0, |mut h| {
-                            h.col(|ui| { ui.strong("地址"); });
-                            h.col(|ui| { ui.strong(mode.label()); });
-                            h.col(|ui| { ui.strong("Raw (Hex)"); });
-                            h.col(|ui| { ui.strong(""); });
+                        .header(26.0, |mut h| {
+                            h.col(|ui| theme::text::tiny_caps(ui, flavor, "地址"));
+                            h.col(|ui| theme::text::tiny_caps(ui, flavor, mode.label()));
+                            h.col(|ui| theme::text::tiny_caps(ui, flavor, "Raw HEX"));
+                            h.col(|_| {});
                         })
                         .body(|body| {
                             body.rows(row_h, group_rows, |mut row| {
@@ -2455,7 +2457,7 @@ impl SlaveApp {
                     // Use initial() + at_least() + clip(true) so users can drag column
                     // dividers; at_least prevents dragging to 0 (would hide column).
                     let mut tb = TableBuilder::new(ui)
-                        .striped(true)
+                        .striped(false)
                         .resizable(true)
                         .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -2484,17 +2486,17 @@ impl SlaveApp {
                     });
                     let defs = view.defs.clone();
                     tb
-                        .header(22.0, |mut header| {
-                            header.col(|ui| { ui.strong("地址"); });
+                        .header(26.0, |mut header| {
+                            header.col(|ui| theme::text::tiny_caps(ui, flavor, "地址"));
                             if is_bool {
-                                header.col(|ui| { ui.strong("值"); });
-                                header.col(|ui| { ui.strong("名称"); });
-                                header.col(|ui| { ui.strong("注释"); });
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "值"));
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "名称"));
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "注释"));
                             } else {
-                                header.col(|ui| { ui.strong(mode.label()); });
-                                header.col(|ui| { ui.strong("Hex"); });
-                                header.col(|ui| { ui.strong("Binary"); });
-                                header.col(|ui| { ui.strong(""); });
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, mode.label()));
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "HEX"));
+                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "二进制"));
+                                header.col(|_| {});
                             }
                         })
                         .body(|body| {
@@ -2803,36 +2805,143 @@ impl eframe::App for SlaveApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L0))
-                    .inner_margin(egui::Margin::symmetric(14.0 as i8, 12.0 as i8)),
+                    .inner_margin(egui::Margin::same(0)),
             )
             .show(ctx, |ui| {
-                theme::text::tiny_caps(ui, self.flavor, "连接");
-                ui.add_space(6.0);
+                ui.allocate_ui_with_layout(
+                    ui.available_size(),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        // —— 头部：tiny_caps "连接" + 右上 + 新建 ——
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin { left: 14, right: 10, top: 12, bottom: 8 })
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    theme::text::tiny_caps(ui, self.flavor, "连接");
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if uikit::link_action(ui, self.flavor, "+ 新建", false)
+                                                .clicked()
+                                            {
+                                                self.show_new_tcp_dialog =
+                                                    !self.show_new_tcp_dialog;
+                                            }
+                                        },
+                                    );
+                                });
+                            });
 
-                ui.collapsing("+ 新建 TCP 连接", |ui| {
-                    egui::Grid::new("new_tcp_form")
-                        .num_columns(2)
-                        .spacing([8.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label("Host");
-                            ui.text_edit_singleline(&mut self.new_host);
-                            ui.end_row();
-                            ui.label("Port");
-                            ui.text_edit_singleline(&mut self.new_port);
-                            ui.end_row();
+                        // —— 新建 TCP 表单（可折叠）——
+                        if self.show_new_tcp_dialog {
+                            egui::Frame::none()
+                                .fill(theme::bg_of(self.flavor, theme::Layer::L2))
+                                .inner_margin(egui::Margin { left: 14, right: 10, top: 6, bottom: 8 })
+                                .show(ui, |ui| {
+                                    egui::Grid::new("new_tcp_form")
+                                        .num_columns(2)
+                                        .spacing([8.0, 4.0])
+                                        .show(ui, |ui| {
+                                            ui.label("Host");
+                                            ui.text_edit_singleline(&mut self.new_host);
+                                            ui.end_row();
+                                            ui.label("Port");
+                                            ui.text_edit_singleline(&mut self.new_port);
+                                            ui.end_row();
+                                        });
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        if uikit::primary_button(ui, self.flavor, "创建").clicked() {
+                                            tree_action = Some(TreeAction::Create);
+                                            self.show_new_tcp_dialog = false;
+                                        }
+                                        if uikit::link_action(ui, self.flavor, "取消", false)
+                                            .clicked()
+                                        {
+                                            self.show_new_tcp_dialog = false;
+                                        }
+                                    });
+                                });
+                        }
+
+                        // —— 树：可滚动区（为 footer 留 40px）——
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .max_height(ui.available_height() - 40.0)
+                            .show(ui, |ui| {
+                                egui::Frame::none()
+                                    .inner_margin(egui::Margin {
+                                        left: 8,
+                                        right: 8,
+                                        top: 0,
+                                        bottom: 0,
+                                    })
+                                    .show(ui, |ui| {
+                                        if let Some(a) = self.render_tree(ui) {
+                                            tree_action = Some(a);
+                                        }
+                                    });
+                            });
+
+                        // —— footer：停止 / 删除连接 ——
+                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                            egui::Frame::none()
+                                .fill(theme::bg_of(self.flavor, theme::Layer::L0))
+                                .stroke(egui::Stroke::new(
+                                    1.0,
+                                    theme::border_subtle(self.flavor),
+                                ))
+                                .inner_margin(egui::Margin {
+                                    left: 14,
+                                    right: 14,
+                                    top: 8,
+                                    bottom: 10,
+                                })
+                                .show(ui, |ui| {
+                                    // Derive active connection id + state from selection
+                                    let active_conn = selection_conn_id(&self.selection)
+                                        .and_then(|id| {
+                                            self.conn_snapshot.iter().find(|s| s.id == id)
+                                        });
+                                    if let Some(snap) = active_conn {
+                                        let conn_id = snap.id.clone();
+                                        let is_running =
+                                            snap.state == ConnectionState::Running;
+                                        ui.horizontal(|ui| {
+                                            let stop_label =
+                                                if is_running { "停止" } else { "启动" };
+                                            if uikit::link_action(
+                                                ui,
+                                                self.flavor,
+                                                stop_label,
+                                                false,
+                                            )
+                                            .clicked()
+                                            {
+                                                tree_action = Some(if is_running {
+                                                    TreeAction::StopConn(conn_id.clone())
+                                                } else {
+                                                    TreeAction::StartConn(conn_id.clone())
+                                                });
+                                            }
+                                            ui.add_space(14.0);
+                                            if uikit::link_action(
+                                                ui,
+                                                self.flavor,
+                                                "删除连接",
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                tree_action =
+                                                    Some(TreeAction::RemoveConn(conn_id));
+                                            }
+                                        });
+                                    }
+                                });
                         });
-                    if uikit::primary_button(ui, self.flavor, "创建").clicked() {
-                        tree_action = Some(TreeAction::Create);
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if let Some(a) = self.render_tree(ui) {
-                        tree_action = Some(a);
-                    }
-                });
+                    },
+                );
             });
 
         let mut clear_error = false;
