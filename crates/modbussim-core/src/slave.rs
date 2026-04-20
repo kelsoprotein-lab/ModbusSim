@@ -21,6 +21,8 @@ pub struct SlaveDevice {
     pub name: String,
     pub register_map: RegisterMap,
     pub register_defs: Vec<RegisterDef>,
+    #[serde(default)]
+    pub jitter: crate::jitter::JitterConfig,
 }
 
 impl SlaveDevice {
@@ -30,6 +32,7 @@ impl SlaveDevice {
             name: name.into(),
             register_map: RegisterMap::new(),
             register_defs: Vec::new(),
+            jitter: crate::jitter::JitterConfig::default(),
         }
     }
 
@@ -826,5 +829,32 @@ mod tests {
         let has_nonzero_hr = (0..=100u16).any(|addr| *device.register_map.holding_registers.get(&addr).unwrap() != 0);
         assert!(has_true_coil, "expected at least one true coil with random init");
         assert!(has_nonzero_hr, "expected at least one non-zero holding register with random init");
+    }
+
+    #[test]
+    fn slave_device_has_default_jitter() {
+        let d = SlaveDevice::new(1, "s1");
+        assert!(!d.jitter.enabled);
+        assert_eq!(d.jitter.interval_ms, 1000);
+    }
+
+    #[test]
+    fn slave_device_deserializes_legacy_json_without_jitter() {
+        // Older .modbusproj files wrote SlaveDevice without a `jitter` field.
+        let legacy = r#"{
+            "slave_id": 1,
+            "name": "legacy",
+            "register_map": {
+                "coils": {},
+                "discrete_inputs": {},
+                "holding_registers": {},
+                "input_registers": {}
+            },
+            "register_defs": []
+        }"#;
+        let d: SlaveDevice = serde_json::from_str(legacy).expect("legacy parse");
+        assert_eq!(d.slave_id, 1);
+        assert_eq!(d.name, "legacy");
+        assert!(!d.jitter.enabled); // default
     }
 }
