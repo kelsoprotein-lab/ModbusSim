@@ -990,7 +990,7 @@ impl eframe::App for MasterApp {
             });
             ui.add_space(4.0);
 
-            uikit::card(ui, |ui| {
+            uikit::card(ui, flavor, |ui| {
             // Tab bar: Read / Write / Poll
             ui.horizontal(|ui| {
                 for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
@@ -1241,7 +1241,7 @@ impl eframe::App for MasterApp {
                 .unwrap_or((None, 0));
             let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
-                uikit::card(ui, |ui| {
+                uikit::card(ui, flavor, |ui| {
                 let title = if poll_latest.is_some() { "轮询结果" } else { "读取结果" };
                 let base = if poll_latest.is_some() { poll_addr } else { self.read_addr };
                 ui.label(egui::RichText::new(title).strong().size(12.5));
@@ -1298,6 +1298,7 @@ impl MasterApp {
     fn render_log_panel(&mut self, ctx: &egui::Context) {
         let action = log_panel::render(
             ctx,
+            self.flavor,
             &mut self.log_state,
             &self.log_cache,
             self.log_cache_conn_id.as_deref(),

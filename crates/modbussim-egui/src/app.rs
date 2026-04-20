@@ -2026,7 +2026,7 @@ impl SlaveApp {
                     .size(Size::remainder().at_least(260.0))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            uikit::card(ui, |ui| {
+                            uikit::card(ui, flavor, |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let pair_rows = view.row_count / stride;
@@ -2224,7 +2224,7 @@ impl SlaveApp {
                         }); // end StripBuilder left cell
                         strip.cell(|_ui| { });
                         strip.cell(|ui| {
-                            uikit::card(ui, |ui| {
+                            uikit::card(ui, flavor, |ui| {
                             let mut selected_vals: Vec<u16> = Vec::new();
                             let mut base: Option<u16> = None;
                             // Only take up to 4 selected, in address order, and
@@ -2298,6 +2298,7 @@ impl SlaveApp {
     fn render_log_panel(&mut self, ctx: &egui::Context) {
         let action = log_panel::render(
             ctx,
+            self.flavor,
             &mut self.log_state,
             &self.log_cache,
             self.log_cache_conn_id.as_deref(),

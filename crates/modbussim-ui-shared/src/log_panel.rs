@@ -55,6 +55,7 @@ fn accepts(state: &LogPanelState, e: &LogEntry) -> bool {
 /// `conn_label` is shown in the header; pass `None` when no connection is selected.
 pub fn render(
     ctx: &egui::Context,
+    flavor: crate::theme::Flavor,
     state: &mut LogPanelState,
     cache: &[LogEntry],
     conn_label: Option<&str>,
@@ -71,7 +72,7 @@ pub fn render(
         .min_height(90.0)
         .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(10.0, 8.0)))
         .show(ctx, |ui| {
-            crate::ui::card(ui, |ui| {
+            crate::ui::card(ui, flavor, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("通信日志");
                 if let Some(label) = conn_label {
