@@ -72,9 +72,9 @@ pub fn render(
         .min_height(90.0)
         // Panel bg = L0 chrome layer; inner padding substitutes for the old card stroke.
         .frame(
-            egui::Frame::none()
+            egui::Frame::new()
                 .fill(crate::theme::bg_of(flavor, crate::theme::Layer::L0))
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+                .inner_margin(egui::Margin::symmetric(14.0 as i8, 10.0 as i8)),
         )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {

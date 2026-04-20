@@ -980,7 +980,7 @@ impl eframe::App for MasterApp {
                 ui,
                 flavor,
                 theme::Layer::L1,
-                egui::Margin::symmetric(14.0, 10.0),
+                egui::Margin::symmetric(14.0 as i8, 10.0 as i8),
                 |ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&s.label).strong().size(13.5));
@@ -996,7 +996,7 @@ impl eframe::App for MasterApp {
             );
             ui.add_space(4.0);
 
-            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(14.0, 10.0), |ui| {
+            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(14.0 as i8, 10.0 as i8), |ui| {
             // Tab bar: Read / Write / Poll
             ui.horizontal(|ui| {
                 for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
@@ -1247,7 +1247,7 @@ impl eframe::App for MasterApp {
                 .unwrap_or((None, 0));
             let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
-                uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(12.0, 10.0), |ui| {
+                uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(12.0 as i8, 10.0 as i8), |ui| {
                 let title = if poll_latest.is_some() { "轮询结果" } else { "读取结果" };
                 let base = if poll_latest.is_some() { poll_addr } else { self.read_addr };
                 ui.label(egui::RichText::new(title).strong().size(12.5));

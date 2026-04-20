@@ -270,19 +270,19 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
         // Tight spacing — VS Code-like density
         s.spacing.item_spacing = egui::vec2(8.0, 4.0);
         s.spacing.button_padding = egui::vec2(9.0, 3.0);
-        s.spacing.menu_margin = egui::Margin::symmetric(6.0, 4.0);
+        s.spacing.menu_margin = egui::Margin::symmetric(6.0 as i8, 4.0 as i8);
         s.spacing.indent = 14.0;
         s.spacing.interact_size.y = 22.0;
 
         // Slight rounding — VS Code uses mostly 2-4px, not 8+
         let r: egui::Rounding = 3.0.into();
-        s.visuals.widgets.noninteractive.rounding = r;
-        s.visuals.widgets.inactive.rounding = r;
-        s.visuals.widgets.hovered.rounding = r;
-        s.visuals.widgets.active.rounding = r;
-        s.visuals.widgets.open.rounding = r;
-        s.visuals.window_rounding = 4.0.into();
-        s.visuals.menu_rounding = 4.0.into();
+        s.visuals.widgets.noninteractive.corner_radius = r;
+        s.visuals.widgets.inactive.corner_radius = r;
+        s.visuals.widgets.hovered.corner_radius = r;
+        s.visuals.widgets.active.corner_radius = r;
+        s.visuals.widgets.open.corner_radius = r;
+        s.visuals.window_corner_radius = 4.0.into();
+        s.visuals.menu_corner_radius = 4.0.into();
 
         // Type scale — smaller than our previous version, closer to VS Code
         use egui::TextStyle::*;

@@ -2177,7 +2177,7 @@ impl SlaveApp {
                     ui,
                     flavor,
                     theme::Layer::L1,
-                    egui::Margin::symmetric(14.0, 10.0),
+                    egui::Margin::symmetric(14.0 as i8, 10.0 as i8),
                     |ui| {
                         ui.horizontal(|ui| {
                             ui.heading(format!("{}  {}", reg_icon, group_label));
@@ -2297,7 +2297,7 @@ impl SlaveApp {
                     .size(Size::remainder().at_least(260.0))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0, 6.0), |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0 as i8, 6.0 as i8), |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let group_rows = view.row_count / stride;
@@ -2621,7 +2621,7 @@ impl SlaveApp {
                         }); // end StripBuilder left cell
                         strip.cell(|_ui| { });
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0, 10.0), |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0 as i8, 10.0 as i8), |ui| {
                             let mut selected_vals: Vec<u16> = Vec::new();
                             let mut base: Option<u16> = None;
                             // Only take up to 4 selected, in address order, and
@@ -2799,7 +2799,7 @@ impl eframe::App for SlaveApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L0))
-                    .inner_margin(egui::Margin::symmetric(12.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0 as i8, 10.0 as i8)),
             )
             .show(ctx, |ui| {
                 ui.heading("连接");
@@ -2863,7 +2863,7 @@ impl eframe::App for SlaveApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L1))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(14.0 as i8, 10.0 as i8)),
             )
             .show(ctx, |ui| {
                 self.render_main(ui);

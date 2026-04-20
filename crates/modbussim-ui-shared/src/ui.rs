@@ -31,10 +31,10 @@ fn card_colors(flavor: Flavor) -> (Color32, Color32) {
 /// background-layer differences instead of stroke borders.
 pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let (fill, stroke_color) = card_colors(flavor);
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(fill)
-        .rounding(2.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .corner_radius(2.0)
+        .inner_margin(egui::Margin::symmetric(10.0 as i8, 8.0 as i8))
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add)
         .inner
@@ -50,7 +50,7 @@ pub fn region<R>(
     margin: egui::Margin,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(theme::bg_of(flavor, layer))
         .inner_margin(margin)
         .show(ui, add)
@@ -66,14 +66,14 @@ pub fn accent_card<R>(
 ) -> R {
     let accent = crate::theme::accent(flavor);
     let (fill, stroke_color) = card_colors(flavor);
-    let resp = egui::Frame::none()
+    let resp = egui::Frame::new()
         .fill(fill)
-        .rounding(2.0)
+        .corner_radius(2.0)
         .inner_margin(egui::Margin {
-            left: 10.0,
-            right: 10.0,
-            top: 10.0,
-            bottom: 8.0,
+            left: 10,
+            right: 10,
+            top: 10,
+            bottom: 8,
         })
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add);
@@ -97,7 +97,7 @@ pub fn primary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> R
     )
     .fill(accent)
     .stroke(egui::Stroke::NONE)
-    .rounding(2.0)
+    .corner_radius(2.0)
     .min_size(egui::vec2(0.0, 24.0));
     ui.add(btn)
 }
@@ -109,7 +109,7 @@ pub fn secondary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) ->
     let btn = egui::Button::new(RichText::new(text.into()).size(13.0))
         .fill(theme::bg_of(flavor, Layer::L2))
         .stroke(egui::Stroke::NONE)
-        .rounding(2.0)
+        .corner_radius(2.0)
         .min_size(egui::vec2(0.0, 24.0));
     ui.add(btn)
 }
@@ -124,7 +124,7 @@ pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Re
     )
     .fill(red.linear_multiply(0.85))
     .stroke(egui::Stroke::NONE)
-    .rounding(2.0)
+    .corner_radius(2.0)
     .min_size(egui::vec2(0.0, 24.0));
     ui.add(btn)
 }
@@ -134,7 +134,7 @@ pub fn icon_button(ui: &mut Ui, _flavor: Flavor, icon: &str) -> Response {
     let btn = egui::Button::new(RichText::new(icon).size(14.0))
         .fill(Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
-        .rounding(2.0)
+        .corner_radius(2.0)
         .min_size(egui::vec2(24.0, 24.0));
     ui.add(btn)
 }
@@ -143,10 +143,10 @@ pub fn icon_button(ui: &mut Ui, _flavor: Flavor, icon: &str) -> Response {
 /// faint tinted background — never loud.
 pub fn status_pill(ui: &mut Ui, text: impl Into<String>, color: Color32) {
     let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 36);
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(bg)
-        .rounding(3.0)
-        .inner_margin(egui::Margin::symmetric(6.0, 1.0))
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(6.0 as i8, 1.0 as i8))
         .show(ui, |ui| {
             ui.label(RichText::new(text.into()).color(color).size(11.5));
         });
