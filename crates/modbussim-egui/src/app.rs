@@ -3118,6 +3118,14 @@ impl eframe::App for SlaveApp {
                     self.selected_addrs.clear();
                     self.click_anchor = None;
                 }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Slash)
+                    && matches!(
+                        self.selection,
+                        Selection::RegisterGroup { .. }
+                    )
+                {
+                    self.want_focus_search = true;
+                }
             });
         }
 
@@ -3343,7 +3351,7 @@ impl eframe::App for SlaveApp {
             .exact_height(22.0)
             .show_separator_line(false)
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(theme::bg_of(flavor, theme::Layer::L0))
                     .inner_margin(egui::Margin::symmetric(14.0 as i8, 4.0 as i8)),
             )
@@ -3407,7 +3415,7 @@ impl eframe::App for SlaveApp {
 
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L1))
                     .inner_margin(egui::Margin::symmetric(14.0 as i8, 10.0 as i8)),
             )
