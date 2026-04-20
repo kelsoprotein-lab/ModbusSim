@@ -53,6 +53,55 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+/// Three-level background layer for flat-layered visual style.
+/// Diff between neighbors ≥ 6 RGB units so regions are visually distinct
+/// without painting explicit stroke borders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layer {
+    /// Chrome (SidePanel, bottom log panel) — deepest.
+    L0,
+    /// Main content area (CentralPanel).
+    L1,
+    /// Data container (tables, TextEdit, slider track).
+    L2,
+}
+
+/// Background color for the given layer under the given flavor.
+pub fn bg_of(flavor: Flavor, layer: Layer) -> Color32 {
+    if flavor.is_dark() {
+        match layer {
+            Layer::L0 => rgb(0x1e, 0x1f, 0x22), // #1e1f22 chrome
+            Layer::L1 => rgb(0x2b, 0x2d, 0x30), // #2b2d30 main
+            Layer::L2 => rgb(0x31, 0x33, 0x38), // #313338 data container
+        }
+    } else {
+        match layer {
+            Layer::L0 => rgb(232, 232, 232), // #e8e8e8
+            Layer::L1 => rgb(245, 245, 245), // #f5f5f5
+            Layer::L2 => rgb(255, 255, 255), // #ffffff
+        }
+    }
+}
+
+/// Hover fill used by non-primary buttons and list rows.
+pub fn bg_hover(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() {
+        rgb(0x3c, 0x3f, 0x45)
+    } else {
+        rgb(0xe0, 0xe6, 0xed)
+    }
+}
+
+/// Selected row fill (applied full-row in register tables / scan-group list).
+pub fn bg_selected_row(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() {
+        // #214283 @ 30% alpha on L2 — rendered via rect_filled with alpha
+        Color32::from_rgba_unmultiplied(0x21, 0x42, 0x83, 0x4d)
+    } else {
+        rgb(0xc9, 0xda, 0xf8) // #c9daf8
+    }
+}
+
 /// VS Code Dark+ palette mapped into catppuccin_egui::Theme slots.
 ///   base    = editor bg          = #1e1e1e
 ///   mantle  = side bar / panels  = #252526
@@ -137,11 +186,11 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
     // fields ourselves to match the target industrial palette.
     ctx.style_mut(|s| {
         if flavor.is_dark() {
-            // Darcula warm-gray + orange accent
-            let panel = Color32::from_rgb(43, 43, 43);       // #2b2b2b (editor)
-            let panel_alt = Color32::from_rgb(60, 63, 65);   // #3c3f41 (tool window)
-            let input_bg = Color32::from_rgb(69, 73, 74);    // #45494a
-            let stroke = Color32::from_rgb(81, 86, 89);      // #515659
+            // Three-level layered Darcula + orange accent
+            let panel = bg_of(flavor, Layer::L1);            // #2b2d30 central
+            let panel_alt = bg_of(flavor, Layer::L0);        // #1e1f22 chrome (side / bottom)
+            let input_bg = bg_of(flavor, Layer::L2);         // #313338 input / data container
+            let stroke = Color32::from_rgb(81, 86, 89);      // #515659 (functional borders only)
             let fg = Color32::from_rgb(220, 223, 228);       // #dcdfe4 — brighter body
             let strong_fg = Color32::from_rgb(248, 248, 242); // #f8f8f2 — near-white for headers/strong
             let sel_bg = Color32::from_rgb(75, 110, 175);    // #4b6eaf — Darcula selection
@@ -157,10 +206,13 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
             s.visuals.widgets.noninteractive.fg_stroke.color = fg;
             s.visuals.widgets.inactive.bg_fill = input_bg;
             s.visuals.widgets.inactive.weak_bg_fill = panel_alt;
+            // Keep stroke for functional borders (TextEdit outlines); buttons
+            // override locally to NONE via primary/secondary/danger helpers.
             s.visuals.widgets.inactive.bg_stroke.color = stroke;
             s.visuals.widgets.inactive.fg_stroke.color = fg;
-            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(91, 95, 97);
-            s.visuals.widgets.hovered.bg_stroke.color = Color32::from_rgb(112, 116, 119);
+            s.visuals.widgets.hovered.bg_fill = bg_hover(flavor);
+            // No visible stroke on hover — flat-layered style
+            s.visuals.widgets.hovered.bg_stroke.color = bg_hover(flavor);
             s.visuals.widgets.hovered.fg_stroke.color = strong_fg;
             // active = pressed state AND egui uses its fg_stroke as strong_text_color()
             // for table headers. Use near-white so headers pop; orange bg is rarely
@@ -260,7 +312,12 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
 // --- Semantic color helpers used by app code ---
 
 pub fn accent(flavor: Flavor) -> Color32 {
-    flavor.palette().blue
+    // Darcula orange (#cc7832) for dark; redisant industrial blue for light.
+    if flavor.is_dark() {
+        flavor.palette().peach
+    } else {
+        flavor.palette().blue
+    }
 }
 
 pub fn success(flavor: Flavor) -> Color32 {

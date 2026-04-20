@@ -1,11 +1,12 @@
-//! Small reusable UI building blocks: card, primary_button, status_pill.
+//! Small reusable UI building blocks: region, card, primary_button, status_pill.
 //!
-//! Visual defaults follow VS Code: compact padding, subtle rounding, solid
-//! primary button (#0e639c fill + white text), transparent secondary.
+//! Visual defaults: Darcula three-level bg layering, orange accent
+//! (#cc7832 primary fill), no default stroke on buttons — hover relies on
+//! bg_hover fill instead of borders.
 
 use egui::{Color32, Response, RichText, Ui};
 
-use crate::theme::Flavor;
+use crate::theme::{self, Flavor, Layer};
 
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
     // Flat panel. Dark mode = Darcula tool-window fill #3c3f41 on editor
@@ -25,6 +26,9 @@ fn card_colors(flavor: Flavor) -> (Color32, Color32) {
 
 /// Flat bordered panel. No shadow, 2 px corner radius, 10 px padding — mimics
 /// the GroupBox / section divider used in desktop industrial tools.
+///
+/// Kept for backward compatibility; prefer `region` for new code which uses
+/// background-layer differences instead of stroke borders.
 pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let (fill, stroke_color) = card_colors(flavor);
     egui::Frame::none()
@@ -32,6 +36,23 @@ pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R
         .rounding(2.0)
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .stroke(egui::Stroke::new(1.0, stroke_color))
+        .show(ui, add)
+        .inner
+}
+
+/// Flat region: bg fill by layer + inner padding, **no stroke**. Use this
+/// to group content without painting a visible border — region boundaries
+/// come from the bg-layer delta between neighbors.
+pub fn region<R>(
+    ui: &mut Ui,
+    flavor: Flavor,
+    layer: Layer,
+    margin: egui::Margin,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    egui::Frame::none()
+        .fill(theme::bg_of(flavor, layer))
+        .inner_margin(margin)
         .show(ui, add)
         .inner
 }
@@ -66,39 +87,54 @@ pub fn accent_card<R>(
     resp.inner
 }
 
-/// Primary action button: solid accent fill, white text, tight padding.
+/// Primary action button: solid accent fill, white text, no stroke.
 pub fn primary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let accent = crate::theme::accent(flavor);
+    let accent = theme::accent(flavor);
     let btn = egui::Button::new(
         RichText::new(text.into())
             .color(Color32::WHITE)
             .size(13.0),
     )
     .fill(accent)
-    .rounding(3.0)
+    .stroke(egui::Stroke::NONE)
+    .rounding(2.0)
     .min_size(egui::vec2(0.0, 24.0));
     ui.add(btn)
 }
 
-/// Secondary (default) button: no fill, regular text color, subtle border.
+/// Secondary (default) button: transparent default, egui's global
+/// widgets.hovered.bg_fill takes over on hover. No stroke anywhere.
 pub fn secondary_button(ui: &mut Ui, _flavor: Flavor, text: impl Into<String>) -> Response {
     let btn = egui::Button::new(RichText::new(text.into()).size(13.0))
-        .rounding(3.0)
+        .fill(Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE)
+        .rounding(2.0)
         .min_size(egui::vec2(0.0, 24.0));
     ui.add(btn)
 }
 
-/// Danger / destructive button: slightly muted red fill.
+/// Danger / destructive button: slightly muted red fill, no stroke.
 pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let red = crate::theme::danger(flavor);
+    let red = theme::danger(flavor);
     let btn = egui::Button::new(
         RichText::new(text.into())
             .color(Color32::WHITE)
             .size(13.0),
     )
     .fill(red.linear_multiply(0.85))
-    .rounding(3.0)
+    .stroke(egui::Stroke::NONE)
+    .rounding(2.0)
     .min_size(egui::vec2(0.0, 24.0));
+    ui.add(btn)
+}
+
+/// Icon-only button: 24×24, transparent default, hover uses egui global bg.
+pub fn icon_button(ui: &mut Ui, _flavor: Flavor, icon: &str) -> Response {
+    let btn = egui::Button::new(RichText::new(icon).size(14.0))
+        .fill(Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE)
+        .rounding(2.0)
+        .min_size(egui::vec2(24.0, 24.0));
     ui.add(btn)
 }
 
