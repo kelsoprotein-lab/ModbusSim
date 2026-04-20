@@ -332,6 +332,10 @@ pub struct SlaveApp {
     log_cache: Vec<LogEntry>,
     log_cache_conn_id: Option<String>,
     log_last_refresh: Option<Instant>,
+
+    /// 右侧值解析面板是否显示。默认 true 兼容现有用户预期；可由
+    /// `V` 快捷键 / 视图菜单 / 工具栏 toggle 关掉以让表格全宽。
+    pub value_parse_open: bool,
 }
 
 pub struct BatchModalState {
@@ -501,6 +505,7 @@ impl SlaveApp {
             log_cache: Vec::new(),
             log_cache_conn_id: None,
             log_last_refresh: None,
+            value_parse_open: true,
         }
     }
 
@@ -1575,26 +1580,61 @@ fn endian_label(e: Endian) -> &'static str {
 impl SlaveApp {
     fn render_tree(&mut self, ui: &mut egui::Ui) -> Option<TreeAction> {
         let mut action: Option<TreeAction> = None;
+        let flavor = self.flavor;
+        let acc_color = theme::accent(flavor);
+        let acc_fg = theme::accent_fg(flavor);
+        let acc_fill = egui::Color32::from_rgba_unmultiplied(0x1f, 0x6f, 0xeb, 0x26);
+        let text_color = theme::text_body(flavor);
+        let muted_color = theme::text_muted(flavor);
+
+        // Paint a 2px left stripe + light-blue fill for an active row rect.
+        let paint_active_row = |ui: &egui::Ui, rect: egui::Rect| {
+            let painter = ui.painter();
+            painter.rect_filled(rect, 0.0, acc_fill);
+            let stripe_rect =
+                egui::Rect::from_min_size(rect.left_top(), egui::vec2(2.0, rect.height()));
+            painter.rect_filled(stripe_rect, 0.0, acc_color);
+        };
 
         for snap in &self.conn_snapshot {
-            let conn_is_selected = matches!(&self.selection, Selection::Connection(c) if c == &snap.id);
+            let conn_is_selected =
+                matches!(&self.selection, Selection::Connection(c) if c == &snap.id);
             let state_tag = match snap.state {
                 ConnectionState::Running => "运行中",
                 ConnectionState::Stopped => "已停止",
             };
+            let conn_label = format!("{} [{}]", snap.label, state_tag);
 
+            // Connection row
             ui.horizontal(|ui| {
                 let arrow = if snap.expanded { "▼" } else { "▶" };
                 if ui.small_button(arrow).clicked() {
                     action = Some(TreeAction::ToggleConn(snap.id.clone()));
                 }
-                if ui
-                    .selectable_label(conn_is_selected, format!("{} [{}]", snap.label, state_tag))
-                    .clicked()
-                {
+                let row_resp = ui.allocate_response(
+                    egui::vec2(ui.available_width(), 22.0),
+                    egui::Sense::click(),
+                );
+                if conn_is_selected {
+                    paint_active_row(ui, row_resp.rect);
+                } else if row_resp.hovered() {
+                    ui.painter()
+                        .rect_filled(row_resp.rect, 0.0, theme::bg_hover(flavor));
+                }
+                let label_color = if conn_is_selected { acc_fg } else { text_color };
+                ui.painter().text(
+                    row_resp.rect.left_center() + egui::vec2(4.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &conn_label,
+                    egui::FontId::proportional(12.5),
+                    label_color,
+                );
+                if row_resp.clicked() {
                     action = Some(TreeAction::SelectConn(snap.id.clone()));
                 }
             });
+
+            // Per-connection start/stop/delete buttons
             ui.horizontal(|ui| {
                 ui.add_space(18.0);
                 match snap.state {
@@ -1619,6 +1659,9 @@ impl SlaveApp {
                     let dev_is_selected = matches!(&self.selection,
                         Selection::Device { conn_id, slave_id }
                             if conn_id == &snap.id && *slave_id == dev.slave_id);
+                    let dev_label = format!("从站 {} · {}", dev.slave_id, dev.name);
+
+                    // Device row
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
                         let arrow = if dev.expanded { "▼" } else { "▶" };
@@ -1628,28 +1671,63 @@ impl SlaveApp {
                                 slave_id: dev.slave_id,
                             });
                         }
-                        if ui
-                            .selectable_label(
-                                dev_is_selected,
-                                format!("从站 {} · {}", dev.slave_id, dev.name),
-                            )
-                            .clicked()
-                        {
+                        let row_resp = ui.allocate_response(
+                            egui::vec2(ui.available_width(), 22.0),
+                            egui::Sense::click(),
+                        );
+                        if dev_is_selected {
+                            paint_active_row(ui, row_resp.rect);
+                        } else if row_resp.hovered() {
+                            ui.painter()
+                                .rect_filled(row_resp.rect, 0.0, theme::bg_hover(flavor));
+                        }
+                        let label_color = if dev_is_selected { acc_fg } else { text_color };
+                        ui.painter().text(
+                            row_resp.rect.left_center() + egui::vec2(4.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            &dev_label,
+                            egui::FontId::proportional(12.5),
+                            label_color,
+                        );
+                        if row_resp.clicked() {
                             action = Some(TreeAction::SelectDevice {
                                 conn_id: snap.id.clone(),
                                 slave_id: dev.slave_id,
                             });
                         }
                     });
+
                     if dev.expanded {
                         for (reg_type, label) in REG_GROUPS {
                             let grp_is_selected = matches!(&self.selection,
                                 Selection::RegisterGroup { conn_id, slave_id, reg_type: rt }
                                     if conn_id == &snap.id && *slave_id == dev.slave_id && rt == reg_type);
+                            let count = dev.counts.count_for(*reg_type);
+                            let grp_label = format!("{} ({})", label, count);
+
+                            // Register group row
                             ui.horizontal(|ui| {
                                 ui.add_space(32.0);
-                                let text = format!("{} ({})", label, dev.counts.count_for(*reg_type));
-                                if ui.selectable_label(grp_is_selected, text).clicked() {
+                                let row_resp = ui.allocate_response(
+                                    egui::vec2(ui.available_width(), 22.0),
+                                    egui::Sense::click(),
+                                );
+                                if grp_is_selected {
+                                    paint_active_row(ui, row_resp.rect);
+                                } else if row_resp.hovered() {
+                                    ui.painter()
+                                        .rect_filled(row_resp.rect, 0.0, theme::bg_hover(flavor));
+                                }
+                                let label_color =
+                                    if grp_is_selected { acc_fg } else { muted_color };
+                                ui.painter().text(
+                                    row_resp.rect.left_center() + egui::vec2(4.0, 0.0),
+                                    egui::Align2::LEFT_CENTER,
+                                    &grp_label,
+                                    egui::FontId::proportional(12.5),
+                                    label_color,
+                                );
+                                if row_resp.clicked() {
                                     action = Some(TreeAction::SelectGroup {
                                         conn_id: snap.id.clone(),
                                         slave_id: dev.slave_id,
@@ -2201,6 +2279,15 @@ impl SlaveApp {
                                         open_batch = true;
                                     }
                                     ui.add_space(8.0);
+                                    let toggle_label = if self.value_parse_open {
+                                        "◧ 收起解析"
+                                    } else {
+                                        "◧ 值解析 (V)"
+                                    };
+                                    if uikit::link_action(ui, flavor, toggle_label, false).clicked() {
+                                        self.value_parse_open = !self.value_parse_open;
+                                    }
+                                    ui.add_space(8.0);
                                     let resp = ui.add(
                                         egui::TextEdit::singleline(&mut search_text)
                                             .hint_text("地址 / 名称…")
@@ -2738,6 +2825,25 @@ impl eframe::App for SlaveApp {
             self.want_focus_search = true;
         }
 
+        // 视图快捷键：仅在没有 TextEdit 持有焦点时生效，避免在搜索框/数值
+        // 编辑器里输入字母触发面板切换。
+        if !ctx.memory(|m| m.focused().is_some()) {
+            ctx.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::V) {
+                    self.value_parse_open = !self.value_parse_open;
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::L) {
+                    self.log_state.collapsed = !self.log_state.collapsed;
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    && !self.selected_addrs.is_empty()
+                {
+                    self.selected_addrs.clear();
+                    self.click_anchor = None;
+                }
+            });
+        }
+
         // Fade highlights: drop any stale ones older than 2s.
         if let Some((_, _, _, _, t)) = &self.highlight {
             if t.elapsed().as_secs_f32() > 2.0 {
@@ -2803,7 +2909,7 @@ impl eframe::App for SlaveApp {
             .min_width(200.0)
             .show_separator_line(false)
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L0))
                     .inner_margin(egui::Margin::same(0)),
             )
@@ -2813,7 +2919,7 @@ impl eframe::App for SlaveApp {
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         // —— 头部：tiny_caps "连接" + 右上 + 新建 ——
-                        egui::Frame::none()
+                        egui::Frame::new()
                             .inner_margin(egui::Margin { left: 14, right: 10, top: 12, bottom: 8 })
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -2834,7 +2940,7 @@ impl eframe::App for SlaveApp {
 
                         // —— 新建 TCP 表单（可折叠）——
                         if self.show_new_tcp_dialog {
-                            egui::Frame::none()
+                            egui::Frame::new()
                                 .fill(theme::bg_of(self.flavor, theme::Layer::L2))
                                 .inner_margin(egui::Margin { left: 14, right: 10, top: 6, bottom: 8 })
                                 .show(ui, |ui| {
@@ -2869,7 +2975,7 @@ impl eframe::App for SlaveApp {
                             .auto_shrink([false, false])
                             .max_height(ui.available_height() - 40.0)
                             .show(ui, |ui| {
-                                egui::Frame::none()
+                                egui::Frame::new()
                                     .inner_margin(egui::Margin {
                                         left: 8,
                                         right: 8,
@@ -2885,7 +2991,7 @@ impl eframe::App for SlaveApp {
 
                         // —— footer：停止 / 删除连接 ——
                         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                            egui::Frame::none()
+                            egui::Frame::new()
                                 .fill(theme::bg_of(self.flavor, theme::Layer::L0))
                                 .stroke(egui::Stroke::new(
                                     1.0,
@@ -2946,26 +3052,56 @@ impl eframe::App for SlaveApp {
 
         let mut clear_error = false;
         let mut clear_status = false;
+        let conn_count = self.conn_snapshot.len();
+        let slave_count: usize = self.conn_snapshot.iter().map(|c| c.devices.len()).sum();
+        let flavor = self.flavor;
         egui::TopBottomPanel::bottom("status_bar")
             .resizable(false)
+            .exact_height(22.0)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::bg_of(flavor, theme::Layer::L0))
+                    .inner_margin(egui::Margin::symmetric(14.0 as i8, 4.0 as i8)),
+            )
             .show(ctx, |ui| {
-                if let Some(err) = &self.last_error {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::RED, err);
-                        if ui.small_button("清除").clicked() {
+                ui.horizontal(|ui| {
+                    if let Some(err) = &self.last_error {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new("●").color(theme::danger(flavor)).size(11.0),
+                        ));
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(err).color(theme::danger(flavor)).size(11.0),
+                        ));
+                        if uikit::link_action(ui, flavor, "清除", false).clicked() {
                             clear_error = true;
                         }
-                    });
-                } else if let Some(msg) = &self.status_msg {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
-                        if ui.small_button("清除").clicked() {
+                    } else if let Some(msg) = &self.status_msg {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new("●").color(theme::success(flavor)).size(11.0),
+                        ));
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(msg).color(theme::success(flavor)).size(11.0),
+                        ));
+                        if uikit::link_action(ui, flavor, "清除", false).clicked() {
                             clear_status = true;
                         }
+                    } else {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new("●").color(theme::success(flavor)).size(11.0),
+                        ));
+                        theme::text::crumb(ui, flavor, "就绪");
+                    }
+                    ui.add_space(14.0);
+                    theme::text::crumb(
+                        ui,
+                        flavor,
+                        &format!("{} 连接 · {} 从站", conn_count, slave_count),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        theme::text::crumb(ui, flavor, env!("CARGO_PKG_VERSION"));
                     });
-                } else {
-                    ui.label("就绪");
-                }
+                });
             });
         if clear_error { self.last_error = None; }
         if clear_status { self.status_msg = None; }
