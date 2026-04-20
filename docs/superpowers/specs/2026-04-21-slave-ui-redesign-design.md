@@ -75,7 +75,7 @@ Button    12.0   按钮
 Monospace 12.5   表格数值/地址
 Small     10.5   表头 / 面包屑 / 状态栏
 
-tiny_caps 10.5  大写、accent_fg 蓝、强调字重 → 表头、分组标题
+tiny_caps 10.5  letter-spacing +0.8、大写 → 表头、分组标题
 crumb     11.0  muted 色 → 面包屑
 ```
 
@@ -106,7 +106,7 @@ panel.inner_margin     14 / 12   (L/R / T/B)
 - 下行：`TextEdit` 搜索框（宽 200，1px 灰边，focus 蓝） + 绿色实心 `+ 批量添加`
 
 ### 工具栏（新，`CentralPanel` 内顶条）
-- 格式 pill：`#161b22` 底 + 1px 灰边 + 12px 圆角 + 蓝字
+- 格式 pill：`#161b22` 底 + 1px 灰边 + 12px 圆角 + 蓝字（复用 `ui-shared/src/ui.rs` 的 card 扩展）
 - 选中计数：`已选 N 行` muted
 - 右侧：`导出` / `清零` 透明次要按钮
 
@@ -116,48 +116,55 @@ panel.inner_margin     14 / 12   (L/R / T/B)
 - 行：
   - 地址：右对齐、muted
   - 别名：紫 `#d2a8ff`；空值显示 `—`
-  - 值：绿色粗体、右对齐；编辑态用 `DragValue` 右对齐
+  - 值：绿色粗体、右对齐；编辑态用 80px 宽 `TextEdit` 右对齐
   - HEX：橙 `#f0883e`
   - 二进制：muted 小号
 - 选中行：`#1f6feb @ 15% alpha`；hover 行：`bg.raised`
 - **移除 `striped(true)`**（与选中/hover 背景冲突）
 
-### 值解析抽屉（右侧可关闭，替换当前常驻列）
+### 值解析抽屉（右侧可关闭，替换当前常驻 `值解析` 列）
 - 默认不渲染；工具栏右侧加切换按钮 `◧ 值解析` 或快捷键 `V`
-- 打开：从右侧渲染 240px `egui::SidePanel::right`，`show_animated`
-- 内容：U16 / I16 / HEX / BIN / U32 / F32 纵向网格
-- 多行选中 (2–4 行) 时底部追加组合解析（U32/F32/ASCII 串）
-- 未选中时 empty state：`选中 1–4 行寄存器以查看`
+- 打开：从右侧渲染 240px 固定宽面板（`egui::SidePanel::right`）
+- 内容：
+  - 顶 `值解析 · <addr> · <alias>` tiny_caps + `×` 关闭
+  - 主体：`U16 / I16 / HEX / BIN / U32 / F32` 纵向网格
+  - 多行选中 (2–4 行) 时，底部追加组合解析（U32/F32/ASCII 串）
+- 未选中任何行时 empty state：`选中 1–4 行寄存器以查看多格式`
 
 ### 通信日志（log_panel.rs）
-- 单行头部：`▼ 通信日志 · slave_1 · N 条 | ☑RX ☑TX [过滤…] [清空] [导出 CSV] [关闭]`
-- 点 `▼` 折叠到仅头部
-- 列宽：时间 150 / 方向 28 / FC 60 / 详情 remainder
-- 方向：`←` 绿 / `→` 蓝；FC 橙；详情 body 色
-- 去掉行 striped
+- 单行头部 (替代当前多行):
+  `通信日志 · slave_1 (N 条)  | ☑RX ☑TX [过滤…] [清空] [导出 CSV] [折叠 ▾]`
+- 点标题/折叠图标 → 收起到仅头部
+- 列宽：时间 130 / 方向 28 / FC 50 / 详情 remainder
+- 方向：`←` 绿 / `→` 蓝；FC 橙
+- 去除"就绪"文字（移到新状态栏）
 
-### 状态栏（新增 `TopBottomPanel::bottom("statusbar")`）
+### 状态栏（新增 `TopBottomPanel::bottom("status")`）
 - 高度 22，字号 11，`bg.chrome` 底
-- 左：`● 就绪` (绿) / `N 连接 · M 从站`
-- 右：版本号 `env!("CARGO_PKG_VERSION")`
+- 左：`● 就绪` (绿) / `N 连接` / `M 从站`
+- 右：分支名（可选）
 
 ### 顶部菜单栏
 - 保留 `文件 / 视图 / 帮助`
-- `视图` 菜单新增：显示值解析 (V) / 显示通信日志 / 浅色深色切换
+- `视图` 菜单新增：切换主题 / 显示值解析 / 显示通信日志 / 重置布局
 
 ### 字体加载（fonts.rs, ~47）
 - 主字体保持系统 CJK 加载顺序
-- nice-to-have：Monospace 回退链 `SF Mono / Menlo / Consolas / JetBrains Mono`
+- 新增 Monospace 回退链：`SF Mono` / `Menlo` / `Consolas` / `JetBrains Mono` → 回退到 egui 默认，避免 CJK 混排跳帧
 
 ### 快捷键（新）
 - `V` 切值解析
 - `L` 切日志折叠
 - `/` 聚焦搜索
 - `Esc` 清除选中
+- 表格内：`↑ ↓` 移动、`Enter` 编辑、`Esc` 退编辑
 
 ## 主要修改文件清单
 
-- `crates/modbussim-ui-shared/src/theme.rs` — 重写 Layer 色值、Visuals、TextStyle、新增 tiny_caps/crumb helper、accent 换蓝
-- `crates/modbussim-ui-shared/src/ui.rs` — shadcn palette 同步、card 改 token、新增 panel_header/link_action
-- `crates/modbussim-ui-shared/src/log_panel.rs` — 单行 header + 折叠 + RX/TX 箭头
-- `crates/modbussim-egui/src/app.rs` — SidePanel/主区/表格/值解析抽屉/状态栏/快捷键
+- `crates/modbussim-ui-shared/src/theme.rs` — 重写 `Layer` 色值、Visuals、TextStyle 尺寸、新增 `tiny_caps` / `crumb` 命名样式、accent 换蓝
+- `crates/modbussim-ui-shared/src/ui.rs` — 调整 shadcn palette（primary 换蓝、success 绿、warn 橙）、pill 组件、操作链接样式
+- `crates/modbussim-ui-shared/src/fonts.rs` — Monospace 回退链
+- `crates/modbussim-ui-shared/src/log_panel.rs` — 合并头部单行化、加折叠、列色
+- `crates/modbussim-ui-shared/src/value_panel.rs` — 重写为可关闭抽屉组件（纵向网格）
+- `crates/modbussim-egui/src/app.rs` — SidePanel 宽/头/footer、主区头/工具栏、表格列与样式、值解析由列改为右 SidePanel、新状态栏 BottomPanel、快捷键
+- 新增 `docs/superpowers/specs/2026-04-21-slave-ui-redesign-design.md` — 同步正式 spec（plan 通过后落）
