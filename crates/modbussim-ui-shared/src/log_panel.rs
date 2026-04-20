@@ -1,12 +1,13 @@
 //! Shared communication-log panel: a bottom TopBottomPanel showing TX/RX
 //! entries with filter + search. Used by both the Slave and Master egui apps.
 
-use egui::Color32;
+use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_entry::{Direction, LogEntry};
 
 pub struct LogPanelState {
     pub open: bool,
+    pub collapsed: bool,
     pub show_rx: bool,
     pub show_tx: bool,
     pub filter_text: String,
@@ -16,6 +17,7 @@ impl LogPanelState {
     pub fn new() -> Self {
         Self {
             open: true,
+            collapsed: false,
             show_rx: true,
             show_tx: true,
             filter_text: String::new(),
@@ -77,68 +79,108 @@ pub fn render(
                 .inner_margin(egui::Margin::symmetric(14.0 as i8, 10.0 as i8)),
         )
         .show(ctx, |ui| {
+            // 单行 header：折叠箭头 + 标题 + 计数 + 右侧操作组
             ui.horizontal(|ui| {
-                ui.heading("通信日志");
+                let chev = if state.collapsed { "▶" } else { "▼" };
+                if ui
+                    .add(
+                        egui::Label::new(RichText::new(chev).size(11.0).color(crate::theme::text_muted(flavor)))
+                            .sense(egui::Sense::click()),
+                    )
+                    .clicked()
+                {
+                    state.collapsed = !state.collapsed;
+                }
+                ui.label(
+                    RichText::new("通信日志")
+                        .strong()
+                        .size(12.5)
+                        .color(crate::theme::text_primary(flavor)),
+                );
                 if let Some(label) = conn_label {
-                    ui.label(format!("· {} ({} 条)", label, cache.len()));
+                    crate::theme::text::crumb(
+                        ui,
+                        flavor,
+                        &format!("· {} · {} 条", label, cache.len()),
+                    );
                 } else {
-                    ui.label("（选中连接以查看）");
+                    crate::theme::text::crumb(ui, flavor, "· 选中连接以查看");
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::secondary_button(ui, flavor, "关闭")
-                        .on_hover_text("关闭日志面板")
-                        .clicked()
-                    {
+                    if crate::ui::link_action(ui, flavor, "关闭", false).clicked() {
                         action = LogPanelAction::Close;
                     }
-                    if crate::ui::secondary_button(ui, flavor, "导出 CSV").clicked() {
+                    if crate::ui::link_action(ui, flavor, "导出 CSV", false).clicked() {
                         action = LogPanelAction::Export;
                     }
-                    if crate::ui::secondary_button(ui, flavor, "清空").clicked() {
+                    if crate::ui::link_action(ui, flavor, "清空", false).clicked() {
                         action = LogPanelAction::Clear;
                     }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.filter_text)
+                            .hint_text("过滤…")
+                            .desired_width(160.0),
+                    );
+                    ui.checkbox(&mut state.show_tx, "TX");
+                    ui.checkbox(&mut state.show_rx, "RX");
                 });
             });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut state.show_rx, "RX");
-                ui.checkbox(&mut state.show_tx, "TX");
-                ui.label("过滤");
-                ui.text_edit_singleline(&mut state.filter_text);
-            });
-            ui.add_space(4.0);
+
+            if state.collapsed {
+                return;
+            }
+            ui.add_space(6.0);
 
             let entries: Vec<&LogEntry> =
                 cache.iter().rev().filter(|e| accepts(state, e)).collect();
 
             TableBuilder::new(ui)
-                .striped(true)
+                .striped(false)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .column(Column::exact(150.0))
-                .column(Column::exact(40.0))
+                .column(Column::exact(28.0))
                 .column(Column::exact(60.0))
                 .column(Column::remainder())
-                .header(20.0, |mut h| {
-                    h.col(|ui| { ui.strong("时间"); });
-                    h.col(|ui| { ui.strong("方向"); });
-                    h.col(|ui| { ui.strong("FC"); });
-                    h.col(|ui| { ui.strong("详情"); });
+                .header(22.0, |mut h| {
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "时间"));
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "向"));
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "FC"));
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "详情"));
                 })
                 .body(|body| {
                     body.rows(18.0, entries.len(), |mut row| {
                         let e = entries[row.index()];
                         row.col(|ui| {
-                            ui.monospace(e.timestamp.format("%H:%M:%S%.3f").to_string());
+                            ui.add(egui::Label::new(
+                                RichText::new(e.timestamp.format("%H:%M:%S%.3f").to_string())
+                                    .monospace()
+                                    .color(crate::theme::text_muted(flavor)),
+                            ));
                         });
                         row.col(|ui| {
-                            let (t, c) = match e.direction {
-                                Direction::Rx => ("RX", Color32::from_rgb(80, 160, 255)),
-                                Direction::Tx => ("TX", Color32::from_rgb(255, 160, 80)),
+                            let (sym, c) = match e.direction {
+                                Direction::Rx => ("←", crate::theme::success(flavor)),
+                                Direction::Tx => ("→", crate::theme::accent_fg(flavor)),
                             };
-                            ui.colored_label(c, t);
+                            ui.add(egui::Label::new(
+                                RichText::new(sym).color(c).strong().monospace(),
+                            ));
                         });
-                        row.col(|ui| { ui.monospace(e.function_code.name()); });
-                        row.col(|ui| { ui.monospace(&e.detail); });
+                        row.col(|ui| {
+                            ui.add(egui::Label::new(
+                                RichText::new(e.function_code.name())
+                                    .monospace()
+                                    .color(crate::theme::warn(flavor)),
+                            ));
+                        });
+                        row.col(|ui| {
+                            ui.add(egui::Label::new(
+                                RichText::new(&e.detail)
+                                    .monospace()
+                                    .color(crate::theme::text_body(flavor)),
+                            ));
+                        });
                     });
                 });
         });
