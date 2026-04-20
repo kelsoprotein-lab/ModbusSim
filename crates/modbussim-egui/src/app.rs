@@ -2449,16 +2449,26 @@ impl SlaveApp {
 
                     let body_row_count = filtered_addrs.as_ref().map(|v| v.len()).unwrap_or(view.row_count);
                     let avail_h = ui.available_height();
+                    // Column layout differs for bool: (地址 / 值 / 名称 / 注释)
+                    // vs u16: (地址 / 值 / Hex / Binary / 空).
                     let mut tb = TableBuilder::new(ui)
                         .striped(true)
                         .resizable(true)
                         .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(Column::exact(80.0))
-                        .column(Column::exact(110.0))
-                        .column(Column::exact(100.0))
-                        .column(Column::exact(140.0))
-                        .column(Column::remainder());
+                        .column(Column::exact(80.0));
+                    if is_bool {
+                        tb = tb
+                            .column(Column::exact(170.0))  // 值 (toggle_switch 40px + 留白)
+                            .column(Column::exact(200.0))  // 名称
+                            .column(Column::remainder()); // 注释
+                    } else {
+                        tb = tb
+                            .column(Column::exact(110.0))
+                            .column(Column::exact(100.0))
+                            .column(Column::exact(140.0))
+                            .column(Column::remainder());
+                    }
                     if let Some(idx) = scroll_to_row {
                         tb = tb.scroll_to_row(idx, Some(egui::Align::Center));
                     }
@@ -2469,19 +2479,20 @@ impl SlaveApp {
                             None
                         }
                     });
+                    let defs = view.defs.clone();
                     tb
                         .header(22.0, |mut header| {
                             header.col(|ui| { ui.strong("地址"); });
-                            header.col(|ui| {
-                                ui.strong(if is_bool { "布尔" } else { mode.label() });
-                            });
-                            header.col(|ui| {
-                                ui.strong(if is_bool { "—" } else { "Hex" });
-                            });
-                            header.col(|ui| {
-                                ui.strong(if is_bool { "—" } else { "Binary" });
-                            });
-                            header.col(|ui| { ui.strong(""); });
+                            if is_bool {
+                                header.col(|ui| { ui.strong("值"); });
+                                header.col(|ui| { ui.strong("名称"); });
+                                header.col(|ui| { ui.strong("注释"); });
+                            } else {
+                                header.col(|ui| { ui.strong(mode.label()); });
+                                header.col(|ui| { ui.strong("Hex"); });
+                                header.col(|ui| { ui.strong("Binary"); });
+                                header.col(|ui| { ui.strong(""); });
+                            }
                         })
                         .body(|body| {
                             body.rows(row_h, body_row_count, |mut row| {
@@ -2517,52 +2528,36 @@ impl SlaveApp {
                                 let key = (reg_type_v, addr);
 
                                 if is_bool {
+                                    let current = pending
+                                        .get(&key)
+                                        .map(|v| *v != 0)
+                                        .unwrap_or(cache_bool);
                                     row.col(|ui| {
-                                        let current = pending
-                                            .get(&key)
-                                            .map(|v| *v != 0)
-                                            .unwrap_or(cache_bool);
-                                        // Self-drawn ○/● + ON/OFF — no Button frame.
-                                        let (glyph, label, dot_color, text_color) = if current {
-                                            (
-                                                "●",
-                                                "ON",
-                                                theme::success(flavor),
-                                                egui::Color32::from_rgb(220, 223, 228),
-                                            )
-                                        } else {
-                                            (
-                                                "○",
-                                                "OFF",
-                                                egui::Color32::from_rgb(139, 143, 151),
-                                                egui::Color32::from_rgb(139, 143, 151),
-                                            )
-                                        };
-                                        let resp = ui
-                                            .horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 6.0;
-                                                ui.add(egui::Label::new(
-                                                    egui::RichText::new(glyph)
-                                                        .color(dot_color)
-                                                        .size(13.0),
-                                                ).sense(egui::Sense::click()));
-                                                ui.add(egui::Label::new(
-                                                    egui::RichText::new(label)
-                                                        .color(text_color)
-                                                        .size(12.0)
-                                                        .monospace(),
-                                                ).sense(egui::Sense::click()))
-                                            })
-                                            .inner;
-                                        if resp.clicked() {
-                                            let new_val = !current;
-                                            writes.push((addr, if new_val { 1 } else { 0 }));
+                                        let mut tmp = current;
+                                        let resp = uikit::toggle_switch(ui, flavor, &mut tmp);
+                                        if resp.clicked() && tmp != current {
+                                            writes.push((addr, if tmp { 1 } else { 0 }));
                                             pending.remove(&key);
                                         }
                                     });
-                                    row.col(|_| {});
-                                    row.col(|_| {});
-                                    row.col(|_| {});
+                                    let name = defs
+                                        .get(&addr)
+                                        .map(|(n, _)| n.clone())
+                                        .unwrap_or_default();
+                                    let comment = defs
+                                        .get(&addr)
+                                        .map(|(_, c)| c.clone())
+                                        .unwrap_or_default();
+                                    row.col(|ui| {
+                                        if !name.is_empty() {
+                                            ui.monospace(name);
+                                        }
+                                    });
+                                    row.col(|ui| {
+                                        if !comment.is_empty() {
+                                            ui.monospace(comment);
+                                        }
+                                    });
                                 } else {
                                     row.col(|ui| {
                                         let (min_i, max_i) = match mode {

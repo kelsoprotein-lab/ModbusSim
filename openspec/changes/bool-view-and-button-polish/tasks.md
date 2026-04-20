@@ -15,19 +15,19 @@
 
 ## 3. Bool 分支 TableBuilder 列重配置 + toggle 渲染
 
-- [ ] 3.1 `Selection::RegisterGroup` 的 is_bool 分支前，按 `is_bool` 分叉 TableBuilder 列配置：
+- [x] 3.1 `Selection::RegisterGroup` 的 is_bool 分支前，按 `is_bool` 分叉 TableBuilder 列配置：
   - `is_bool=true`: 4 列 `exact(80) / exact(170) / exact(200) / remainder`
   - `is_bool=false`: 保持现有 5 列 `exact(80) / exact(110) / exact(100) / exact(140) / remainder`
-- [ ] 3.2 header 行按 is_bool 分叉文案：bool 显示 `地址 / 值 / 名称 / 注释`（不再显示 `布尔` / `—` / `—` / `空`）
-- [ ] 3.3 body 行 bool 分支里：
+- [x] 3.2 header 行按 is_bool 分叉文案：bool 显示 `地址 / 值 / 名称 / 注释`（不再显示 `布尔` / `—` / `—` / `空`）
+- [x] 3.3 body 行 bool 分支里：
   - 第 1 列（地址）保持现有 SelectableLabel 点击支持 + row_clicks
   - 第 2 列：`let mut tmp = current; if toggle_switch(ui, flavor, &mut tmp).clicked() && tmp != current { writes.push((addr, if tmp { 1 } else { 0 })); pending.remove(&key); }`
   - 第 3 列：`let name = view.defs.get(&addr).map(|(n, _)| n.as_str()).unwrap_or(""); if !name.is_empty() { ui.monospace(name); }`
   - 第 4 列：同上但取 comment
   - 删除旧的自绘 ○/● + ON/OFF 代码块
-- [ ] 3.4 `cargo build -p modbussim-egui` 通过
-- [ ] 3.5 启动 Slave 手测：FC01 view 表头显示 `地址/值/名称/注释`；点 toggle 轨道翻转；hover 时滑块放大；"清空/关闭" 等次级按钮静止态肉眼可见
-- [ ] 3.6 commit: `style(slave): FC01/FC02 表格改 4 列（地址/值/名称/注释）+ toggle 开关`
+- [x] 3.4 `cargo build -p modbussim-egui` 通过
+- [x] 3.5 启动 Slave 手测：FC01 view 表头显示 `地址/值/名称/注释`；点 toggle 轨道翻转；hover 时滑块放大；"清空/关闭" 等次级按钮静止态肉眼可见
+- [x] 3.6 commit: `style(slave): FC01/FC02 表格改 4 列（地址/值/名称/注释）+ toggle 开关`
 
 ## 4. 回归 + push
 
