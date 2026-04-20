@@ -2008,14 +2008,17 @@ impl SlaveApp {
                 // the TableBuilder closure releases borrows.
                 let mut row_clicks: Vec<(u16, egui::Modifiers)> = Vec::new();
 
-                // Left = table (wide), right = ValuePanel (narrow).
-                let total_w = ui.available_width();
-                let table_w = (total_w * 0.62).max(480.0);
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(table_w, ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
+                // Left = table (~62% wide, fills vertical), right = ValuePanel.
+                // StripBuilder is the right primitive here — a plain
+                // ui.horizontal + allocate_ui collapses to 0 height inside a
+                // CentralPanel and draws the debug red warning box.
+                use egui_extras::{Size, StripBuilder};
+                StripBuilder::new(ui)
+                    .size(Size::relative(0.62).at_least(360.0))
+                    .size(Size::exact(8.0))
+                    .size(Size::remainder().at_least(260.0))
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let pair_rows = view.row_count / stride;
@@ -2209,33 +2212,35 @@ impl SlaveApp {
                         });
                 }
 
-                        }, // end table allocate_ui inner
-                    );
-                    // Right column: ValuePanel
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        let mut selected_vals: Vec<u16> = Vec::new();
-                        let mut base: Option<u16> = None;
-                        // Only take up to 4 selected, in address order, and
-                        // require them to be contiguous for multi-word analysis.
-                        let ordered: Vec<u16> = selected_addrs.iter().copied().take(4).collect();
-                        for (i, a) in ordered.iter().enumerate() {
-                            if i == 0 {
-                                base = Some(*a);
-                            } else if *a != ordered[i - 1] + 1 {
-                                // Non-contiguous: stop collecting so ValuePanel
-                                // only shows formats it can compute safely.
-                                break;
+                        }); // end StripBuilder left cell
+                        strip.cell(|ui| { ui.separator(); });
+                        strip.cell(|ui| {
+                            let mut selected_vals: Vec<u16> = Vec::new();
+                            let mut base: Option<u16> = None;
+                            // Only take up to 4 selected, in address order, and
+                            // require them to be contiguous for multi-word analysis.
+                            let ordered: Vec<u16> = selected_addrs.iter().copied().take(4).collect();
+                            for (i, a) in ordered.iter().enumerate() {
+                                if i == 0 {
+                                    base = Some(*a);
+                                } else if *a != ordered[i - 1] + 1 {
+                                    // Non-contiguous: stop collecting so ValuePanel
+                                    // only shows formats it can compute safely.
+                                    break;
+                                }
+                                if let Some(v) = view.u16_map.as_ref().and_then(|m| m.get(a).copied()) {
+                                    selected_vals.push(v);
+                                } else if let Some(b) = view.bool_map.as_ref().and_then(|m| m.get(a).copied()) {
+                                    selected_vals.push(if b { 1 } else { 0 });
+                                }
                             }
-                            if let Some(v) = view.u16_map.as_ref().and_then(|m| m.get(a).copied()) {
-                                selected_vals.push(v);
-                            } else if let Some(b) = view.bool_map.as_ref().and_then(|m| m.get(a).copied()) {
-                                selected_vals.push(if b { 1 } else { 0 });
+                            if let Some(vp_writes) = value_panel::render(ui, flavor, &selected_vals, base) {
+                                for w in vp_writes {
+                                    writes.push(w);
+                                }
                             }
-                        }
-                        value_panel::render(ui, flavor, &selected_vals, base);
-                    });
-                }); // end horizontal
+                        });
+                    }); // end StripBuilder horizontal
 
                 // Apply row clicks to selected_addrs with modifier semantics.
                 if !row_clicks.is_empty() {
