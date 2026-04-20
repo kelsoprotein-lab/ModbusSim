@@ -16,7 +16,7 @@ use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::theme::{self, Flavor};
 use modbussim_ui_shared::ui as uikit;
-use modbussim_ui_shared::value_panel;
+use modbussim_ui_shared::value_panel::{self, F64Order};
 use modbussim_ui_shared::project::{
     deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
 };
@@ -1324,7 +1324,7 @@ pub enum ValueDisplayMode {
     F32(Endian),
     U32(Endian),
     I32(Endian),
-    F64(Endian),
+    F64(F64Order),
 }
 
 impl ValueDisplayMode {
@@ -1344,10 +1344,10 @@ impl ValueDisplayMode {
             Self::I32(Endian::Little) => "I32 CD AB",
             Self::I32(Endian::MidBig) => "I32 BA DC",
             Self::I32(Endian::MidLittle) => "I32 DC BA",
-            Self::F64(Endian::Big) => "F64 AB CD",
-            Self::F64(Endian::Little) => "F64 CD AB",
-            Self::F64(Endian::MidBig) => "F64 BA DC",
-            Self::F64(Endian::MidLittle) => "F64 DC BA",
+            Self::F64(F64Order::Abcdefgh) => "F64 ABCDEFGH",
+            Self::F64(F64Order::Hgfedcba) => "F64 HGFEDCBA",
+            Self::F64(F64Order::Badcfehg) => "F64 BADCFEHG",
+            Self::F64(F64Order::Ghefcdab) => "F64 GHEFCDAB",
         }
     }
     pub fn is_multi_word(&self) -> bool {
@@ -1373,10 +1373,10 @@ const DISPLAY_MODES: &[ValueDisplayMode] = &[
     ValueDisplayMode::U32(Endian::Little),
     ValueDisplayMode::I32(Endian::Big),
     ValueDisplayMode::I32(Endian::Little),
-    ValueDisplayMode::F64(Endian::Big),
-    ValueDisplayMode::F64(Endian::Little),
-    ValueDisplayMode::F64(Endian::MidBig),
-    ValueDisplayMode::F64(Endian::MidLittle),
+    ValueDisplayMode::F64(F64Order::Abcdefgh),
+    ValueDisplayMode::F64(F64Order::Hgfedcba),
+    ValueDisplayMode::F64(F64Order::Badcfehg),
+    ValueDisplayMode::F64(F64Order::Ghefcdab),
 ];
 
 const DATA_TYPES: &[DataType] = &[
@@ -1389,29 +1389,6 @@ const DATA_TYPES: &[DataType] = &[
 ];
 
 const ENDIANS: &[Endian] = &[Endian::Big, Endian::Little, Endian::MidBig, Endian::MidLittle];
-
-/// Combine 4 u16 words into big-endian f64 bytes under the given byte order.
-/// Mirrors the word_pair composition used in modbussim_ui_shared::value_panel
-/// so the Slave's F64 table and the Master's ValuePanel agree.
-fn f64_bytes_from_words(ws: &[u16], endian: Endian) -> [u8; 8] {
-    let w0 = ws.first().copied().unwrap_or(0);
-    let w1 = ws.get(1).copied().unwrap_or(0);
-    let w2 = ws.get(2).copied().unwrap_or(0);
-    let w3 = ws.get(3).copied().unwrap_or(0);
-    let pair = |a: u16, b: u16| -> (u8, u8, u8, u8) {
-        let r0 = a.to_be_bytes();
-        let r1 = b.to_be_bytes();
-        match endian {
-            Endian::Big => (r0[0], r0[1], r1[0], r1[1]),
-            Endian::Little => (r1[0], r1[1], r0[0], r0[1]),
-            Endian::MidBig => (r0[1], r0[0], r1[1], r1[0]),
-            Endian::MidLittle => (r1[1], r1[0], r0[1], r0[0]),
-        }
-    };
-    let (a0, b0, c0, d0) = pair(w0, w1);
-    let (a1, b1, c1, d1) = pair(w2, w3);
-    [a0, b0, c0, d0, a1, b1, c1, d1]
-}
 
 fn selection_conn_id(s: &Selection) -> Option<&str> {
     match s {
@@ -2077,9 +2054,12 @@ impl SlaveApp {
                     let endian = match mode {
                         ValueDisplayMode::F32(e)
                         | ValueDisplayMode::U32(e)
-                        | ValueDisplayMode::I32(e)
-                        | ValueDisplayMode::F64(e) => e,
+                        | ValueDisplayMode::I32(e) => e,
                         _ => Endian::Big,
+                    };
+                    let f64_order = match mode {
+                        ValueDisplayMode::F64(o) => o,
+                        _ => F64Order::Abcdefgh,
                     };
                     let avail_h = ui.available_height();
                     TableBuilder::new(ui)
@@ -2151,8 +2131,7 @@ impl SlaveApp {
                                             format!("{}", d as i32)
                                         }
                                         ValueDisplayMode::F64(_) => {
-                                            let bytes = f64_bytes_from_words(&ws, endian);
-                                            let v = f64::from_be_bytes(bytes);
+                                            let v = value_panel::decode_f64(&ws, f64_order);
                                             if v.is_finite() {
                                                 format!("{:.9}", v)
                                             } else {

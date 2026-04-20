@@ -23,6 +23,59 @@ const ENDIANS: [(Endian, &str); 4] = [
     (Endian::MidLittle, "DC BA"),
 ];
 
+/// 64-bit byte order naming follows the Modbus convention of spelling all 8
+/// bytes. Four common combinations cover most industry devices.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum F64Order {
+    Abcdefgh, // full big-endian
+    Hgfedcba, // full little-endian
+    Badcfehg, // byte-swap within each 16-bit word
+    Ghefcdab, // word-swap (reverse word order, bytes big-endian within)
+}
+
+const F64_ORDERS: [(F64Order, &str); 4] = [
+    (F64Order::Abcdefgh, "ABCDEFGH"),
+    (F64Order::Hgfedcba, "HGFEDCBA"),
+    (F64Order::Badcfehg, "BADCFEHG"),
+    (F64Order::Ghefcdab, "GHEFCDAB"),
+];
+
+/// Decode 4 u16 registers as an f64 under the given 8-byte order.
+pub fn decode_f64(ws: &[u16], order: F64Order) -> f64 {
+    let w0 = ws.first().copied().unwrap_or(0);
+    let w1 = ws.get(1).copied().unwrap_or(0);
+    let w2 = ws.get(2).copied().unwrap_or(0);
+    let w3 = ws.get(3).copied().unwrap_or(0);
+    let b0 = w0.to_be_bytes();
+    let b1 = w1.to_be_bytes();
+    let b2 = w2.to_be_bytes();
+    let b3 = w3.to_be_bytes();
+    let bytes: [u8; 8] = match order {
+        F64Order::Abcdefgh => [b0[0], b0[1], b1[0], b1[1], b2[0], b2[1], b3[0], b3[1]],
+        F64Order::Hgfedcba => [b3[1], b3[0], b2[1], b2[0], b1[1], b1[0], b0[1], b0[0]],
+        F64Order::Badcfehg => [b0[1], b0[0], b1[1], b1[0], b2[1], b2[0], b3[1], b3[0]],
+        F64Order::Ghefcdab => [b3[0], b3[1], b2[0], b2[1], b1[0], b1[1], b0[0], b0[1]],
+    };
+    f64::from_be_bytes(bytes)
+}
+
+/// Encode an f64 back into 4 u16 registers under the given 8-byte order.
+pub fn encode_f64(value: f64, order: F64Order) -> [u16; 4] {
+    let b = value.to_be_bytes(); // [A, B, C, D, E, F, G, H]
+    let out: [u8; 8] = match order {
+        F64Order::Abcdefgh => [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]],
+        F64Order::Hgfedcba => [b[7], b[6], b[5], b[4], b[3], b[2], b[1], b[0]],
+        F64Order::Badcfehg => [b[1], b[0], b[3], b[2], b[5], b[4], b[7], b[6]],
+        F64Order::Ghefcdab => [b[6], b[7], b[4], b[5], b[2], b[3], b[0], b[1]],
+    };
+    [
+        u16::from_be_bytes([out[0], out[1]]),
+        u16::from_be_bytes([out[2], out[3]]),
+        u16::from_be_bytes([out[4], out[5]]),
+        u16::from_be_bytes([out[6], out[7]]),
+    ]
+}
+
 /// Render the panel. Returns writes `(addr, value)` if the user committed
 /// an edit this frame, else None.
 pub fn render(
@@ -320,9 +373,14 @@ fn render_quad(
         .spacing([12.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            for (e, label) in ENDIANS {
+            for (order, label) in F64_ORDERS {
                 ui.monospace(label);
-                let display = format_f64(&words, e);
+                let v = decode_f64(&words, order);
+                let display = if v.is_finite() {
+                    format!("{:.9}", v)
+                } else {
+                    "NaN / Inf".to_string()
+                };
                 out = combine(
                     out.take(),
                     edit_cell(
@@ -332,18 +390,12 @@ fn render_quad(
                         h,
                         move |s| {
                             let f: f64 = s.parse().ok()?;
-                            let bits = f.to_bits();
-                            let w0 = ((bits >> 48) & 0xFFFF) as u16;
-                            let w1 = ((bits >> 32) & 0xFFFF) as u16;
-                            let w2 = ((bits >> 16) & 0xFFFF) as u16;
-                            let w3 = (bits & 0xFFFF) as u16;
-                            let p0 = encode_u32(((w0 as u32) << 16) | w1 as u32, e);
-                            let p1 = encode_u32(((w2 as u32) << 16) | w3 as u32, e);
+                            let w = encode_f64(f, order);
                             Some(vec![
-                                (base, p0[0]),
-                                (base + 1, p0[1]),
-                                (base + 2, p1[0]),
-                                (base + 3, p1[1]),
+                                (base, w[0]),
+                                (base + 1, w[1]),
+                                (base + 2, w[2]),
+                                (base + 3, w[3]),
                             ])
                         },
                     ),
@@ -365,34 +417,6 @@ fn format_dt(words: &[u16], data_type: DataType, endian: Endian) -> String {
             _ => "—".to_string(),
         },
         Err(_) => "—".to_string(),
-    }
-}
-
-fn format_f64(words: &[u16; 4], endian: Endian) -> String {
-    let bytes = apply_endian_4(words, endian);
-    let v = f64::from_be_bytes(bytes);
-    if v.is_finite() {
-        format!("{:.9}", v)
-    } else {
-        "NaN / Inf".to_string()
-    }
-}
-
-fn apply_endian_4(words: &[u16; 4], endian: Endian) -> [u8; 8] {
-    let [w0, w1, w2, w3] = *words;
-    let (a0, b0, c0, d0) = word_pair_to_bytes(w0, w1, endian);
-    let (a1, b1, c1, d1) = word_pair_to_bytes(w2, w3, endian);
-    [a0, b0, c0, d0, a1, b1, c1, d1]
-}
-
-fn word_pair_to_bytes(reg0: u16, reg1: u16, endian: Endian) -> (u8, u8, u8, u8) {
-    let r0 = reg0.to_be_bytes();
-    let r1 = reg1.to_be_bytes();
-    match endian {
-        Endian::Big => (r0[0], r0[1], r1[0], r1[1]),
-        Endian::Little => (r1[0], r1[1], r0[0], r0[1]),
-        Endian::MidBig => (r0[1], r0[0], r1[1], r1[0]),
-        Endian::MidLittle => (r1[1], r1[0], r0[1], r0[0]),
     }
 }
 
@@ -433,9 +457,23 @@ mod tests {
     }
 
     #[test]
-    fn f64_big_order() {
-        let s = format_f64(&[0x3FF0, 0x0000, 0x0000, 0x0000], Endian::Big);
-        assert!(s.starts_with("1."), "got={s}");
+    fn f64_abcdefgh_decodes_one() {
+        let v = decode_f64(&[0x3FF0, 0x0000, 0x0000, 0x0000], F64Order::Abcdefgh);
+        assert!((v - 1.0).abs() < 1e-12, "got={v}");
+    }
+
+    #[test]
+    fn f64_encode_decode_roundtrip() {
+        for order in [
+            F64Order::Abcdefgh,
+            F64Order::Hgfedcba,
+            F64Order::Badcfehg,
+            F64Order::Ghefcdab,
+        ] {
+            let w = encode_f64(3.141592653589793, order);
+            let back = decode_f64(&w, order);
+            assert!((back - 3.141592653589793).abs() < 1e-12);
+        }
     }
 
     #[test]
