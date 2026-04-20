@@ -21,7 +21,6 @@ use modbussim_ui_shared::ui as uikit;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
-const POLL_GROUP_ID: &str = "default";
 
 pub struct MasterConnectionEntry {
     pub id: String,
@@ -37,12 +36,13 @@ pub enum UiEvent {
     ConnectionStateChanged { id: String, state: MasterState },
     ConnectionRemoved(String),
     ReadDone { id: String, result: ReadResult },
-    PollStarted(String),
-    PollStopped(String),
-    PollUpdate { id: String, result: ReadResult },
-    PollError { id: String, msg: String },
+    PollStarted { id: String, group_id: String },
+    PollStopped { id: String, group_id: String },
+    PollUpdate { id: String, group_id: String, result: ReadResult },
+    PollError { id: String, group_id: String, msg: String },
     PollConfigLoaded {
         id: String,
+        group_id: String,
         fc: ReadFunction,
         addr: u16,
         qty: u16,
@@ -52,8 +52,11 @@ pub enum UiEvent {
     Error(String),
 }
 
+/// One scan group belonging to a master connection.
 #[derive(Clone)]
-pub struct PollUi {
+pub struct ScanGroupUi {
+    pub id: String,           // stable id, used as core::ScanGroup.id
+    pub name: String,         // user-facing label
     pub fc: ReadFunction,
     pub addr: u16,
     pub qty: u16,
@@ -64,9 +67,11 @@ pub struct PollUi {
     pub last_error: Option<String>,
 }
 
-impl Default for PollUi {
-    fn default() -> Self {
+impl ScanGroupUi {
+    pub fn new_with_id(id: String) -> Self {
         Self {
+            name: id.clone(),
+            id,
             fc: ReadFunction::ReadHoldingRegisters,
             addr: 0,
             qty: 10,
@@ -131,8 +136,10 @@ pub struct MasterApp {
     write_value: i32,
     write_is_coil: bool,
 
-    // Polling (per connection)
-    polling: HashMap<String, PollUi>,
+    // Polling (per connection): ordered list of scan groups + current selection index
+    polling: HashMap<String, Vec<ScanGroupUi>>,
+    selected_group: HashMap<String, usize>,
+    next_group_seq: u64,
 
     // Log panel
     log_state: LogPanelState,
@@ -170,6 +177,8 @@ impl MasterApp {
             write_value: 0,
             write_is_coil: false,
             polling: HashMap::new(),
+            selected_group: HashMap::new(),
+            next_group_seq: 1,
             log_state: LogPanelState::new(),
             log_cache: Vec::new(),
             log_cache_conn_id: None,
@@ -324,11 +333,25 @@ impl MasterApp {
         ctx.request_repaint();
     }
 
-    fn start_poll(&self, id: String, ctx: egui::Context) {
-        let Some(poll) = self.polling.get(&id).cloned() else { return };
+    fn find_group_mut(&mut self, conn_id: &str, group_id: &str) -> Option<&mut ScanGroupUi> {
+        self.polling
+            .get_mut(conn_id)
+            .and_then(|v| v.iter_mut().find(|g| g.id == group_id))
+    }
+
+    fn start_poll(&self, id: String, group_idx: usize, ctx: egui::Context) {
+        let Some(group) = self
+            .polling
+            .get(&id)
+            .and_then(|v| v.get(group_idx))
+            .cloned()
+        else {
+            return;
+        };
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         let ctx2 = ctx.clone();
+        let group_id = group.id.clone();
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -341,20 +364,20 @@ impl MasterApp {
                 return;
             };
 
-            let group = ScanGroup {
-                id: POLL_GROUP_ID.to_string(),
-                name: format!("poll_{id}"),
-                function: poll.fc,
-                start_address: poll.addr,
-                quantity: poll.qty,
-                interval_ms: poll.interval_ms,
+            let core_group = ScanGroup {
+                id: group.id.clone(),
+                name: group.name.clone(),
+                function: group.fc,
+                start_address: group.addr,
+                quantity: group.qty,
+                interval_ms: group.interval_ms,
                 enabled: true,
                 slave_id: None,
             };
 
             let rx = {
                 let mut guard = conn_arc.write().await;
-                match guard.start_scan_group(&group).await {
+                match guard.start_scan_group(&core_group).await {
                     Ok(rx) => rx,
                     Err(e) => {
                         let _ = tx.send(UiEvent::Error(format!("启动轮询失败: {e}")));
@@ -363,26 +386,44 @@ impl MasterApp {
                 }
             };
 
-            let _ = tx.send(UiEvent::PollStarted(id.clone()));
-            // Consume PollEvent stream until sender drops (i.e., stop_scan_group was called).
+            let _ = tx.send(UiEvent::PollStarted {
+                id: id.clone(),
+                group_id: group_id.clone(),
+            });
             let mut rx = rx;
             while let Some(ev) = rx.recv().await {
                 match ev {
                     PollEvent::Data(r) => {
-                        let _ = tx.send(UiEvent::PollUpdate { id: id.clone(), result: r });
+                        let _ = tx.send(UiEvent::PollUpdate {
+                            id: id.clone(),
+                            group_id: group_id.clone(),
+                            result: r,
+                        });
                         ctx2.request_repaint();
                     }
                     PollEvent::Error(e) => {
-                        let _ = tx.send(UiEvent::PollError { id: id.clone(), msg: e });
+                        let _ = tx.send(UiEvent::PollError {
+                            id: id.clone(),
+                            group_id: group_id.clone(),
+                            msg: e,
+                        });
                     }
                 }
             }
-            let _ = tx.send(UiEvent::PollStopped(id));
+            let _ = tx.send(UiEvent::PollStopped { id, group_id });
         });
         ctx.request_repaint();
     }
 
-    fn stop_poll(&self, id: String, ctx: egui::Context) {
+    fn stop_poll(&self, id: String, group_idx: usize, ctx: egui::Context) {
+        let Some(gid) = self
+            .polling
+            .get(&id)
+            .and_then(|v| v.get(group_idx))
+            .map(|g| g.id.clone())
+        else {
+            return;
+        };
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         self.rt.spawn(async move {
@@ -394,12 +435,35 @@ impl MasterApp {
                 .map(|e| e.connection.clone());
             if let Some(conn_arc) = conn_arc {
                 let mut guard = conn_arc.write().await;
-                if let Err(e) = guard.stop_scan_group(POLL_GROUP_ID).await {
+                if let Err(e) = guard.stop_scan_group(&gid).await {
                     let _ = tx.send(UiEvent::Error(format!("停止轮询失败: {e}")));
                 }
             }
         });
         ctx.request_repaint();
+    }
+
+    fn add_scan_group(&mut self, conn_id: String) {
+        let gid = format!("group_{}", self.next_group_seq);
+        self.next_group_seq += 1;
+        let mut g = ScanGroupUi::new_with_id(gid);
+        g.name = format!("组 {}", self.polling.get(&conn_id).map(|v| v.len() + 1).unwrap_or(1));
+        let list = self.polling.entry(conn_id.clone()).or_default();
+        list.push(g);
+        let new_idx = list.len() - 1;
+        self.selected_group.insert(conn_id, new_idx);
+    }
+
+    fn remove_scan_group(&mut self, conn_id: String, group_idx: usize, ctx: egui::Context) {
+        // Ensure the group is stopped before removal.
+        self.stop_poll(conn_id.clone(), group_idx, ctx);
+        if let Some(list) = self.polling.get_mut(&conn_id) {
+            if group_idx < list.len() {
+                list.remove(group_idx);
+                let new_sel = if list.is_empty() { 0 } else { group_idx.saturating_sub(1).min(list.len() - 1) };
+                self.selected_group.insert(conn_id, new_sel);
+            }
+        }
     }
 
     fn do_read(&self, id: String, ctx: egui::Context) {
@@ -496,18 +560,25 @@ impl MasterApp {
                 })
                 .unwrap_or_else(|| ("127.0.0.1".to_string(), 502, 3000));
 
-            let poll = self.polling.get(&s.id).map(|p| PollSave {
-                function: match p.fc {
-                    ReadFunction::ReadCoils => "read_coils",
-                    ReadFunction::ReadDiscreteInputs => "read_discrete_inputs",
-                    ReadFunction::ReadHoldingRegisters => "read_holding_registers",
-                    ReadFunction::ReadInputRegisters => "read_input_registers",
-                }
-                .to_string(),
-                addr: p.addr,
-                qty: p.qty,
-                interval_ms: p.interval_ms,
-            });
+            // Schema v2 currently stores only one poll per connection. When a
+            // connection has multiple scan groups, persist the first one only;
+            // v3 will upgrade to a `Vec<PollSave>`.
+            let poll = self
+                .polling
+                .get(&s.id)
+                .and_then(|v| v.first())
+                .map(|p| PollSave {
+                    function: match p.fc {
+                        ReadFunction::ReadCoils => "read_coils",
+                        ReadFunction::ReadDiscreteInputs => "read_discrete_inputs",
+                        ReadFunction::ReadHoldingRegisters => "read_holding_registers",
+                        ReadFunction::ReadInputRegisters => "read_input_registers",
+                    }
+                    .to_string(),
+                    addr: p.addr,
+                    qty: p.qty,
+                    interval_ms: p.interval_ms,
+                });
 
             proj.connections.push(MasterConnectionSave {
                 label: s.label.clone(),
@@ -621,6 +692,7 @@ impl MasterApp {
                     };
                     let _ = tx.send(UiEvent::PollConfigLoaded {
                         id,
+                        group_id: "group_loaded_0".to_string(),
                         fc,
                         addr: ps.addr,
                         qty: ps.qty,
@@ -652,37 +724,42 @@ impl MasterApp {
                 UiEvent::ConnectionRemoved(id) => {
                     self.snap.retain(|s| s.id != id);
                     self.polling.remove(&id);
+                    self.selected_group.remove(&id);
                 }
                 UiEvent::ReadDone { id: _, result } => {
                     self.read_result = Some(result);
                 }
-                UiEvent::PollStarted(id) => {
-                    let p = self.polling.entry(id).or_default();
-                    p.enabled = true;
-                    p.last_error = None;
-                }
-                UiEvent::PollStopped(id) => {
-                    if let Some(p) = self.polling.get_mut(&id) {
-                        p.enabled = false;
+                UiEvent::PollStarted { id, group_id } => {
+                    if let Some(g) = self.find_group_mut(&id, &group_id) {
+                        g.enabled = true;
+                        g.last_error = None;
                     }
                 }
-                UiEvent::PollUpdate { id, result } => {
-                    let p = self.polling.entry(id).or_default();
-                    p.latest = Some(result);
-                    p.last_update = Some(Instant::now());
-                    p.last_error = None;
-                }
-                UiEvent::PollError { id, msg } => {
-                    if let Some(p) = self.polling.get_mut(&id) {
-                        p.last_error = Some(msg);
+                UiEvent::PollStopped { id, group_id } => {
+                    if let Some(g) = self.find_group_mut(&id, &group_id) {
+                        g.enabled = false;
                     }
                 }
-                UiEvent::PollConfigLoaded { id, fc, addr, qty, interval_ms } => {
-                    let p = self.polling.entry(id).or_default();
-                    p.fc = fc;
-                    p.addr = addr;
-                    p.qty = qty;
-                    p.interval_ms = interval_ms;
+                UiEvent::PollUpdate { id, group_id, result } => {
+                    if let Some(g) = self.find_group_mut(&id, &group_id) {
+                        g.latest = Some(result);
+                        g.last_update = Some(Instant::now());
+                        g.last_error = None;
+                    }
+                }
+                UiEvent::PollError { id, group_id, msg } => {
+                    if let Some(g) = self.find_group_mut(&id, &group_id) {
+                        g.last_error = Some(msg);
+                    }
+                }
+                UiEvent::PollConfigLoaded { id, group_id, fc, addr, qty, interval_ms } => {
+                    let list = self.polling.entry(id).or_default();
+                    let mut g = ScanGroupUi::new_with_id(group_id);
+                    g.fc = fc;
+                    g.addr = addr;
+                    g.qty = qty;
+                    g.interval_ms = interval_ms;
+                    list.push(g);
                 }
                 UiEvent::Info(msg) => self.status_msg = Some(msg),
                 UiEvent::Error(msg) => self.last_error = Some(msg),
@@ -878,8 +955,8 @@ impl eframe::App for MasterApp {
         // Central: read/write forms + result
         let mut do_read_id: Option<String> = None;
         let mut do_write_id: Option<String> = None;
-        let mut do_start_poll_id: Option<String> = None;
-        let mut do_stop_poll_id: Option<String> = None;
+        let mut do_start_poll_id: Option<(String, usize)> = None;
+        let mut do_stop_poll_id: Option<(String, usize)> = None;
         let flavor = self.flavor;
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(id) = self.selected.clone() else {
@@ -1008,71 +1085,156 @@ impl eframe::App for MasterApp {
                     });
                 }
                 MasterTab::Poll => {
-                    let pu = self.polling.entry(id.clone()).or_default();
-                    egui::Grid::new("poll_form")
-                        .num_columns(2)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("功能码");
-                            egui::ComboBox::from_id_salt("poll_fc")
-                                .selected_text(read_fc_label(pu.fc))
-                                .show_ui(ui, |ui| {
-                                    for f in [
-                                        ReadFunction::ReadCoils,
-                                        ReadFunction::ReadDiscreteInputs,
-                                        ReadFunction::ReadHoldingRegisters,
-                                        ReadFunction::ReadInputRegisters,
-                                    ] {
-                                        ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                    // Ensure connection has a polling list
+                    self.polling.entry(id.clone()).or_default();
+                    let sel = *self.selected_group.get(&id).unwrap_or(&0);
+
+                    // Toolbar
+                    ui.horizontal(|ui| {
+                        if uikit::primary_button(ui, flavor, "+ 新建组").clicked() {
+                            self.add_scan_group(id.clone());
+                        }
+                        let len = self.polling.get(&id).map(|v| v.len()).unwrap_or(0);
+                        let has_sel = len > 0 && sel < len;
+                        if has_sel {
+                            if uikit::danger_button(ui, flavor, "- 删除组").clicked() {
+                                self.remove_scan_group(id.clone(), sel, ctx.clone());
+                            }
+                        }
+                        uikit::caption(ui, flavor, format!("{} 个扫描组", len));
+                    });
+                    ui.add_space(6.0);
+
+                    let is_connected = s.state == MasterState::Connected;
+
+                    ui.horizontal(|ui| {
+                        // Left: group list
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(200.0, ui.available_height()),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    if let Some(list) = self.polling.get(&id) {
+                                        for (i, g) in list.iter().enumerate() {
+                                            let selected = i == sel;
+                                            let dot = if g.enabled { "●" } else { "○" };
+                                            let color = if g.enabled {
+                                                theme::success(flavor)
+                                            } else {
+                                                theme::subtext(flavor)
+                                            };
+                                            let label = egui::RichText::new(format!(
+                                                "{} {}  {} @{} ×{}",
+                                                dot,
+                                                g.name,
+                                                match g.fc {
+                                                    ReadFunction::ReadCoils => "FC01",
+                                                    ReadFunction::ReadDiscreteInputs => "FC02",
+                                                    ReadFunction::ReadHoldingRegisters => "FC03",
+                                                    ReadFunction::ReadInputRegisters => "FC04",
+                                                },
+                                                g.addr,
+                                                g.qty,
+                                            ))
+                                            .color(color);
+                                            if ui
+                                                .add(egui::SelectableLabel::new(selected, label))
+                                                .clicked()
+                                            {
+                                                self.selected_group.insert(id.clone(), i);
+                                            }
+                                        }
                                     }
                                 });
-                            ui.end_row();
-                            ui.label("起址");
-                            let mut a = pu.addr as u32;
-                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                            pu.addr = a as u16;
-                            ui.end_row();
-                            ui.label("数量");
-                            let mut q = pu.qty as u32;
-                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                            pu.qty = q as u16;
-                            ui.end_row();
-                            ui.label("间隔 (ms)");
-                            ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
-                            ui.end_row();
-                        });
-                    ui.add_space(8.0);
-                    let is_connected = s.state == MasterState::Connected;
-                    ui.horizontal(|ui| {
-                        if pu.enabled {
-                            if uikit::danger_button(ui, flavor, "停止轮询").clicked() {
-                                do_stop_poll_id = Some(id.clone());
+                            },
+                        );
+                        ui.separator();
+
+                        // Right: selected group detail
+                        ui.vertical(|ui| {
+                            let Some(list) = self.polling.get_mut(&id) else { return };
+                            if list.is_empty() {
+                                uikit::caption(ui, flavor, "点击左上 + 新建扫描组");
+                                return;
                             }
-                            uikit::status_pill(ui, "运行中", theme::success(flavor));
-                        } else {
-                            ui.add_enabled_ui(is_connected, |ui| {
-                                if uikit::primary_button(ui, flavor, "开始轮询").clicked() {
-                                    do_start_poll_id = Some(id.clone());
+                            let idx = sel.min(list.len() - 1);
+                            let pu = &mut list[idx];
+                            egui::Grid::new("poll_form")
+                                .num_columns(2)
+                                .spacing([10.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("名称");
+                                    ui.text_edit_singleline(&mut pu.name);
+                                    ui.end_row();
+                                    ui.label("功能码");
+                                    egui::ComboBox::from_id_salt("poll_fc")
+                                        .selected_text(read_fc_label(pu.fc))
+                                        .show_ui(ui, |ui| {
+                                            for f in [
+                                                ReadFunction::ReadCoils,
+                                                ReadFunction::ReadDiscreteInputs,
+                                                ReadFunction::ReadHoldingRegisters,
+                                                ReadFunction::ReadInputRegisters,
+                                            ] {
+                                                ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("起址");
+                                    let mut a = pu.addr as u32;
+                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                                    pu.addr = a as u16;
+                                    ui.end_row();
+                                    ui.label("数量");
+                                    let mut q = pu.qty as u32;
+                                    ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                                    pu.qty = q as u16;
+                                    ui.end_row();
+                                    ui.label("间隔 (ms)");
+                                    ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
+                                    ui.end_row();
+                                });
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                let running = pu.enabled;
+                                let last_update = pu.last_update;
+                                let last_err = pu.last_error.clone();
+                                if running {
+                                    if uikit::danger_button(ui, flavor, "停止").clicked() {
+                                        do_stop_poll_id = Some((id.clone(), idx));
+                                    }
+                                    uikit::status_pill(ui, "运行中", theme::success(flavor));
+                                } else {
+                                    ui.add_enabled_ui(is_connected, |ui| {
+                                        if uikit::primary_button(ui, flavor, "开始").clicked() {
+                                            do_start_poll_id = Some((id.clone(), idx));
+                                        }
+                                    });
+                                }
+                                if let Some(t) = last_update {
+                                    uikit::caption(
+                                        ui,
+                                        flavor,
+                                        format!("· {} ms 前更新", t.elapsed().as_millis()),
+                                    );
+                                }
+                                if let Some(err) = last_err {
+                                    ui.colored_label(theme::danger(flavor), err);
                                 }
                             });
-                        }
-                        if let Some(t) = pu.last_update {
-                            uikit::caption(
-                                ui,
-                                flavor,
-                                format!("· {} ms 前更新", t.elapsed().as_millis()),
-                            );
-                        }
-                        if let Some(err) = &pu.last_error {
-                            ui.colored_label(theme::danger(flavor), err);
-                        }
+                        });
                     });
                 }
             }
 
-            // Result section — always shown if there's any result, below the tab pane
-            let poll_latest = self.polling.get(&id).and_then(|p| p.latest.clone());
-            let poll_addr = self.polling.get(&id).map(|p| p.addr).unwrap_or(0);
+            // Result section — shows selected group's latest, or one-shot read result.
+            let sel = *self.selected_group.get(&id).unwrap_or(&0);
+            let (poll_latest, poll_addr) = self
+                .polling
+                .get(&id)
+                .and_then(|v| v.get(sel))
+                .map(|g| (g.latest.clone(), g.addr))
+                .unwrap_or((None, 0));
             let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
                 ui.add_space(12.0);
@@ -1106,11 +1268,11 @@ impl eframe::App for MasterApp {
         if let Some(id) = do_write_id {
             self.do_write(id, ctx.clone());
         }
-        if let Some(id) = do_start_poll_id {
-            self.start_poll(id, ctx.clone());
+        if let Some((id, idx)) = do_start_poll_id {
+            self.start_poll(id, idx, ctx.clone());
         }
-        if let Some(id) = do_stop_poll_id {
-            self.stop_poll(id, ctx.clone());
+        if let Some((id, idx)) = do_stop_poll_id {
+            self.stop_poll(id, idx, ctx.clone());
         }
         if do_save {
             self.save_project(ctx.clone());

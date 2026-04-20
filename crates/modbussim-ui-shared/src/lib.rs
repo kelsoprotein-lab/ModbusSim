@@ -10,6 +10,7 @@ pub mod log_panel;
 pub mod project;
 pub mod theme;
 pub mod ui;
+pub mod value_panel;
 
 /// Phosphor icon constants (re-export for convenience).
 pub use egui_phosphor::regular as icons;

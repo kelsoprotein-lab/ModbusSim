@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,6 +16,7 @@ use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::theme::{self, Flavor};
 use modbussim_ui_shared::ui as uikit;
+use modbussim_ui_shared::value_panel;
 use modbussim_ui_shared::project::{
     deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
 };
@@ -244,6 +245,9 @@ pub struct SlaveApp {
     // currently-selected (conn_id, slave_id) — cleared whenever selection moves.
     pending_edits: HashMap<(RegisterType, u16), i32>,
 
+    // Row selection for ValuePanel multi-register analysis
+    selected_addrs: BTreeSet<u16>,
+
     // Data source "add" form
     ds_add_addr: u32,
     ds_add_kind: DsKind,
@@ -367,6 +371,7 @@ impl SlaveApp {
             add_device_modal: None,
             status_msg: None,
             pending_edits: HashMap::new(),
+            selected_addrs: BTreeSet::new(),
             ds_add_addr: 0,
             ds_add_kind: DsKind::Counter,
             ds_add_interval_ms: 1000,
@@ -1516,14 +1521,17 @@ impl SlaveApp {
             TreeAction::SelectConn(id) => {
                 self.selection = Selection::Connection(id);
                 self.pending_edits.clear();
+                self.selected_addrs.clear();
             }
             TreeAction::SelectDevice { conn_id, slave_id } => {
                 self.selection = Selection::Device { conn_id, slave_id };
                 self.pending_edits.clear();
+                self.selected_addrs.clear();
             }
             TreeAction::SelectGroup { conn_id, slave_id, reg_type } => {
                 self.selection = Selection::RegisterGroup { conn_id, slave_id, reg_type };
                 self.pending_edits.clear();
+                self.selected_addrs.clear();
             }
             TreeAction::StartConn(id) => self.start_connection(&id, ctx.clone()),
             TreeAction::StopConn(id) => self.stop_connection(&id, ctx.clone()),
@@ -1994,8 +2002,20 @@ impl SlaveApp {
                 let conn_id_for_writes = conn_id.clone();
                 let slave_id_v = *slave_id;
                 let pending = &mut self.pending_edits;
+                let selected_addrs = &self.selected_addrs;
                 let mut writes: Vec<(u16, u16)> = Vec::new();
+                // Collected row clicks with modifier state — applied after
+                // the TableBuilder closure releases borrows.
+                let mut row_clicks: Vec<(u16, egui::Modifiers)> = Vec::new();
 
+                // Left = table (wide), right = ValuePanel (narrow).
+                let total_w = ui.available_width();
+                let table_w = (total_w * 0.62).max(480.0);
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(table_w, ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let pair_rows = view.row_count / stride;
@@ -2033,7 +2053,15 @@ impl SlaveApp {
                                     .as_ref()
                                     .and_then(|m| m.get(&addr1).copied());
                                 row.col(|ui| {
-                                    ui.monospace(format!("{}..{}", addr0, addr1));
+                                    let sel = selected_addrs.contains(&addr0)
+                                        || selected_addrs.contains(&addr1);
+                                    let resp = ui.add(egui::SelectableLabel::new(
+                                        sel,
+                                        egui::RichText::new(format!("{}..{}", addr0, addr1)).monospace(),
+                                    ));
+                                    if resp.clicked() {
+                                        row_clicks.push((addr0, resp.ctx.input(|i| i.modifiers)));
+                                    }
                                 });
                                 row.col(|ui| match (r0, r1) {
                                     (Some(a), Some(b)) => {
@@ -2085,7 +2113,14 @@ impl SlaveApp {
                             body.rows(row_h, view.row_count, |mut row| {
                                 let addr = row.index() as u16;
                                 row.col(|ui| {
-                                    ui.monospace(format!("{}", addr));
+                                    let sel = selected_addrs.contains(&addr);
+                                    let resp = ui.add(egui::SelectableLabel::new(
+                                        sel,
+                                        egui::RichText::new(format!("{}", addr)).monospace(),
+                                    ));
+                                    if resp.clicked() {
+                                        row_clicks.push((addr, resp.ctx.input(|i| i.modifiers)));
+                                    }
                                 });
 
                                 let cache_u16 = view
@@ -2172,6 +2207,60 @@ impl SlaveApp {
                                 }
                             });
                         });
+                }
+
+                        }, // end table allocate_ui inner
+                    );
+                    // Right column: ValuePanel
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        let mut selected_vals: Vec<u16> = Vec::new();
+                        let mut base: Option<u16> = None;
+                        // Only take up to 4 selected, in address order, and
+                        // require them to be contiguous for multi-word analysis.
+                        let ordered: Vec<u16> = selected_addrs.iter().copied().take(4).collect();
+                        for (i, a) in ordered.iter().enumerate() {
+                            if i == 0 {
+                                base = Some(*a);
+                            } else if *a != ordered[i - 1] + 1 {
+                                // Non-contiguous: stop collecting so ValuePanel
+                                // only shows formats it can compute safely.
+                                break;
+                            }
+                            if let Some(v) = view.u16_map.as_ref().and_then(|m| m.get(a).copied()) {
+                                selected_vals.push(v);
+                            } else if let Some(b) = view.bool_map.as_ref().and_then(|m| m.get(a).copied()) {
+                                selected_vals.push(if b { 1 } else { 0 });
+                            }
+                        }
+                        value_panel::render(ui, flavor, &selected_vals, base);
+                    });
+                }); // end horizontal
+
+                // Apply row clicks to selected_addrs with modifier semantics.
+                if !row_clicks.is_empty() {
+                    let last = self.selected_addrs.iter().last().copied();
+                    for (addr, modifiers) in row_clicks {
+                        if modifiers.shift {
+                            if let Some(anchor) = last {
+                                let (a, b) = if anchor <= addr { (anchor, addr) } else { (addr, anchor) };
+                                self.selected_addrs.clear();
+                                for x in a..=b {
+                                    self.selected_addrs.insert(x);
+                                    if self.selected_addrs.len() >= 16 { break; }
+                                }
+                            } else {
+                                self.selected_addrs.insert(addr);
+                            }
+                        } else if modifiers.command || modifiers.ctrl {
+                            if !self.selected_addrs.remove(&addr) {
+                                self.selected_addrs.insert(addr);
+                            }
+                        } else {
+                            self.selected_addrs.clear();
+                            self.selected_addrs.insert(addr);
+                        }
+                    }
                 }
 
                 for (addr, val) in writes {
