@@ -57,8 +57,11 @@ pub type SharedSources = Arc<tokio::sync::Mutex<Vec<ActiveSource>>>;
 pub enum DsKind {
     Counter,
     Sine,
+    Sawtooth,
+    Triangle,
     Random,
     Fixed,
+    CsvPlayback,
 }
 
 impl DsKind {
@@ -66,8 +69,11 @@ impl DsKind {
         match self {
             DsKind::Counter => "计数器 (+1)",
             DsKind::Sine => "正弦波",
+            DsKind::Sawtooth => "锯齿波",
+            DsKind::Triangle => "三角波",
             DsKind::Random => "随机 U16",
             DsKind::Fixed => "固定值",
+            DsKind::CsvPlayback => "CSV 序列",
         }
     }
 
@@ -84,11 +90,25 @@ impl DsKind {
                 offset: 32768.0,
                 phase: 0.0,
             },
+            DsKind::Sawtooth => DataSource::Sawtooth {
+                min: 0,
+                max: 1000,
+                period_ms: 5000,
+            },
+            DsKind::Triangle => DataSource::Triangle {
+                min: 0,
+                max: 1000,
+                period_ms: 5000,
+            },
             DsKind::Random => DataSource::Random {
                 min: 0,
                 max: 65535,
             },
             DsKind::Fixed => DataSource::Fixed { value: 42 },
+            DsKind::CsvPlayback => DataSource::CsvPlayback {
+                values: vec![0, 100, 200, 300, 400],
+                loop_playback: true,
+            },
         }
     }
 }
@@ -1907,8 +1927,11 @@ impl SlaveApp {
                                     for k in [
                                         DsKind::Counter,
                                         DsKind::Sine,
+                                        DsKind::Sawtooth,
+                                        DsKind::Triangle,
                                         DsKind::Random,
                                         DsKind::Fixed,
+                                        DsKind::CsvPlayback,
                                     ] {
                                         ui.selectable_value(&mut self.ds_add_kind, k, k.label());
                                     }
