@@ -6,9 +6,7 @@
 
 use crate::log_entry::{Direction, FunctionCode};
 use crate::mbap;
-use crate::pdu::{
-    build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest,
-};
+use crate::pdu::{build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest};
 use crate::rtu_slave::{execute_read, execute_write, format_request, log_if_enabled};
 use crate::slave::{SharedDevices, SharedLogCollector};
 use crate::transport::SlaveTlsConfig;
@@ -194,12 +192,7 @@ fn handle_client(
         // Log inbound request.
         if let Some(fc) = FunctionCode::from_u8(fc_byte) {
             if let Ok(ref req) = parsed {
-                log_if_enabled(
-                    &log_collector,
-                    Direction::Rx,
-                    fc,
-                    &format_request(req),
-                );
+                log_if_enabled(&log_collector, Direction::Rx, fc, &format_request(req));
             }
         }
 
@@ -213,10 +206,7 @@ fn handle_client(
             // Log outbound response.
             if let Some(fc) = FunctionCode::from_u8(fc_byte) {
                 let detail = if resp.first().map_or(false, |b| b & 0x80 != 0) {
-                    format!(
-                        "ERR: exception 0x{:02X}",
-                        resp.get(1).copied().unwrap_or(0)
-                    )
+                    format!("ERR: exception 0x{:02X}", resp.get(1).copied().unwrap_or(0))
                 } else {
                     "OK".to_string()
                 };

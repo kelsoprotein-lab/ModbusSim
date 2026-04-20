@@ -7,7 +7,11 @@ pub async fn get_all_logs(collector: &LogCollector) -> Vec<LogEntry> {
 }
 
 /// Get a paginated slice of log entries.
-pub async fn get_logs_paginated(collector: &LogCollector, offset: usize, limit: usize) -> Vec<LogEntry> {
+pub async fn get_logs_paginated(
+    collector: &LogCollector,
+    offset: usize,
+    limit: usize,
+) -> Vec<LogEntry> {
     let all = collector.get_all().await;
     all.into_iter().skip(offset).take(limit).collect()
 }

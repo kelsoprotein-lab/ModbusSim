@@ -12,7 +12,10 @@ use crate::theme::{self, Flavor, Layer};
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
     // Industrial HMI: raised L2 background + subtle border. Same look in both
     // flavors — token routing handles dark/light.
-    (theme::bg_of(flavor, Layer::L2), theme::border_subtle(flavor))
+    (
+        theme::bg_of(flavor, Layer::L2),
+        theme::border_subtle(flavor),
+    )
 }
 
 /// Flat panel with raised bg + subtle border. Used for grouped content.
@@ -46,11 +49,7 @@ pub fn region<R>(
 
 /// Same as `card`, plus a 2 px accent line along the top edge. Used for the
 /// current-context header (e.g. "FC04 Input Registers — slave_1").
-pub fn accent_card<R>(
-    ui: &mut Ui,
-    flavor: Flavor,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> R {
+pub fn accent_card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let accent = crate::theme::accent(flavor);
     let (fill, stroke_color) = card_colors(flavor);
     let resp = egui::Frame::new()
@@ -66,10 +65,8 @@ pub fn accent_card<R>(
         .show(ui, add);
     // Paint a 2 px accent stripe across the top.
     let rect = resp.response.rect;
-    let stripe = egui::Rect::from_min_max(
-        rect.left_top(),
-        egui::pos2(rect.right(), rect.top() + 2.0),
-    );
+    let stripe =
+        egui::Rect::from_min_max(rect.left_top(), egui::pos2(rect.right(), rect.top() + 2.0));
     ui.painter().rect_filled(stripe, 0.0, accent);
     resp.inner
 }
@@ -88,19 +85,19 @@ fn shadcn_theme(flavor: Flavor) -> egui_shadcn::Theme {
     };
     if flavor.is_dark() {
         // Industrial HMI: cool blue primary + green action accent + L1/L2 bg
-        palette.primary = Color32::from_rgb(0x3f, 0xb9, 0x50);  // 主操作绿（"+ 批量添加"）
+        palette.primary = Color32::from_rgb(0x3f, 0xb9, 0x50); // 主操作绿（"+ 批量添加"）
         palette.primary_foreground = Color32::WHITE;
         palette.destructive = Color32::from_rgb(0xf8, 0x51, 0x49);
         palette.destructive_foreground = Color32::WHITE;
-        palette.ring = Color32::from_rgb(0x1f, 0x6f, 0xeb);     // focus 蓝
+        palette.ring = Color32::from_rgb(0x1f, 0x6f, 0xeb); // focus 蓝
         palette.border = Color32::from_rgb(0x30, 0x36, 0x3d);
         palette.background = Color32::from_rgb(0x0d, 0x11, 0x17);
         palette.foreground = Color32::from_rgb(0xc9, 0xd1, 0xd9);
         palette.muted_foreground = Color32::from_rgb(0x6e, 0x76, 0x81);
-        palette.accent = Color32::from_rgb(0x1f, 0x6f, 0xeb);   // 蓝 accent（链接/选中）
+        palette.accent = Color32::from_rgb(0x1f, 0x6f, 0xeb); // 蓝 accent（链接/选中）
         palette.accent_foreground = Color32::WHITE;
     } else {
-        palette.primary = Color32::from_rgb(0x15, 0x80, 0x3d);  // 浅色主操作深绿
+        palette.primary = Color32::from_rgb(0x15, 0x80, 0x3d); // 浅色主操作深绿
         palette.primary_foreground = Color32::WHITE;
         palette.destructive = Color32::from_rgb(0xb9, 0x1c, 0x1c);
         palette.destructive_foreground = Color32::WHITE;
@@ -246,8 +243,7 @@ pub fn panel_header(ui: &mut Ui, flavor: Flavor, title: &str, crumb: Option<&str
 pub fn link_action(ui: &mut Ui, flavor: Flavor, label: &str, danger: bool) -> Response {
     let base = theme::text_muted(flavor);
     let resp = ui.add(
-        egui::Label::new(RichText::new(label).color(base).size(11.5))
-            .sense(egui::Sense::click()),
+        egui::Label::new(RichText::new(label).color(base).size(11.5)).sense(egui::Sense::click()),
     );
     if resp.hovered() {
         let hover = if danger {

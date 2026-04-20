@@ -1,8 +1,8 @@
 use modbussim_core::master::{MasterConfig, MasterConnection, ReadFunction, ReadResult};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
 use modbussim_core::transport::{SlaveTlsConfig, TlsConfig, Transport};
-use tempfile::NamedTempFile;
 use std::io::Write;
+use tempfile::NamedTempFile;
 
 // ---------------------------------------------------------------------------
 // Certificate generation helpers
@@ -15,7 +15,11 @@ use std::io::Write;
 
 /// Generate a CA key+cert.
 /// Returns (ca_pem_bytes, ca_x509, ca_pkey).
-fn gen_ca() -> (Vec<u8>, openssl::x509::X509, openssl::pkey::PKey<openssl::pkey::Private>) {
+fn gen_ca() -> (
+    Vec<u8>,
+    openssl::x509::X509,
+    openssl::pkey::PKey<openssl::pkey::Private>,
+) {
     use openssl::asn1::Asn1Time;
     use openssl::bn::{BigNum, MsbOption};
     use openssl::hash::MessageDigest;
@@ -32,7 +36,9 @@ fn gen_ca() -> (Vec<u8>, openssl::x509::X509, openssl::pkey::PKey<openssl::pkey:
     let serial = serial.to_asn1_integer().unwrap();
 
     let mut name_builder = X509NameBuilder::new().unwrap();
-    name_builder.append_entry_by_text("CN", "ModbusSim Test CA").unwrap();
+    name_builder
+        .append_entry_by_text("CN", "ModbusSim Test CA")
+        .unwrap();
     let name = name_builder.build();
 
     let mut builder = X509Builder::new().unwrap();
@@ -67,7 +73,10 @@ fn gen_leaf_cert(
     names: &[&str],
     ca_cert: &openssl::x509::X509,
     ca_key: &openssl::pkey::PKey<openssl::pkey::Private>,
-) -> (openssl::x509::X509, openssl::pkey::PKey<openssl::pkey::Private>) {
+) -> (
+    openssl::x509::X509,
+    openssl::pkey::PKey<openssl::pkey::Private>,
+) {
     use openssl::asn1::Asn1Time;
     use openssl::bn::{BigNum, MsbOption};
     use openssl::hash::MessageDigest;
@@ -157,8 +166,7 @@ fn make_pkcs12(
 /// Returns (ca_pem_bytes, server_p12_bytes).
 fn generate_test_certs() -> (Vec<u8>, Vec<u8>) {
     let (ca_pem, ca_cert, ca_key) = gen_ca();
-    let (server_cert, server_key) =
-        gen_leaf_cert(&["localhost", "127.0.0.1"], &ca_cert, &ca_key);
+    let (server_cert, server_key) = gen_leaf_cert(&["localhost", "127.0.0.1"], &ca_cert, &ca_key);
     let server_p12 = make_pkcs12(&server_cert, &server_key, &ca_cert);
     (ca_pem, server_p12)
 }
@@ -228,7 +236,11 @@ async fn test_tls_read_holding_registers() {
         .expect("read holding registers");
     match result {
         ReadResult::HoldingRegisters(values) => {
-            assert_eq!(values, vec![0u16, 0, 0, 0, 0], "expected zero-initialized registers");
+            assert_eq!(
+                values,
+                vec![0u16, 0, 0, 0, 0],
+                "expected zero-initialized registers"
+            );
         }
         _ => panic!("unexpected result type"),
     }
@@ -300,7 +312,10 @@ async fn test_tls_accept_invalid_certs() {
         port: 15803,
     };
     let mut master = MasterConnection::new(master_config, master_transport);
-    master.connect().await.expect("master connect with accept_invalid_certs");
+    master
+        .connect()
+        .await
+        .expect("master connect with accept_invalid_certs");
 
     // Read 1 holding register to verify connection works
     let result = master

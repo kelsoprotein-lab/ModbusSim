@@ -4,7 +4,10 @@
 //! over the encrypted stream. All I/O is synchronous (native_tls::TlsStream) so
 //! we use `spawn_blocking` to avoid blocking the Tokio runtime.
 
-use crate::master::{build_read_pdu, check_write_response, parse_read_response_pdu, MasterError, ReadFunction, ReadResult};
+use crate::master::{
+    build_read_pdu, check_write_response, parse_read_response_pdu, MasterError, ReadFunction,
+    ReadResult,
+};
 use crate::mbap;
 use crate::transport::TlsConfig;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -27,11 +30,7 @@ impl TlsMasterConnection {
 
     /// Core send/receive over TLS. Runs in spawn_blocking because native_tls is sync.
     /// Timeouts are set once at connection time (see `connect_tls`).
-    async fn send_receive(
-        &self,
-        slave_id: u8,
-        pdu: &[u8],
-    ) -> Result<Vec<u8>, MasterError> {
+    async fn send_receive(&self, slave_id: u8, pdu: &[u8]) -> Result<Vec<u8>, MasterError> {
         let stream = self.stream.clone();
         let tid = self.next_transaction_id();
         let pdu = pdu.to_vec();
@@ -167,9 +166,8 @@ pub fn build_tls_connector(config: &TlsConfig) -> Result<native_tls::TlsConnecto
     if !config.pkcs12_file.is_empty() {
         let pkcs12_data = std::fs::read(&config.pkcs12_file)
             .map_err(|e| MasterError::ConnectionFailed(format!("read PKCS#12 file: {e}")))?;
-        let identity =
-            native_tls::Identity::from_pkcs12(&pkcs12_data, &config.pkcs12_password)
-                .map_err(|e| MasterError::ConnectionFailed(format!("parse PKCS#12: {e}")))?;
+        let identity = native_tls::Identity::from_pkcs12(&pkcs12_data, &config.pkcs12_password)
+            .map_err(|e| MasterError::ConnectionFailed(format!("parse PKCS#12: {e}")))?;
         builder.identity(identity);
     } else if !config.cert_file.is_empty() && !config.key_file.is_empty() {
         let cert_pem = std::fs::read(&config.cert_file)
@@ -228,8 +226,7 @@ pub async fn connect_tls(
             .map_err(|e| MasterError::ConnectionFailed(format!("TLS handshake: {e}")))
     })
     .await
-    .map_err(|e| MasterError::ConnectionFailed(format!("spawn_blocking: {e}")))?
-    ?;
+    .map_err(|e| MasterError::ConnectionFailed(format!("spawn_blocking: {e}")))??;
 
     // Set read/write timeouts once on the underlying TCP stream.
     let tcp = tls_stream.get_ref();

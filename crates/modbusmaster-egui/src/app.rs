@@ -21,7 +21,6 @@ use modbussim_ui_shared::ui as uikit;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
-
 pub struct MasterConnectionEntry {
     pub id: String,
     pub label: String,
@@ -32,14 +31,38 @@ pub struct MasterConnectionEntry {
 pub type SharedConnections = Arc<RwLock<Vec<MasterConnectionEntry>>>;
 
 pub enum UiEvent {
-    ConnectionCreated { id: String, label: String, slave_id: u8 },
-    ConnectionStateChanged { id: String, state: MasterState },
+    ConnectionCreated {
+        id: String,
+        label: String,
+        slave_id: u8,
+    },
+    ConnectionStateChanged {
+        id: String,
+        state: MasterState,
+    },
     ConnectionRemoved(String),
-    ReadDone { id: String, result: ReadResult },
-    PollStarted { id: String, group_id: String },
-    PollStopped { id: String, group_id: String },
-    PollUpdate { id: String, group_id: String, result: ReadResult },
-    PollError { id: String, group_id: String, msg: String },
+    ReadDone {
+        id: String,
+        result: ReadResult,
+    },
+    PollStarted {
+        id: String,
+        group_id: String,
+    },
+    PollStopped {
+        id: String,
+        group_id: String,
+    },
+    PollUpdate {
+        id: String,
+        group_id: String,
+        result: ReadResult,
+    },
+    PollError {
+        id: String,
+        group_id: String,
+        msg: String,
+    },
     PollConfigLoaded {
         id: String,
         group_id: String,
@@ -55,8 +78,8 @@ pub enum UiEvent {
 /// One scan group belonging to a master connection.
 #[derive(Clone)]
 pub struct ScanGroupUi {
-    pub id: String,           // stable id, used as core::ScanGroup.id
-    pub name: String,         // user-facing label
+    pub id: String,   // stable id, used as core::ScanGroup.id
+    pub name: String, // user-facing label
     pub fc: ReadFunction,
     pub addr: u16,
     pub qty: u16,
@@ -447,7 +470,10 @@ impl MasterApp {
         let gid = format!("group_{}", self.next_group_seq);
         self.next_group_seq += 1;
         let mut g = ScanGroupUi::new_with_id(gid);
-        g.name = format!("组 {}", self.polling.get(&conn_id).map(|v| v.len() + 1).unwrap_or(1));
+        g.name = format!(
+            "组 {}",
+            self.polling.get(&conn_id).map(|v| v.len() + 1).unwrap_or(1)
+        );
         let list = self.polling.entry(conn_id.clone()).or_default();
         list.push(g);
         let new_idx = list.len() - 1;
@@ -460,7 +486,11 @@ impl MasterApp {
         if let Some(list) = self.polling.get_mut(&conn_id) {
             if group_idx < list.len() {
                 list.remove(group_idx);
-                let new_sel = if list.is_empty() { 0 } else { group_idx.saturating_sub(1).min(list.len() - 1) };
+                let new_sel = if list.is_empty() {
+                    0
+                } else {
+                    group_idx.saturating_sub(1).min(list.len() - 1)
+                };
                 self.selected_group.insert(conn_id, new_sel);
             }
         }
@@ -610,7 +640,8 @@ impl MasterApp {
             match serialize_master(&proj) {
                 Ok(json) => match tokio::fs::write(path.path(), json).await {
                     Ok(()) => {
-                        let _ = tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                        let _ =
+                            tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
                     }
                     Err(e) => {
                         let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
@@ -668,7 +699,10 @@ impl MasterApp {
                 };
                 let connection = MasterConnection::new(
                     config,
-                    Transport::Tcp { host: tcp.host.clone(), port: tcp.port },
+                    Transport::Tcp {
+                        host: tcp.host.clone(),
+                        port: tcp.port,
+                    },
                 )
                 .with_log_collector(log_collector.clone());
                 let id = format!("master_{}", next_seq.fetch_add(1, Ordering::Relaxed));
@@ -708,7 +742,11 @@ impl MasterApp {
     fn drain_events(&mut self) {
         while let Ok(ev) = self.events_rx.try_recv() {
             match ev {
-                UiEvent::ConnectionCreated { id, label, slave_id } => {
+                UiEvent::ConnectionCreated {
+                    id,
+                    label,
+                    slave_id,
+                } => {
                     self.snap.push(ConnSnap {
                         id,
                         label,
@@ -740,7 +778,11 @@ impl MasterApp {
                         g.enabled = false;
                     }
                 }
-                UiEvent::PollUpdate { id, group_id, result } => {
+                UiEvent::PollUpdate {
+                    id,
+                    group_id,
+                    result,
+                } => {
                     if let Some(g) = self.find_group_mut(&id, &group_id) {
                         g.latest = Some(result);
                         g.last_update = Some(Instant::now());
@@ -752,7 +794,14 @@ impl MasterApp {
                         g.last_error = Some(msg);
                     }
                 }
-                UiEvent::PollConfigLoaded { id, group_id, fc, addr, qty, interval_ms } => {
+                UiEvent::PollConfigLoaded {
+                    id,
+                    group_id,
+                    fc,
+                    addr,
+                    qty,
+                    interval_ms,
+                } => {
                     let list = self.polling.entry(id).or_default();
                     let mut g = ScanGroupUi::new_with_id(group_id);
                     g.fc = fc;
@@ -782,9 +831,15 @@ impl MasterApp {
         } else {
             self.log_cache.clear();
         }
-        let Ok(entries) = self.connections.try_read() else { return };
-        let Some(entry) = entries.iter().find(|e| e.id == id) else { return };
-        let Some(mut all) = entry.log_collector.try_get_all() else { return };
+        let Ok(entries) = self.connections.try_read() else {
+            return;
+        };
+        let Some(entry) = entries.iter().find(|e| e.id == id) else {
+            return;
+        };
+        let Some(mut all) = entry.log_collector.try_get_all() else {
+            return;
+        };
         let start = all.len().saturating_sub(500);
         self.log_cache = all.drain(start..).collect();
         self.log_cache_conn_id = Some(id);
@@ -820,7 +875,12 @@ impl eframe::App for MasterApp {
                     ui.checkbox(&mut self.log_state.open, "显示日志面板");
                     ui.separator();
                     ui.label("主题 (Catppuccin)");
-                    for f in [Flavor::Mocha, Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
+                    for f in [
+                        Flavor::Mocha,
+                        Flavor::Macchiato,
+                        Flavor::Frappe,
+                        Flavor::Latte,
+                    ] {
                         if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
                             theme::apply(ctx, self.flavor);
                             ui.close_menu();
@@ -936,19 +996,27 @@ impl eframe::App for MasterApp {
                 if let Some(err) = &self.last_error {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::RED, err);
-                        if ui.small_button("清除").clicked() { clear_err = true; }
+                        if ui.small_button("清除").clicked() {
+                            clear_err = true;
+                        }
                     });
                 } else if let Some(msg) = &self.status_msg {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
-                        if ui.small_button("清除").clicked() { clear_status = true; }
+                        if ui.small_button("清除").clicked() {
+                            clear_status = true;
+                        }
                     });
                 } else {
                     ui.label("就绪");
                 }
             });
-        if clear_err { self.last_error = None; }
-        if clear_status { self.status_msg = None; }
+        if clear_err {
+            self.last_error = None;
+        }
+        if clear_status {
+            self.status_msg = None;
+        }
 
         self.render_log_panel(ctx);
 
@@ -962,11 +1030,7 @@ impl eframe::App for MasterApp {
             let Some(id) = self.selected.clone() else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
-                    ui.label(
-                        egui::RichText::new("ModbusMaster")
-                            .size(18.0)
-                            .strong(),
-                    );
+                    ui.label(egui::RichText::new("ModbusMaster").size(18.0).strong());
                     uikit::caption(ui, flavor, "从左侧创建并连接一个会话。");
                 });
                 return;
@@ -996,142 +1060,154 @@ impl eframe::App for MasterApp {
             );
             ui.add_space(4.0);
 
-            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(14.0 as i8, 10.0 as i8), |ui| {
-            // Tab bar: Read / Write / Poll
-            ui.horizontal(|ui| {
-                for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
-                    let selected = self.active_tab == tab;
-                    let text = if selected {
-                        egui::RichText::new(tab.label())
-                            .strong()
-                            .color(theme::accent(flavor))
-                    } else {
-                        egui::RichText::new(tab.label()).color(theme::subtext(flavor))
-                    };
-                    if ui
-                        .add(egui::SelectableLabel::new(selected, text))
-                        .clicked()
-                    {
-                        self.active_tab = tab;
-                    }
-                }
-            });
-            ui.separator();
-
-            // Tab content
-            match self.active_tab {
-                MasterTab::Read => {
-                    egui::Grid::new("read_form")
-                        .num_columns(2)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("功能码");
-                            egui::ComboBox::from_id_salt("read_fc")
-                                .selected_text(read_fc_label(self.read_fc))
-                                .show_ui(ui, |ui| {
-                                    for f in [
-                                        ReadFunction::ReadCoils,
-                                        ReadFunction::ReadDiscreteInputs,
-                                        ReadFunction::ReadHoldingRegisters,
-                                        ReadFunction::ReadInputRegisters,
-                                    ] {
-                                        ui.selectable_value(&mut self.read_fc, f, read_fc_label(f));
-                                    }
-                                });
-                            ui.end_row();
-                            ui.label("起始地址");
-                            let mut a = self.read_addr as u32;
-                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                            self.read_addr = a as u16;
-                            ui.end_row();
-                            ui.label("数量");
-                            let mut q = self.read_qty as u32;
-                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                            self.read_qty = q as u16;
-                            ui.end_row();
-                        });
-                    ui.add_space(8.0);
-                    ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                        if uikit::primary_button(ui, flavor, "读取").clicked() {
-                            do_read_id = Some(id.clone());
-                        }
-                    });
-                }
-                MasterTab::Write => {
-                    egui::Grid::new("write_form")
-                        .num_columns(2)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("类型");
-                            ui.horizontal(|ui| {
-                                ui.radio_value(&mut self.write_is_coil, false, "FC06 寄存器");
-                                ui.radio_value(&mut self.write_is_coil, true, "FC05 线圈");
-                            });
-                            ui.end_row();
-                            ui.label("地址");
-                            let mut a = self.write_addr as u32;
-                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                            self.write_addr = a as u16;
-                            ui.end_row();
-                            ui.label("值");
-                            if self.write_is_coil {
-                                let mut b = self.write_value != 0;
-                                ui.checkbox(&mut b, "true / false");
-                                self.write_value = if b { 1 } else { 0 };
+            uikit::region(
+                ui,
+                flavor,
+                theme::Layer::L1,
+                egui::Margin::symmetric(14.0 as i8, 10.0 as i8),
+                |ui| {
+                    // Tab bar: Read / Write / Poll
+                    ui.horizontal(|ui| {
+                        for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
+                            let selected = self.active_tab == tab;
+                            let text = if selected {
+                                egui::RichText::new(tab.label())
+                                    .strong()
+                                    .color(theme::accent(flavor))
                             } else {
-                                ui.add(
-                                    egui::DragValue::new(&mut self.write_value).range(0..=65535),
-                                );
-                            }
-                            ui.end_row();
-                        });
-                    ui.add_space(8.0);
-                    ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                        if uikit::primary_button(ui, flavor, "写入").clicked() {
-                            do_write_id = Some(id.clone());
-                        }
-                    });
-                }
-                MasterTab::Poll => {
-                    // Ensure connection has a polling list
-                    self.polling.entry(id.clone()).or_default();
-                    let sel = *self.selected_group.get(&id).unwrap_or(&0);
-
-                    // Toolbar
-                    ui.horizontal(|ui| {
-                        if uikit::primary_button(ui, flavor, "+ 新建组").clicked() {
-                            self.add_scan_group(id.clone());
-                        }
-                        let len = self.polling.get(&id).map(|v| v.len()).unwrap_or(0);
-                        let has_sel = len > 0 && sel < len;
-                        if has_sel {
-                            if uikit::danger_button(ui, flavor, "- 删除组").clicked() {
-                                self.remove_scan_group(id.clone(), sel, ctx.clone());
+                                egui::RichText::new(tab.label()).color(theme::subtext(flavor))
+                            };
+                            if ui.add(egui::SelectableLabel::new(selected, text)).clicked() {
+                                self.active_tab = tab;
                             }
                         }
-                        uikit::caption(ui, flavor, format!("{} 个扫描组", len));
                     });
-                    ui.add_space(6.0);
+                    ui.separator();
 
-                    let is_connected = s.state == MasterState::Connected;
+                    // Tab content
+                    match self.active_tab {
+                        MasterTab::Read => {
+                            egui::Grid::new("read_form")
+                                .num_columns(2)
+                                .spacing([10.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("功能码");
+                                    egui::ComboBox::from_id_salt("read_fc")
+                                        .selected_text(read_fc_label(self.read_fc))
+                                        .show_ui(ui, |ui| {
+                                            for f in [
+                                                ReadFunction::ReadCoils,
+                                                ReadFunction::ReadDiscreteInputs,
+                                                ReadFunction::ReadHoldingRegisters,
+                                                ReadFunction::ReadInputRegisters,
+                                            ] {
+                                                ui.selectable_value(
+                                                    &mut self.read_fc,
+                                                    f,
+                                                    read_fc_label(f),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("起始地址");
+                                    let mut a = self.read_addr as u32;
+                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                                    self.read_addr = a as u16;
+                                    ui.end_row();
+                                    ui.label("数量");
+                                    let mut q = self.read_qty as u32;
+                                    ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                                    self.read_qty = q as u16;
+                                    ui.end_row();
+                                });
+                            ui.add_space(8.0);
+                            ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
+                                if uikit::primary_button(ui, flavor, "读取").clicked() {
+                                    do_read_id = Some(id.clone());
+                                }
+                            });
+                        }
+                        MasterTab::Write => {
+                            egui::Grid::new("write_form")
+                                .num_columns(2)
+                                .spacing([10.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label("类型");
+                                    ui.horizontal(|ui| {
+                                        ui.radio_value(
+                                            &mut self.write_is_coil,
+                                            false,
+                                            "FC06 寄存器",
+                                        );
+                                        ui.radio_value(&mut self.write_is_coil, true, "FC05 线圈");
+                                    });
+                                    ui.end_row();
+                                    ui.label("地址");
+                                    let mut a = self.write_addr as u32;
+                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                                    self.write_addr = a as u16;
+                                    ui.end_row();
+                                    ui.label("值");
+                                    if self.write_is_coil {
+                                        let mut b = self.write_value != 0;
+                                        ui.checkbox(&mut b, "true / false");
+                                        self.write_value = if b { 1 } else { 0 };
+                                    } else {
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.write_value)
+                                                .range(0..=65535),
+                                        );
+                                    }
+                                    ui.end_row();
+                                });
+                            ui.add_space(8.0);
+                            ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
+                                if uikit::primary_button(ui, flavor, "写入").clicked() {
+                                    do_write_id = Some(id.clone());
+                                }
+                            });
+                        }
+                        MasterTab::Poll => {
+                            // Ensure connection has a polling list
+                            self.polling.entry(id.clone()).or_default();
+                            let sel = *self.selected_group.get(&id).unwrap_or(&0);
 
-                    ui.horizontal(|ui| {
-                        // Left: group list
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(200.0, ui.available_height()),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                egui::ScrollArea::vertical().show(ui, |ui| {
-                                    if let Some(list) = self.polling.get(&id) {
-                                        for (i, g) in list.iter().enumerate() {
-                                            let selected = i == sel;
-                                            let dot = if g.enabled { "●" } else { "○" };
-                                            let color = if g.enabled {
-                                                theme::success(flavor)
-                                            } else {
-                                                theme::subtext(flavor)
-                                            };
-                                            let label = egui::RichText::new(format!(
+                            // Toolbar
+                            ui.horizontal(|ui| {
+                                if uikit::primary_button(ui, flavor, "+ 新建组").clicked() {
+                                    self.add_scan_group(id.clone());
+                                }
+                                let len = self.polling.get(&id).map(|v| v.len()).unwrap_or(0);
+                                let has_sel = len > 0 && sel < len;
+                                if has_sel {
+                                    if uikit::danger_button(ui, flavor, "- 删除组").clicked() {
+                                        self.remove_scan_group(id.clone(), sel, ctx.clone());
+                                    }
+                                }
+                                uikit::caption(ui, flavor, format!("{} 个扫描组", len));
+                            });
+                            ui.add_space(6.0);
+
+                            let is_connected = s.state == MasterState::Connected;
+
+                            ui.horizontal(|ui| {
+                                // Left: group list
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(200.0, ui.available_height()),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        egui::ScrollArea::vertical().show(ui, |ui| {
+                                            if let Some(list) = self.polling.get(&id) {
+                                                for (i, g) in list.iter().enumerate() {
+                                                    let selected = i == sel;
+                                                    let dot = if g.enabled { "●" } else { "○" };
+                                                    let color = if g.enabled {
+                                                        theme::success(flavor)
+                                                    } else {
+                                                        theme::subtext(flavor)
+                                                    };
+                                                    let label =
+                                                        egui::RichText::new(format!(
                                                 "{} {}  {} @{} ×{}",
                                                 dot,
                                                 g.name,
@@ -1144,97 +1220,116 @@ impl eframe::App for MasterApp {
                                                 g.addr,
                                                 g.qty,
                                             ))
-                                            .color(color);
-                                            if ui
-                                                .add(egui::SelectableLabel::new(selected, label))
-                                                .clicked()
-                                            {
-                                                self.selected_group.insert(id.clone(), i);
-                                            }
-                                        }
-                                    }
-                                });
-                            },
-                        );
-                        ui.separator();
-
-                        // Right: selected group detail
-                        ui.vertical(|ui| {
-                            let Some(list) = self.polling.get_mut(&id) else { return };
-                            if list.is_empty() {
-                                uikit::caption(ui, flavor, "点击左上 + 新建扫描组");
-                                return;
-                            }
-                            let idx = sel.min(list.len() - 1);
-                            let pu = &mut list[idx];
-                            egui::Grid::new("poll_form")
-                                .num_columns(2)
-                                .spacing([10.0, 6.0])
-                                .show(ui, |ui| {
-                                    ui.label("名称");
-                                    ui.text_edit_singleline(&mut pu.name);
-                                    ui.end_row();
-                                    ui.label("功能码");
-                                    egui::ComboBox::from_id_salt("poll_fc")
-                                        .selected_text(read_fc_label(pu.fc))
-                                        .show_ui(ui, |ui| {
-                                            for f in [
-                                                ReadFunction::ReadCoils,
-                                                ReadFunction::ReadDiscreteInputs,
-                                                ReadFunction::ReadHoldingRegisters,
-                                                ReadFunction::ReadInputRegisters,
-                                            ] {
-                                                ui.selectable_value(&mut pu.fc, f, read_fc_label(f));
+                                                        .color(color);
+                                                    if ui
+                                                        .add(egui::SelectableLabel::new(
+                                                            selected, label,
+                                                        ))
+                                                        .clicked()
+                                                    {
+                                                        self.selected_group.insert(id.clone(), i);
+                                                    }
+                                                }
                                             }
                                         });
-                                    ui.end_row();
-                                    ui.label("起址");
-                                    let mut a = pu.addr as u32;
-                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                    pu.addr = a as u16;
-                                    ui.end_row();
-                                    ui.label("数量");
-                                    let mut q = pu.qty as u32;
-                                    ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                                    pu.qty = q as u16;
-                                    ui.end_row();
-                                    ui.label("间隔 (ms)");
-                                    ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
-                                    ui.end_row();
-                                });
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                let running = pu.enabled;
-                                let last_update = pu.last_update;
-                                let last_err = pu.last_error.clone();
-                                if running {
-                                    if uikit::danger_button(ui, flavor, "停止").clicked() {
-                                        do_stop_poll_id = Some((id.clone(), idx));
+                                    },
+                                );
+                                ui.separator();
+
+                                // Right: selected group detail
+                                ui.vertical(|ui| {
+                                    let Some(list) = self.polling.get_mut(&id) else {
+                                        return;
+                                    };
+                                    if list.is_empty() {
+                                        uikit::caption(ui, flavor, "点击左上 + 新建扫描组");
+                                        return;
                                     }
-                                    uikit::status_pill(ui, "运行中", theme::success(flavor));
-                                } else {
-                                    ui.add_enabled_ui(is_connected, |ui| {
-                                        if uikit::primary_button(ui, flavor, "开始").clicked() {
-                                            do_start_poll_id = Some((id.clone(), idx));
+                                    let idx = sel.min(list.len() - 1);
+                                    let pu = &mut list[idx];
+                                    egui::Grid::new("poll_form")
+                                        .num_columns(2)
+                                        .spacing([10.0, 6.0])
+                                        .show(ui, |ui| {
+                                            ui.label("名称");
+                                            ui.text_edit_singleline(&mut pu.name);
+                                            ui.end_row();
+                                            ui.label("功能码");
+                                            egui::ComboBox::from_id_salt("poll_fc")
+                                                .selected_text(read_fc_label(pu.fc))
+                                                .show_ui(ui, |ui| {
+                                                    for f in [
+                                                        ReadFunction::ReadCoils,
+                                                        ReadFunction::ReadDiscreteInputs,
+                                                        ReadFunction::ReadHoldingRegisters,
+                                                        ReadFunction::ReadInputRegisters,
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            &mut pu.fc,
+                                                            f,
+                                                            read_fc_label(f),
+                                                        );
+                                                    }
+                                                });
+                                            ui.end_row();
+                                            ui.label("起址");
+                                            let mut a = pu.addr as u32;
+                                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                                            pu.addr = a as u16;
+                                            ui.end_row();
+                                            ui.label("数量");
+                                            let mut q = pu.qty as u32;
+                                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                                            pu.qty = q as u16;
+                                            ui.end_row();
+                                            ui.label("间隔 (ms)");
+                                            ui.add(
+                                                egui::DragValue::new(&mut pu.interval_ms)
+                                                    .range(50..=60_000),
+                                            );
+                                            ui.end_row();
+                                        });
+                                    ui.add_space(8.0);
+                                    ui.horizontal(|ui| {
+                                        let running = pu.enabled;
+                                        let last_update = pu.last_update;
+                                        let last_err = pu.last_error.clone();
+                                        if running {
+                                            if uikit::danger_button(ui, flavor, "停止").clicked()
+                                            {
+                                                do_stop_poll_id = Some((id.clone(), idx));
+                                            }
+                                            uikit::status_pill(
+                                                ui,
+                                                "运行中",
+                                                theme::success(flavor),
+                                            );
+                                        } else {
+                                            ui.add_enabled_ui(is_connected, |ui| {
+                                                if uikit::primary_button(ui, flavor, "开始")
+                                                    .clicked()
+                                                {
+                                                    do_start_poll_id = Some((id.clone(), idx));
+                                                }
+                                            });
+                                        }
+                                        if let Some(t) = last_update {
+                                            uikit::caption(
+                                                ui,
+                                                flavor,
+                                                format!("· {} ms 前更新", t.elapsed().as_millis()),
+                                            );
+                                        }
+                                        if let Some(err) = last_err {
+                                            ui.colored_label(theme::danger(flavor), err);
                                         }
                                     });
-                                }
-                                if let Some(t) = last_update {
-                                    uikit::caption(
-                                        ui,
-                                        flavor,
-                                        format!("· {} ms 前更新", t.elapsed().as_millis()),
-                                    );
-                                }
-                                if let Some(err) = last_err {
-                                    ui.colored_label(theme::danger(flavor), err);
-                                }
+                                });
                             });
-                        });
-                    });
-                }
-            }
-            }); // end tab card
+                        }
+                    }
+                },
+            ); // end tab card
             ui.add_space(6.0);
 
             // Result section — shows selected group's latest, or one-shot read result.
@@ -1247,20 +1342,34 @@ impl eframe::App for MasterApp {
                 .unwrap_or((None, 0));
             let show_result = poll_latest.clone().or_else(|| self.read_result.clone());
             if let Some(result) = &show_result {
-                uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(12.0 as i8, 10.0 as i8), |ui| {
-                let title = if poll_latest.is_some() { "轮询结果" } else { "读取结果" };
-                let base = if poll_latest.is_some() { poll_addr } else { self.read_addr };
-                ui.label(egui::RichText::new(title).strong().size(12.5));
-                ui.add_space(4.0);
-                match result {
-                    ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
-                        render_u16_table(ui, base, vs);
-                    }
-                    ReadResult::Coils(bs) | ReadResult::DiscreteInputs(bs) => {
-                        render_bool_table(ui, base, bs);
-                    }
-                }
-                }); // end result card
+                uikit::region(
+                    ui,
+                    flavor,
+                    theme::Layer::L2,
+                    egui::Margin::symmetric(12.0 as i8, 10.0 as i8),
+                    |ui| {
+                        let title = if poll_latest.is_some() {
+                            "轮询结果"
+                        } else {
+                            "读取结果"
+                        };
+                        let base = if poll_latest.is_some() {
+                            poll_addr
+                        } else {
+                            self.read_addr
+                        };
+                        ui.label(egui::RichText::new(title).strong().size(12.5));
+                        ui.add_space(4.0);
+                        match result {
+                            ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
+                                render_u16_table(ui, base, vs);
+                            }
+                            ReadResult::Coils(bs) | ReadResult::DiscreteInputs(bs) => {
+                                render_bool_table(ui, base, bs);
+                            }
+                        }
+                    },
+                ); // end result card
             }
         });
 
@@ -1318,7 +1427,9 @@ impl MasterApp {
     }
 
     fn clear_logs_for_selection(&self) {
-        let Some(id) = self.selected.clone() else { return };
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
         let connections = self.connections.clone();
         self.rt.spawn(async move {
             let entries = connections.read().await;
@@ -1329,7 +1440,9 @@ impl MasterApp {
     }
 
     fn export_logs_for_selection(&mut self, ctx: egui::Context) {
-        let Some(id) = self.selected.clone() else { return };
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         self.rt.spawn(async move {
@@ -1354,7 +1467,10 @@ impl MasterApp {
             };
             match tokio::fs::write(path.path(), csv).await {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::Info(format!("日志已导出：{}", path.path().display())));
+                    let _ = tx.send(UiEvent::Info(format!(
+                        "日志已导出：{}",
+                        path.path().display()
+                    )));
                 }
                 Err(e) => {
                     let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
@@ -1383,20 +1499,36 @@ fn render_u16_table(ui: &mut egui::Ui, start: u16, values: &[u16]) {
         .column(Column::exact(90.0))
         .column(Column::remainder())
         .header(20.0, |mut h| {
-            h.col(|ui| { ui.strong("地址"); });
-            h.col(|ui| { ui.strong("Unsigned"); });
-            h.col(|ui| { ui.strong("Signed"); });
-            h.col(|ui| { ui.strong("Hex"); });
+            h.col(|ui| {
+                ui.strong("地址");
+            });
+            h.col(|ui| {
+                ui.strong("Unsigned");
+            });
+            h.col(|ui| {
+                ui.strong("Signed");
+            });
+            h.col(|ui| {
+                ui.strong("Hex");
+            });
         })
         .body(|body| {
             body.rows(18.0, values.len(), |mut row| {
                 let i = row.index();
                 let addr = start.wrapping_add(i as u16);
                 let v = values[i];
-                row.col(|ui| { ui.monospace(format!("{}", addr)); });
-                row.col(|ui| { ui.monospace(v.to_string()); });
-                row.col(|ui| { ui.monospace((v as i16).to_string()); });
-                row.col(|ui| { ui.monospace(format!("0x{:04X}", v)); });
+                row.col(|ui| {
+                    ui.monospace(format!("{}", addr));
+                });
+                row.col(|ui| {
+                    ui.monospace(v.to_string());
+                });
+                row.col(|ui| {
+                    ui.monospace((v as i16).to_string());
+                });
+                row.col(|ui| {
+                    ui.monospace(format!("0x{:04X}", v));
+                });
             });
         });
 }
@@ -1408,15 +1540,23 @@ fn render_bool_table(ui: &mut egui::Ui, start: u16, values: &[bool]) {
         .column(Column::exact(80.0))
         .column(Column::remainder())
         .header(20.0, |mut h| {
-            h.col(|ui| { ui.strong("地址"); });
-            h.col(|ui| { ui.strong("布尔"); });
+            h.col(|ui| {
+                ui.strong("地址");
+            });
+            h.col(|ui| {
+                ui.strong("布尔");
+            });
         })
         .body(|body| {
             body.rows(18.0, values.len(), |mut row| {
                 let i = row.index();
                 let addr = start.wrapping_add(i as u16);
-                row.col(|ui| { ui.monospace(format!("{}", addr)); });
-                row.col(|ui| { ui.monospace(if values[i] { "true" } else { "false" }); });
+                row.col(|ui| {
+                    ui.monospace(format!("{}", addr));
+                });
+                row.col(|ui| {
+                    ui.monospace(if values[i] { "true" } else { "false" });
+                });
             });
         });
 }

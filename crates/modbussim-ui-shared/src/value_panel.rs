@@ -97,11 +97,7 @@ pub fn render(
         }
         2 => {
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(
-                ui,
-                flavor,
-                format!("地址 {}..{} · 2 words", base, base + 1),
-            );
+            crate::ui::caption(ui, flavor, format!("地址 {}..{} · 2 words", base, base + 1));
             render_double(ui, base, [values[0], values[1]])
         }
         3 => {
@@ -116,11 +112,7 @@ pub fn render(
         }
         _ => {
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(
-                ui,
-                flavor,
-                format!("地址 {}..{} · 4 words", base, base + 3),
-            );
+            crate::ui::caption(ui, flavor, format!("地址 {}..{} · 4 words", base, base + 3));
             let w1 = render_double(ui, base, [values[0], values[1]]);
             ui.add_space(4.0);
             ui.separator();
@@ -187,7 +179,9 @@ fn edit_cell(
 
     let mut result = None;
     let commit = resp.lost_focus()
-        && ui.ctx().input(|i| i.key_pressed(Key::Enter) || !i.pointer.any_pressed())
+        && ui
+            .ctx()
+            .input(|i| i.key_pressed(Key::Enter) || !i.pointer.any_pressed())
         || (has_focus && ui.ctx().input(|i| i.key_pressed(Key::Enter)));
     if commit && !buf.text.is_empty() {
         if let Some(writes) = parse_fn(buf.text.trim()) {
@@ -212,17 +206,13 @@ fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>
             ui.label("Unsigned");
             out = combine(
                 out.take(),
-                edit_cell(
-                    ui,
-                    Id::new(("vp_u16", addr)),
-                    v.to_string(),
-                    h,
-                    move |s| {
-                        let n: u32 = s.parse().ok()?;
-                        if n > u16::MAX as u32 { return None; }
-                        Some(vec![(addr, n as u16)])
-                    },
-                ),
+                edit_cell(ui, Id::new(("vp_u16", addr)), v.to_string(), h, move |s| {
+                    let n: u32 = s.parse().ok()?;
+                    if n > u16::MAX as u32 {
+                        return None;
+                    }
+                    Some(vec![(addr, n as u16)])
+                }),
             );
             ui.end_row();
 
@@ -236,7 +226,9 @@ fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>
                     h,
                     move |s| {
                         let n: i32 = s.parse().ok()?;
-                        if n < i16::MIN as i32 || n > i16::MAX as i32 { return None; }
+                        if n < i16::MIN as i32 || n > i16::MAX as i32 {
+                            return None;
+                        }
                         Some(vec![(addr, n as i16 as u16)])
                     },
                 ),
@@ -265,17 +257,11 @@ fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>
             let display = format!("{} {} {} {}", &b[0..4], &b[4..8], &b[8..12], &b[12..16]);
             out = combine(
                 out.take(),
-                edit_cell(
-                    ui,
-                    Id::new(("vp_bin", addr)),
-                    display,
-                    h,
-                    move |s| {
-                        let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-                        let n = u16::from_str_radix(&cleaned, 2).ok()?;
-                        Some(vec![(addr, n)])
-                    },
-                ),
+                edit_cell(ui, Id::new(("vp_bin", addr)), display, h, move |s| {
+                    let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+                    let n = u16::from_str_radix(&cleaned, 2).ok()?;
+                    Some(vec![(addr, n)])
+                }),
             );
             ui.end_row();
         });
@@ -284,11 +270,7 @@ fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>
 
 // --- Double-word formats (U32 / I32 / F32 × 4 endians) ---
 
-fn render_double(
-    ui: &mut egui::Ui,
-    base: u16,
-    words: [u16; 2],
-) -> Option<Vec<(u16, u16)>> {
+fn render_double(ui: &mut egui::Ui, base: u16, words: [u16; 2]) -> Option<Vec<(u16, u16)>> {
     let h = addr_hash(base, &words);
     let mut out: Option<Vec<(u16, u16)>> = None;
     egui::Grid::new("vp_double")
@@ -315,7 +297,9 @@ fn render_double(
                         h,
                         move |s| {
                             let n: u64 = s.parse().ok()?;
-                            if n > u32::MAX as u64 { return None; }
+                            if n > u32::MAX as u64 {
+                                return None;
+                            }
                             let pair = encode_u32(n as u32, e);
                             Some(vec![(base, pair[0]), (base + 1, pair[1])])
                         },
@@ -361,11 +345,7 @@ fn render_double(
 
 // --- Quad-word (Float64) ---
 
-fn render_quad(
-    ui: &mut egui::Ui,
-    base: u16,
-    words: [u16; 4],
-) -> Option<Vec<(u16, u16)>> {
+fn render_quad(ui: &mut egui::Ui, base: u16, words: [u16; 4]) -> Option<Vec<(u16, u16)>> {
     let h = addr_hash(base, &words);
     let mut out: Option<Vec<(u16, u16)>> = None;
     ui.label(RichText::new("Double (64-bit)").strong());
@@ -384,22 +364,16 @@ fn render_quad(
                 };
                 out = combine(
                     out.take(),
-                    edit_cell(
-                        ui,
-                        Id::new(("vp_f64", base, label)),
-                        display,
-                        h,
-                        move |s| {
-                            let f: f64 = s.parse().ok()?;
-                            let w = encode_f64(f, order);
-                            Some(vec![
-                                (base, w[0]),
-                                (base + 1, w[1]),
-                                (base + 2, w[2]),
-                                (base + 3, w[3]),
-                            ])
-                        },
-                    ),
+                    edit_cell(ui, Id::new(("vp_f64", base, label)), display, h, move |s| {
+                        let f: f64 = s.parse().ok()?;
+                        let w = encode_f64(f, order);
+                        Some(vec![
+                            (base, w[0]),
+                            (base + 1, w[1]),
+                            (base + 2, w[2]),
+                            (base + 3, w[3]),
+                        ])
+                    }),
                 );
                 ui.end_row();
             }
@@ -490,8 +464,7 @@ mod tests {
         let pair = encode_u32(0x41C80000, Endian::Little);
         assert_eq!(pair, [0x0000, 0x41C8]);
         // And decoding back under Little yields 0x41C80000.
-        let decoded =
-            decode_value(&[pair[0], pair[1]], DataType::Float32, Endian::Little).unwrap();
+        let decoded = decode_value(&[pair[0], pair[1]], DataType::Float32, Endian::Little).unwrap();
         assert!((decoded - 25.0).abs() < 1e-6);
     }
 }

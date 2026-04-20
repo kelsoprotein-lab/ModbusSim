@@ -14,12 +14,12 @@ use modbussim_core::transport::Transport;
 use modbussim_ui_shared::format::{format_u16, U16Format};
 use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
-use modbussim_ui_shared::theme::{self, Flavor};
-use modbussim_ui_shared::ui as uikit;
-use modbussim_ui_shared::value_panel::{self, F64Order};
 use modbussim_ui_shared::project::{
     deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
 };
+use modbussim_ui_shared::theme::{self, Flavor};
+use modbussim_ui_shared::ui as uikit;
+use modbussim_ui_shared::value_panel::{self, F64Order};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
@@ -100,10 +100,7 @@ impl DsKind {
                 max: 1000,
                 period_ms: 5000,
             },
-            DsKind::Random => DataSource::Random {
-                min: 0,
-                max: 65535,
-            },
+            DsKind::Random => DataSource::Random { min: 0, max: 65535 },
             DsKind::Fixed => DataSource::Fixed { value: 42 },
             DsKind::CsvPlayback => DataSource::CsvPlayback {
                 values: vec![0, 100, 200, 300, 400],
@@ -147,7 +144,12 @@ fn source_short_desc(s: &DataSource) -> String {
     match s {
         DataSource::Fixed { value } => format!("Fixed={}", value),
         DataSource::Random { min, max } => format!("Rand[{}..{}]", min, max),
-        DataSource::Sine { amplitude, frequency, offset, .. } => {
+        DataSource::Sine {
+            amplitude,
+            frequency,
+            offset,
+            ..
+        } => {
             format!("Sine A={} f={}Hz off={}", amplitude, frequency, offset)
         }
         DataSource::Sawtooth { period_ms, .. } => format!("Sawtooth T={}ms", period_ms),
@@ -381,12 +383,16 @@ impl SlaveApp {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     let mut srcs = sources.lock().await;
-                    if srcs.is_empty() { continue }
+                    if srcs.is_empty() {
+                        continue;
+                    }
                     let now = Instant::now();
                     // Collect writes first so we don't hold the sources lock while touching connections.
                     let mut updates: Vec<(String, u8, RegisterType, u16, u16)> = Vec::new();
                     for s in srcs.iter_mut() {
-                        if !s.enabled { continue }
+                        if !s.enabled {
+                            continue;
+                        }
                         let interval = std::time::Duration::from_millis(
                             s.state.config.update_interval_ms.max(10),
                         );
@@ -401,10 +407,14 @@ impl SlaveApp {
                         }
                     }
                     drop(srcs);
-                    if updates.is_empty() { continue }
+                    if updates.is_empty() {
+                        continue;
+                    }
                     let conns = connections.read().await;
                     for (conn_id, slave_id, rtype, addr, v) in updates {
-                        let Some(entry) = conns.iter().find(|e| e.id == conn_id) else { continue };
+                        let Some(entry) = conns.iter().find(|e| e.id == conn_id) else {
+                            continue;
+                        };
                         let conn = entry.connection.read().await;
                         let mut devs = conn.devices.write().await;
                         if let Some(dev) = devs.get_mut(&slave_id) {
@@ -529,9 +539,15 @@ impl SlaveApp {
             self.log_cache.clear();
         }
 
-        let Ok(entries) = self.connections.try_read() else { return };
-        let Some(entry) = entries.iter().find(|e| e.id == id) else { return };
-        let Some(mut all) = entry.log_collector.try_get_all() else { return };
+        let Ok(entries) = self.connections.try_read() else {
+            return;
+        };
+        let Some(entry) = entries.iter().find(|e| e.id == id) else {
+            return;
+        };
+        let Some(mut all) = entry.log_collector.try_get_all() else {
+            return;
+        };
         let start = all.len().saturating_sub(500);
         self.log_cache = all.drain(start..).collect();
         self.log_cache_conn_id = Some(id.to_string());
@@ -539,7 +555,9 @@ impl SlaveApp {
     }
 
     fn clear_logs_for_selection(&self) {
-        let Some(id) = selection_conn_id(&self.selection) else { return };
+        let Some(id) = selection_conn_id(&self.selection) else {
+            return;
+        };
         let id = id.to_string();
         let connections = self.connections.clone();
         self.rt.spawn(async move {
@@ -551,7 +569,9 @@ impl SlaveApp {
     }
 
     fn export_logs_for_selection(&mut self, ctx: egui::Context) {
-        let Some(id) = selection_conn_id(&self.selection) else { return };
+        let Some(id) = selection_conn_id(&self.selection) else {
+            return;
+        };
         let id = id.to_string();
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
@@ -578,7 +598,10 @@ impl SlaveApp {
             };
             match tokio::fs::write(path.path(), csv).await {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::Info(format!("日志已导出：{}", path.path().display())));
+                    let _ = tx.send(UiEvent::Info(format!(
+                        "日志已导出：{}",
+                        path.path().display()
+                    )));
                 }
                 Err(e) => {
                     let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
@@ -701,7 +724,9 @@ impl SlaveApp {
         let connections = self.connections.clone();
         self.rt.spawn(async move {
             let conns = connections.read().await;
-            let Some(entry) = conns.iter().find(|e| e.id == conn_id) else { return };
+            let Some(entry) = conns.iter().find(|e| e.id == conn_id) else {
+                return;
+            };
             let conn = entry.connection.read().await;
             let mut devs = conn.devices.write().await;
             if let Some(dev) = devs.get_mut(&slave_id) {
@@ -718,9 +743,7 @@ impl SlaveApp {
             .map(|s| {
                 let mut ids: Vec<u8> = s.devices.iter().map(|d| d.slave_id).collect();
                 ids.sort();
-                (1u8..=247)
-                    .find(|id| !ids.contains(id))
-                    .unwrap_or(1)
+                (1u8..=247).find(|id| !ids.contains(id)).unwrap_or(1)
             })
             .unwrap_or(1);
 
@@ -735,8 +758,12 @@ impl SlaveApp {
     }
 
     fn submit_add_device(&mut self, ctx: egui::Context) {
-        let Some(state) = self.add_device_modal.as_mut() else { return };
-        if state.busy { return; }
+        let Some(state) = self.add_device_modal.as_mut() else {
+            return;
+        };
+        if state.busy {
+            return;
+        }
         if state.max_address > u16::MAX as u32 {
             self.last_error = Some("max_address 超过 65535".to_string());
             return;
@@ -780,7 +807,10 @@ impl SlaveApp {
             let conn = conn_arc.read().await;
             match conn.add_device(device).await {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::DeviceAdded { conn_id, device: snap });
+                    let _ = tx.send(UiEvent::DeviceAdded {
+                        conn_id,
+                        device: snap,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(UiEvent::Error(format!("新增从站失败: {e}")));
@@ -836,8 +866,12 @@ impl SlaveApp {
     }
 
     fn submit_batch_add(&mut self, ctx: egui::Context) {
-        let Some(state) = self.batch_modal.as_mut() else { return };
-        if state.busy { return; }
+        let Some(state) = self.batch_modal.as_mut() else {
+            return;
+        };
+        if state.busy {
+            return;
+        }
         if state.end_addr < state.start_addr {
             self.last_error = Some("结束地址必须 ≥ 起始地址".to_string());
             return;
@@ -928,7 +962,12 @@ impl SlaveApp {
     /// Clones the target HashMap into an Arc (cheap: shares buckets via Arc,
     /// no per-cell copy in the UI render path).
     fn refresh_reg_view(&mut self) {
-        let Selection::RegisterGroup { conn_id, slave_id, reg_type } = self.selection.clone() else {
+        let Selection::RegisterGroup {
+            conn_id,
+            slave_id,
+            reg_type,
+        } = self.selection.clone()
+        else {
             self.reg_view = None;
             self.reg_view_last_refresh = None;
             return;
@@ -948,13 +987,19 @@ impl SlaveApp {
             }
         }
 
-        let Ok(entries) = self.connections.try_read() else { return };
+        let Ok(entries) = self.connections.try_read() else {
+            return;
+        };
         let Some(entry) = entries.iter().find(|e| e.id == conn_id) else {
             self.reg_view = None;
             return;
         };
-        let Ok(conn) = entry.connection.try_read() else { return };
-        let Ok(devs) = conn.devices.try_read() else { return };
+        let Ok(conn) = entry.connection.try_read() else {
+            return;
+        };
+        let Ok(devs) = conn.devices.try_read() else {
+            return;
+        };
         let Some(dev) = devs.get(&slave_id) else {
             self.reg_view = None;
             return;
@@ -990,9 +1035,7 @@ impl SlaveApp {
         let mut defs_map: std::collections::HashMap<u16, (String, String)> =
             std::collections::HashMap::new();
         for d in &dev.register_defs {
-            if d.register_type == reg_type
-                && (!d.name.is_empty() || !d.comment.is_empty())
-            {
+            if d.register_type == reg_type && (!d.name.is_empty() || !d.comment.is_empty()) {
                 defs_map.insert(d.address, (d.name.clone(), d.comment.clone()));
             }
         }
@@ -1294,7 +1337,8 @@ impl SlaveApp {
             match serialize_slave(&proj) {
                 Ok(json) => match tokio::fs::write(path.path(), json).await {
                     Ok(()) => {
-                        let _ = tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                        let _ =
+                            tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
                     }
                     Err(e) => {
                         let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
@@ -1409,7 +1453,11 @@ impl SlaveApp {
                 UiEvent::ConnectionRemoved(id) => {
                     self.conn_snapshot.retain(|s| s.id != id);
                 }
-                UiEvent::DeviceCountsUpdated { conn_id, slave_id, counts } => {
+                UiEvent::DeviceCountsUpdated {
+                    conn_id,
+                    slave_id,
+                    counts,
+                } => {
                     if let Some(s) = self.conn_snapshot.iter_mut().find(|s| s.id == conn_id) {
                         if let Some(d) = s.devices.iter_mut().find(|d| d.slave_id == slave_id) {
                             d.counts = counts;
@@ -1448,10 +1496,20 @@ impl SlaveApp {
 
 enum TreeAction {
     ToggleConn(String),
-    ToggleDevice { conn_id: String, slave_id: u8 },
+    ToggleDevice {
+        conn_id: String,
+        slave_id: u8,
+    },
     SelectConn(String),
-    SelectDevice { conn_id: String, slave_id: u8 },
-    SelectGroup { conn_id: String, slave_id: u8, reg_type: RegisterType },
+    SelectDevice {
+        conn_id: String,
+        slave_id: u8,
+    },
+    SelectGroup {
+        conn_id: String,
+        slave_id: u8,
+        reg_type: RegisterType,
+    },
     StartConn(String),
     StopConn(String),
     RemoveConn(String),
@@ -1501,7 +1559,10 @@ impl ValueDisplayMode {
         }
     }
     pub fn is_multi_word(&self) -> bool {
-        matches!(self, Self::F32(_) | Self::U32(_) | Self::I32(_) | Self::F64(_))
+        matches!(
+            self,
+            Self::F32(_) | Self::U32(_) | Self::I32(_) | Self::F64(_)
+        )
     }
     pub fn stride(&self) -> usize {
         match self {
@@ -1538,7 +1599,12 @@ const DATA_TYPES: &[DataType] = &[
     DataType::Float32,
 ];
 
-const ENDIANS: &[Endian] = &[Endian::Big, Endian::Little, Endian::MidBig, Endian::MidLittle];
+const ENDIANS: &[Endian] = &[
+    Endian::Big,
+    Endian::Little,
+    Endian::MidBig,
+    Endian::MidLittle,
+];
 
 fn selection_conn_id(s: &Selection) -> Option<&str> {
     match s {
@@ -1715,8 +1781,11 @@ impl SlaveApp {
                                 if grp_is_selected {
                                     paint_active_row(ui, row_resp.rect);
                                 } else if row_resp.hovered() {
-                                    ui.painter()
-                                        .rect_filled(row_resp.rect, 0.0, theme::bg_hover(flavor));
+                                    ui.painter().rect_filled(
+                                        row_resp.rect,
+                                        0.0,
+                                        theme::bg_hover(flavor),
+                                    );
                                 }
                                 let label_color =
                                     if grp_is_selected { acc_fg } else { muted_color };
@@ -1771,8 +1840,16 @@ impl SlaveApp {
                 self.selected_addrs.clear();
                 self.click_anchor = None;
             }
-            TreeAction::SelectGroup { conn_id, slave_id, reg_type } => {
-                self.selection = Selection::RegisterGroup { conn_id, slave_id, reg_type };
+            TreeAction::SelectGroup {
+                conn_id,
+                slave_id,
+                reg_type,
+            } => {
+                self.selection = Selection::RegisterGroup {
+                    conn_id,
+                    slave_id,
+                    reg_type,
+                };
                 self.pending_edits.clear();
                 self.selected_addrs.clear();
                 self.click_anchor = None;
@@ -1785,9 +1862,14 @@ impl SlaveApp {
     }
 
     fn render_add_device_modal(&mut self, ctx: &egui::Context) {
-        if self.add_device_modal.is_none() { return; }
+        if self.add_device_modal.is_none() {
+            return;
+        }
 
-        enum Act { Submit, Close }
+        enum Act {
+            Submit,
+            Close,
+        }
         let mut act: Option<Act> = None;
         let mut is_open = true;
 
@@ -1797,7 +1879,9 @@ impl SlaveApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut is_open)
             .show(ctx, |ui| {
-                let Some(st) = self.add_device_modal.as_mut() else { return };
+                let Some(st) = self.add_device_modal.as_mut() else {
+                    return;
+                };
                 egui::Grid::new("add_device_grid")
                     .num_columns(2)
                     .spacing([12.0, 6.0])
@@ -1825,8 +1909,16 @@ impl SlaveApp {
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(&mut st.init_mode, DeviceInitMode::Empty, "空");
-                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Default, "默认值（全 0）");
-                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Random, "随机");
+                                ui.selectable_value(
+                                    &mut st.init_mode,
+                                    DeviceInitMode::Default,
+                                    "默认值（全 0）",
+                                );
+                                ui.selectable_value(
+                                    &mut st.init_mode,
+                                    DeviceInitMode::Random,
+                                    "随机",
+                                );
                             });
                         ui.end_row();
 
@@ -1839,28 +1931,42 @@ impl SlaveApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!st.busy, egui::Button::new("确认")).clicked() {
+                    if ui
+                        .add_enabled(!st.busy, egui::Button::new("确认"))
+                        .clicked()
+                    {
                         act = Some(Act::Submit);
                     }
                     if ui.button("取消").clicked() {
                         act = Some(Act::Close);
                     }
-                    if st.busy { ui.spinner(); }
+                    if st.busy {
+                        ui.spinner();
+                    }
                 });
             });
 
-        if !is_open { act = Some(Act::Close); }
+        if !is_open {
+            act = Some(Act::Close);
+        }
         match act {
             Some(Act::Submit) => self.submit_add_device(ctx.clone()),
-            Some(Act::Close) => { self.add_device_modal = None; }
+            Some(Act::Close) => {
+                self.add_device_modal = None;
+            }
             None => {}
         }
     }
 
     fn render_batch_modal(&mut self, ctx: &egui::Context) {
-        if self.batch_modal.is_none() { return; }
+        if self.batch_modal.is_none() {
+            return;
+        }
 
-        enum ModalAction { Submit, Close }
+        enum ModalAction {
+            Submit,
+            Close,
+        }
         let mut action: Option<ModalAction> = None;
         let mut is_open = true;
 
@@ -1870,7 +1976,9 @@ impl SlaveApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .open(&mut is_open)
             .show(ctx, |ui| {
-                let Some(state) = self.batch_modal.as_mut() else { return };
+                let Some(state) = self.batch_modal.as_mut() else {
+                    return;
+                };
                 egui::Grid::new("batch_add_grid")
                     .num_columns(2)
                     .spacing([12.0, 6.0])
@@ -1902,7 +2010,11 @@ impl SlaveApp {
                             .selected_text(data_type_label(state.data_type))
                             .show_ui(ui, |ui| {
                                 for dt in DATA_TYPES {
-                                    ui.selectable_value(&mut state.data_type, *dt, data_type_label(*dt));
+                                    ui.selectable_value(
+                                        &mut state.data_type,
+                                        *dt,
+                                        data_type_label(*dt),
+                                    );
                                 }
                             });
                         ui.end_row();
@@ -1925,36 +2037,52 @@ impl SlaveApp {
                 let stride = state.data_type.register_count().max(1) as u32;
                 let raw_count = if state.end_addr >= state.start_addr {
                     (state.end_addr - state.start_addr) / stride + 1
-                } else { 0 };
+                } else {
+                    0
+                };
                 ui.separator();
                 ui.horizontal(|ui| {
                     if raw_count == 0 {
                         ui.colored_label(egui::Color32::RED, "范围无效");
                     } else if raw_count > 50_000 {
-                        ui.colored_label(egui::Color32::RED, format!("范围过大（最多 50000，当前 {raw_count}）"));
+                        ui.colored_label(
+                            egui::Color32::RED,
+                            format!("范围过大（最多 50000，当前 {raw_count}）"),
+                        );
                     } else {
                         ui.label(format!("将添加 {raw_count} 个条目"));
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!state.busy && raw_count > 0 && raw_count <= 50_000,
-                                      egui::Button::new("确认添加")).clicked() {
+                    if ui
+                        .add_enabled(
+                            !state.busy && raw_count > 0 && raw_count <= 50_000,
+                            egui::Button::new("确认添加"),
+                        )
+                        .clicked()
+                    {
                         action = Some(ModalAction::Submit);
                     }
                     if ui.button("取消").clicked() {
                         action = Some(ModalAction::Close);
                     }
-                    if state.busy { ui.spinner(); }
+                    if state.busy {
+                        ui.spinner();
+                    }
                 });
             });
 
-        if !is_open { action = Some(ModalAction::Close); }
+        if !is_open {
+            action = Some(ModalAction::Close);
+        }
         match action {
             Some(ModalAction::Submit) => {
                 self.submit_batch_add(ctx.clone());
                 self.batch_modal = None;
             }
-            Some(ModalAction::Close) => { self.batch_modal = None; }
+            Some(ModalAction::Close) => {
+                self.batch_modal = None;
+            }
             None => {}
         }
     }
@@ -1967,7 +2095,11 @@ impl SlaveApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
                     ui.heading(format!("{}  ModbusSlave", icons::CPU));
-                    uikit::caption(ui, self.flavor, "从左侧创建或选中一个连接 / 设备 / 寄存器组。");
+                    uikit::caption(
+                        ui,
+                        self.flavor,
+                        "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
+                    );
                 });
             }
             Selection::Connection(id) => {
@@ -2083,22 +2215,13 @@ impl SlaveApp {
                             .spacing([12.0, 6.0])
                             .show(ui, |ui| {
                                 ui.label("周期");
-                                ui.add(
-                                    egui::Slider::new(&mut interval, 100..=5000)
-                                        .suffix(" ms"),
-                                );
+                                ui.add(egui::Slider::new(&mut interval, 100..=5000).suffix(" ms"));
                                 ui.end_row();
                                 ui.label("变位率");
-                                ui.add(
-                                    egui::Slider::new(&mut rate, 0..=100)
-                                        .suffix(" %"),
-                                );
+                                ui.add(egui::Slider::new(&mut rate, 0..=100).suffix(" %"));
                                 ui.end_row();
                                 ui.label("漂移幅度");
-                                ui.add(
-                                    egui::Slider::new(&mut delta, 0..=100)
-                                        .suffix(" %"),
-                                );
+                                ui.add(egui::Slider::new(&mut delta, 0..=100).suffix(" %"));
                                 ui.end_row();
                             });
                         new_jitter.interval_ms = interval as u64;
@@ -2232,7 +2355,11 @@ impl SlaveApp {
                     }
                 }
             }
-            Selection::RegisterGroup { conn_id, slave_id, reg_type } => {
+            Selection::RegisterGroup {
+                conn_id,
+                slave_id,
+                reg_type,
+            } => {
                 let group_label = REG_GROUPS
                     .iter()
                     .find(|(rt, _)| rt == reg_type)
@@ -2284,7 +2411,8 @@ impl SlaveApp {
                                     } else {
                                         "◧ 值解析 (V)"
                                     };
-                                    if uikit::link_action(ui, flavor, toggle_label, false).clicked() {
+                                    if uikit::link_action(ui, flavor, toggle_label, false).clicked()
+                                    {
                                         self.value_parse_open = !self.value_parse_open;
                                     }
                                     ui.add_space(8.0);
@@ -2299,7 +2427,9 @@ impl SlaveApp {
                                         if let Some(mut state) =
                                             egui::TextEdit::load_state(ui.ctx(), resp.id)
                                         {
-                                            let cc = egui::text::CCursor::new(search_text.chars().count());
+                                            let cc = egui::text::CCursor::new(
+                                                search_text.chars().count(),
+                                            );
                                             state.cursor.set_char_range(Some(
                                                 egui::text::CCursorRange::two(
                                                     egui::text::CCursor::new(0),
@@ -2315,7 +2445,8 @@ impl SlaveApp {
                         });
                     },
                 );
-                self.search_buf.insert(search_key.clone(), search_text.clone());
+                self.search_buf
+                    .insert(search_key.clone(), search_text.clone());
                 self.want_focus_search = want_focus;
                 let search_intent = parse_search_intent(&search_text);
                 if open_batch {
@@ -2334,10 +2465,7 @@ impl SlaveApp {
                     return;
                 }
 
-                let is_bool = matches!(
-                    reg_type,
-                    RegisterType::Coil | RegisterType::DiscreteInput
-                );
+                let is_bool = matches!(reg_type, RegisterType::Coil | RegisterType::DiscreteInput);
 
                 // 只有 16-bit 寄存器区（FC03 / FC04）支持多字节序显示；线圈区强制 U16。
                 let mode = if is_bool {
@@ -2401,359 +2529,490 @@ impl SlaveApp {
                     .size(panel_size)
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0 as i8, 6.0 as i8), |ui| {
-                if !is_bool && mode.is_multi_word() {
-                    let stride = mode.stride();
-                    let group_rows = view.row_count / stride;
-                    let endian = match mode {
-                        ValueDisplayMode::F32(e)
-                        | ValueDisplayMode::U32(e)
-                        | ValueDisplayMode::I32(e) => e,
-                        _ => Endian::Big,
-                    };
-                    let f64_order = match mode {
-                        ValueDisplayMode::F64(o) => o,
-                        _ => F64Order::Abcdefgh,
-                    };
-                    let avail_h = ui.available_height();
-                    TableBuilder::new(ui)
-                        .striped(false)
-                        .resizable(true)
-                        .max_scroll_height(avail_h)
-                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(Column::exact(110.0))
-                        .column(Column::exact(220.0))
-                        .column(Column::exact(200.0))
-                        .column(Column::remainder())
-                        .header(26.0, |mut h| {
-                            h.col(|ui| theme::text::tiny_caps(ui, flavor, "地址"));
-                            h.col(|ui| theme::text::tiny_caps(ui, flavor, mode.label()));
-                            h.col(|ui| theme::text::tiny_caps(ui, flavor, "Raw HEX"));
-                            h.col(|_| {});
-                        })
-                        .body(|body| {
-                            body.rows(row_h, group_rows, |mut row| {
-                                let base = row.index() as u16 * stride as u16;
-                                // Gather stride u16 values.
-                                let mut ws: Vec<u16> = Vec::with_capacity(stride);
-                                let mut all_present = true;
-                                for i in 0..stride as u16 {
-                                    match view
-                                        .u16_map
-                                        .as_ref()
-                                        .and_then(|m| m.get(&(base + i)).copied())
-                                    {
-                                        Some(v) => ws.push(v),
-                                        None => { all_present = false; break; }
-                                    }
-                                }
-                                row.col(|ui| {
-                                    let sel = (0..stride as u16)
-                                        .any(|i| selected_addrs.contains(&(base + i)));
-                                    let label = if stride == 4 {
-                                        format!("{}..{}", base, base + 3)
+                            uikit::region(
+                                ui,
+                                flavor,
+                                theme::Layer::L2,
+                                egui::Margin::symmetric(8.0 as i8, 6.0 as i8),
+                                |ui| {
+                                    if !is_bool && mode.is_multi_word() {
+                                        let stride = mode.stride();
+                                        let group_rows = view.row_count / stride;
+                                        let endian = match mode {
+                                            ValueDisplayMode::F32(e)
+                                            | ValueDisplayMode::U32(e)
+                                            | ValueDisplayMode::I32(e) => e,
+                                            _ => Endian::Big,
+                                        };
+                                        let f64_order = match mode {
+                                            ValueDisplayMode::F64(o) => o,
+                                            _ => F64Order::Abcdefgh,
+                                        };
+                                        let avail_h = ui.available_height();
+                                        TableBuilder::new(ui)
+                                            .striped(false)
+                                            .resizable(true)
+                                            .max_scroll_height(avail_h)
+                                            .cell_layout(egui::Layout::left_to_right(
+                                                egui::Align::Center,
+                                            ))
+                                            .column(Column::exact(110.0))
+                                            .column(Column::exact(220.0))
+                                            .column(Column::exact(200.0))
+                                            .column(Column::remainder())
+                                            .header(26.0, |mut h| {
+                                                h.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "地址")
+                                                });
+                                                h.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, mode.label())
+                                                });
+                                                h.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "Raw HEX")
+                                                });
+                                                h.col(|_| {});
+                                            })
+                                            .body(|body| {
+                                                body.rows(row_h, group_rows, |mut row| {
+                                                    let base = row.index() as u16 * stride as u16;
+                                                    // Gather stride u16 values.
+                                                    let mut ws: Vec<u16> =
+                                                        Vec::with_capacity(stride);
+                                                    let mut all_present = true;
+                                                    for i in 0..stride as u16 {
+                                                        match view.u16_map.as_ref().and_then(|m| {
+                                                            m.get(&(base + i)).copied()
+                                                        }) {
+                                                            Some(v) => ws.push(v),
+                                                            None => {
+                                                                all_present = false;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    row.col(|ui| {
+                                                        let sel = (0..stride as u16).any(|i| {
+                                                            selected_addrs.contains(&(base + i))
+                                                        });
+                                                        let label = if stride == 4 {
+                                                            format!("{}..{}", base, base + 3)
+                                                        } else {
+                                                            format!("{}..{}", base, base + 1)
+                                                        };
+                                                        let resp =
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                sel,
+                                                                egui::RichText::new(label)
+                                                                    .monospace(),
+                                                            ));
+                                                        if resp.clicked() {
+                                                            row_clicks.push((
+                                                                base,
+                                                                resp.ctx.input(|i| i.modifiers),
+                                                            ));
+                                                        }
+                                                    });
+                                                    row.col(|ui| {
+                                                        if !all_present {
+                                                            ui.monospace("—");
+                                                            return;
+                                                        }
+                                                        let text = match mode {
+                                                            ValueDisplayMode::F32(_) => {
+                                                                let d = decode_value(
+                                                                    &ws,
+                                                                    DataType::Float32,
+                                                                    endian,
+                                                                )
+                                                                .unwrap_or(f64::NAN);
+                                                                format!("{:.6}", d as f32)
+                                                            }
+                                                            ValueDisplayMode::U32(_) => {
+                                                                let d = decode_value(
+                                                                    &ws,
+                                                                    DataType::UInt32,
+                                                                    endian,
+                                                                )
+                                                                .unwrap_or(f64::NAN);
+                                                                format!("{}", d as u32)
+                                                            }
+                                                            ValueDisplayMode::I32(_) => {
+                                                                let d = decode_value(
+                                                                    &ws,
+                                                                    DataType::Int32,
+                                                                    endian,
+                                                                )
+                                                                .unwrap_or(f64::NAN);
+                                                                format!("{}", d as i32)
+                                                            }
+                                                            ValueDisplayMode::F64(_) => {
+                                                                let v = value_panel::decode_f64(
+                                                                    &ws, f64_order,
+                                                                );
+                                                                if v.is_finite() {
+                                                                    format!("{:.9}", v)
+                                                                } else {
+                                                                    "NaN / Inf".to_string()
+                                                                }
+                                                            }
+                                                            _ => "?".to_string(),
+                                                        };
+                                                        ui.monospace(text);
+                                                    });
+                                                    row.col(|ui| {
+                                                        if !all_present {
+                                                            ui.monospace("");
+                                                            return;
+                                                        }
+                                                        let joined = ws
+                                                            .iter()
+                                                            .map(|w| format!("{:04X}", w))
+                                                            .collect::<Vec<_>>()
+                                                            .join(" ");
+                                                        ui.monospace(joined);
+                                                    });
+                                                    row.col(|_| {});
+                                                });
+                                            });
                                     } else {
-                                        format!("{}..{}", base, base + 1)
-                                    };
-                                    let resp = ui.add(egui::SelectableLabel::new(
-                                        sel,
-                                        egui::RichText::new(label).monospace(),
-                                    ));
-                                    if resp.clicked() {
-                                        row_clicks.push((base, resp.ctx.input(|i| i.modifiers)));
-                                    }
-                                });
-                                row.col(|ui| {
-                                    if !all_present {
-                                        ui.monospace("—");
-                                        return;
-                                    }
-                                    let text = match mode {
-                                        ValueDisplayMode::F32(_) => {
-                                            let d = decode_value(&ws, DataType::Float32, endian)
-                                                .unwrap_or(f64::NAN);
-                                            format!("{:.6}", d as f32)
-                                        }
-                                        ValueDisplayMode::U32(_) => {
-                                            let d = decode_value(&ws, DataType::UInt32, endian)
-                                                .unwrap_or(f64::NAN);
-                                            format!("{}", d as u32)
-                                        }
-                                        ValueDisplayMode::I32(_) => {
-                                            let d = decode_value(&ws, DataType::Int32, endian)
-                                                .unwrap_or(f64::NAN);
-                                            format!("{}", d as i32)
-                                        }
-                                        ValueDisplayMode::F64(_) => {
-                                            let v = value_panel::decode_f64(&ws, f64_order);
-                                            if v.is_finite() {
-                                                format!("{:.9}", v)
-                                            } else {
-                                                "NaN / Inf".to_string()
+                                        // Apply search intent: Jump sets a one-shot scroll_to + highlight;
+                                        // Filter builds a reduced addr list that drives body.rows.
+                                        let filtered_addrs: Option<Vec<u16>> = match &search_intent
+                                        {
+                                            SearchIntent::None | SearchIntent::Jump(_) => None,
+                                            SearchIntent::Filter(q) => {
+                                                let ndl = q.as_str();
+                                                let v: Vec<u16> = (0..view.row_count as u16)
+                                                    .filter(|a| a.to_string().contains(ndl))
+                                                    .collect();
+                                                Some(v)
                                             }
-                                        }
-                                        _ => "?".to_string(),
-                                    };
-                                    ui.monospace(text);
-                                });
-                                row.col(|ui| {
-                                    if !all_present {
-                                        ui.monospace("");
-                                        return;
-                                    }
-                                    let joined = ws
-                                        .iter()
-                                        .map(|w| format!("{:04X}", w))
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    ui.monospace(joined);
-                                });
-                                row.col(|_| {});
-                            });
-                        });
-                } else {
-                    // Apply search intent: Jump sets a one-shot scroll_to + highlight;
-                    // Filter builds a reduced addr list that drives body.rows.
-                    let filtered_addrs: Option<Vec<u16>> = match &search_intent {
-                        SearchIntent::None | SearchIntent::Jump(_) => None,
-                        SearchIntent::Filter(q) => {
-                            let ndl = q.as_str();
-                            let v: Vec<u16> = (0..view.row_count as u16)
-                                .filter(|a| a.to_string().contains(ndl))
-                                .collect();
-                            Some(v)
-                        }
-                    };
-                    let mut scroll_to_row: Option<usize> = None;
-                    if let SearchIntent::Jump(addr) = search_intent {
-                        if (addr as usize) < view.row_count {
-                            // Only start a new highlight if the target changed — prevents
-                            // re-scroll on every keystroke once the user stops typing.
-                            let new_key = (conn_id.clone(), *slave_id, *reg_type, addr);
-                            let same = self
-                                .highlight
-                                .as_ref()
-                                .map(|h| (h.0.clone(), h.1, h.2, h.3) == new_key)
-                                .unwrap_or(false);
-                            if !same {
-                                self.highlight =
-                                    Some((new_key.0, new_key.1, new_key.2, addr, Instant::now()));
-                                scroll_to_row = Some(addr as usize);
-                            }
-                        }
-                    }
-
-                    if let Some(list) = &filtered_addrs {
-                        if list.is_empty() {
-                            ui.add_space(8.0);
-                            uikit::caption(ui, flavor, "无匹配寄存器");
-                            return;
-                        }
-                    }
-
-                    let body_row_count = filtered_addrs.as_ref().map(|v| v.len()).unwrap_or(view.row_count);
-                    let avail_h = ui.available_height();
-                    // Column layout differs for bool: (地址 / 值 / 名称 / 注释)
-                    // vs u16: (地址 / 值 / Hex / Binary / 空).
-                    // Column::exact() hard-locks range(w..=w), defeating resizable(true).
-                    // Use initial() + at_least() + clip(true) so users can drag column
-                    // dividers; at_least prevents dragging to 0 (would hide column).
-                    let mut tb = TableBuilder::new(ui)
-                        .striped(false)
-                        .resizable(true)
-                        .max_scroll_height(avail_h)
-                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(Column::initial(80.0).at_least(60.0).clip(true)); // 地址
-                    if is_bool {
-                        tb = tb
-                            .column(Column::initial(72.0).at_least(56.0).clip(true))  // 值 (48×24 toggle + 余量)
-                            .column(Column::initial(200.0).at_least(80.0).clip(true)) // 名称
-                            .column(Column::remainder().at_least(80.0).clip(true));   // 注释
-                    } else {
-                        tb = tb
-                            .column(Column::initial(110.0).at_least(72.0).clip(true)) // 值
-                            .column(Column::initial(100.0).at_least(72.0).clip(true)) // Hex
-                            .column(Column::initial(140.0).at_least(96.0).clip(true)) // Binary
-                            .column(Column::remainder().at_least(80.0).clip(true));   // 尾
-                    }
-                    if let Some(idx) = scroll_to_row {
-                        tb = tb.scroll_to_row(idx, Some(egui::Align::Center));
-                    }
-                    let highlight_addr: Option<u16> = self.highlight.as_ref().and_then(|h| {
-                        if &h.0 == conn_id && h.1 == *slave_id && h.2 == *reg_type {
-                            Some(h.3)
-                        } else {
-                            None
-                        }
-                    });
-                    let defs = view.defs.clone();
-                    tb
-                        .header(26.0, |mut header| {
-                            header.col(|ui| theme::text::tiny_caps(ui, flavor, "地址"));
-                            if is_bool {
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "值"));
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "名称"));
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "注释"));
-                            } else {
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, mode.label()));
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "HEX"));
-                                header.col(|ui| theme::text::tiny_caps(ui, flavor, "二进制"));
-                                header.col(|_| {});
-                            }
-                        })
-                        .body(|body| {
-                            body.rows(row_h, body_row_count, |mut row| {
-                                let addr = if let Some(list) = &filtered_addrs {
-                                    list[row.index()]
-                                } else {
-                                    row.index() as u16
-                                };
-                                if Some(addr) == highlight_addr {
-                                    row.set_selected(true);
-                                }
-                                row.col(|ui| {
-                                    let sel = selected_addrs.contains(&addr);
-                                    let resp = ui.add(egui::SelectableLabel::new(
-                                        sel,
-                                        egui::RichText::new(format!("{}", addr)).monospace(),
-                                    ));
-                                    if resp.clicked() {
-                                        row_clicks.push((addr, resp.ctx.input(|i| i.modifiers)));
-                                    }
-                                });
-
-                                let cache_u16 = view
-                                    .u16_map
-                                    .as_ref()
-                                    .and_then(|m| m.get(&addr).copied())
-                                    .unwrap_or(0);
-                                let cache_bool = view
-                                    .bool_map
-                                    .as_ref()
-                                    .and_then(|m| m.get(&addr).copied())
-                                    .unwrap_or(false);
-                                let key = (reg_type_v, addr);
-
-                                if is_bool {
-                                    let current = pending
-                                        .get(&key)
-                                        .map(|v| *v != 0)
-                                        .unwrap_or(cache_bool);
-                                    row.col(|ui| {
-                                        let mut tmp = current;
-                                        let resp = uikit::toggle_switch(ui, flavor, &mut tmp);
-                                        if resp.clicked() && tmp != current {
-                                            writes.push((addr, if tmp { 1 } else { 0 }));
-                                            pending.remove(&key);
-                                        }
-                                    });
-                                    let name = defs
-                                        .get(&addr)
-                                        .map(|(n, _)| n.clone())
-                                        .unwrap_or_default();
-                                    let comment = defs
-                                        .get(&addr)
-                                        .map(|(_, c)| c.clone())
-                                        .unwrap_or_default();
-                                    row.col(|ui| {
-                                        if !name.is_empty() {
-                                            ui.monospace(name);
-                                        }
-                                    });
-                                    row.col(|ui| {
-                                        if !comment.is_empty() {
-                                            ui.monospace(comment);
-                                        }
-                                    });
-                                } else {
-                                    row.col(|ui| {
-                                        let (min_i, max_i) = match mode {
-                                            ValueDisplayMode::I16 => (i16::MIN as i32, i16::MAX as i32),
-                                            _ => (0, u16::MAX as i32),
                                         };
-                                        let cache_as_display = match mode {
-                                            ValueDisplayMode::I16 => cache_u16 as i16 as i32,
-                                            _ => cache_u16 as i32,
-                                        };
-                                        let mut tmp: i32 = pending
-                                            .get(&key)
-                                            .copied()
-                                            .unwrap_or(cache_as_display);
-                                        let resp = ui.add(
-                                            egui::DragValue::new(&mut tmp).range(min_i..=max_i),
-                                        );
-                                        let active = resp.has_focus()
-                                            || resp.dragged()
-                                            || resp.drag_started()
-                                            || resp.gained_focus();
-                                        if active {
-                                            pending.insert(key, tmp);
-                                        } else if let Some(prev) = pending.remove(&key) {
-                                            let v = match mode {
-                                                ValueDisplayMode::I16 => {
-                                                    prev.clamp(i16::MIN as i32, i16::MAX as i32)
-                                                        as i16 as u16
+                                        let mut scroll_to_row: Option<usize> = None;
+                                        if let SearchIntent::Jump(addr) = search_intent {
+                                            if (addr as usize) < view.row_count {
+                                                // Only start a new highlight if the target changed — prevents
+                                                // re-scroll on every keystroke once the user stops typing.
+                                                let new_key =
+                                                    (conn_id.clone(), *slave_id, *reg_type, addr);
+                                                let same = self
+                                                    .highlight
+                                                    .as_ref()
+                                                    .map(|h| {
+                                                        (h.0.clone(), h.1, h.2, h.3) == new_key
+                                                    })
+                                                    .unwrap_or(false);
+                                                if !same {
+                                                    self.highlight = Some((
+                                                        new_key.0,
+                                                        new_key.1,
+                                                        new_key.2,
+                                                        addr,
+                                                        Instant::now(),
+                                                    ));
+                                                    scroll_to_row = Some(addr as usize);
                                                 }
-                                                _ => prev.clamp(0, 65535) as u16,
-                                            };
-                                            if v != cache_u16 {
-                                                writes.push((addr, v));
                                             }
                                         }
-                                    });
-                                    let display_u16 = pending
-                                        .get(&key)
-                                        .copied()
-                                        .map(|v| match mode {
-                                            ValueDisplayMode::I16 => {
-                                                v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
-                                                    as u16
-                                            }
-                                            _ => v.clamp(0, 65535) as u16,
-                                        })
-                                        .unwrap_or(cache_u16);
-                                    row.col(|ui| {
-                                        ui.monospace(format_u16(display_u16, U16Format::Hex));
-                                    });
-                                    row.col(|ui| {
-                                        ui.monospace(format_u16(display_u16, U16Format::Binary));
-                                    });
-                                    row.col(|_| {});
-                                }
-                            });
-                        });
-                }
 
-                            }); // end left region
+                                        if let Some(list) = &filtered_addrs {
+                                            if list.is_empty() {
+                                                ui.add_space(8.0);
+                                                uikit::caption(ui, flavor, "无匹配寄存器");
+                                                return;
+                                            }
+                                        }
+
+                                        let body_row_count = filtered_addrs
+                                            .as_ref()
+                                            .map(|v| v.len())
+                                            .unwrap_or(view.row_count);
+                                        let avail_h = ui.available_height();
+                                        // Column layout differs for bool: (地址 / 值 / 名称 / 注释)
+                                        // vs u16: (地址 / 值 / Hex / Binary / 空).
+                                        // Column::exact() hard-locks range(w..=w), defeating resizable(true).
+                                        // Use initial() + at_least() + clip(true) so users can drag column
+                                        // dividers; at_least prevents dragging to 0 (would hide column).
+                                        let mut tb = TableBuilder::new(ui)
+                                            .striped(false)
+                                            .resizable(true)
+                                            .max_scroll_height(avail_h)
+                                            .cell_layout(egui::Layout::left_to_right(
+                                                egui::Align::Center,
+                                            ))
+                                            .column(
+                                                Column::initial(80.0).at_least(60.0).clip(true),
+                                            ); // 地址
+                                        if is_bool {
+                                            tb = tb
+                                                .column(
+                                                    Column::initial(72.0).at_least(56.0).clip(true),
+                                                ) // 值 (48×24 toggle + 余量)
+                                                .column(
+                                                    Column::initial(200.0)
+                                                        .at_least(80.0)
+                                                        .clip(true),
+                                                ) // 名称
+                                                .column(
+                                                    Column::remainder().at_least(80.0).clip(true),
+                                                ); // 注释
+                                        } else {
+                                            tb = tb
+                                                .column(
+                                                    Column::initial(110.0)
+                                                        .at_least(72.0)
+                                                        .clip(true),
+                                                ) // 值
+                                                .column(
+                                                    Column::initial(100.0)
+                                                        .at_least(72.0)
+                                                        .clip(true),
+                                                ) // Hex
+                                                .column(
+                                                    Column::initial(140.0)
+                                                        .at_least(96.0)
+                                                        .clip(true),
+                                                ) // Binary
+                                                .column(
+                                                    Column::remainder().at_least(80.0).clip(true),
+                                                ); // 尾
+                                        }
+                                        if let Some(idx) = scroll_to_row {
+                                            tb = tb.scroll_to_row(idx, Some(egui::Align::Center));
+                                        }
+                                        let highlight_addr: Option<u16> =
+                                            self.highlight.as_ref().and_then(|h| {
+                                                if &h.0 == conn_id
+                                                    && h.1 == *slave_id
+                                                    && h.2 == *reg_type
+                                                {
+                                                    Some(h.3)
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                        let defs = view.defs.clone();
+                                        tb.header(26.0, |mut header| {
+                                            header.col(|ui| {
+                                                theme::text::tiny_caps(ui, flavor, "地址")
+                                            });
+                                            if is_bool {
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "值")
+                                                });
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "名称")
+                                                });
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "注释")
+                                                });
+                                            } else {
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, mode.label())
+                                                });
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "HEX")
+                                                });
+                                                header.col(|ui| {
+                                                    theme::text::tiny_caps(ui, flavor, "二进制")
+                                                });
+                                                header.col(|_| {});
+                                            }
+                                        })
+                                        .body(|body| {
+                                            body.rows(row_h, body_row_count, |mut row| {
+                                                let addr = if let Some(list) = &filtered_addrs {
+                                                    list[row.index()]
+                                                } else {
+                                                    row.index() as u16
+                                                };
+                                                if Some(addr) == highlight_addr {
+                                                    row.set_selected(true);
+                                                }
+                                                row.col(|ui| {
+                                                    let sel = selected_addrs.contains(&addr);
+                                                    let resp = ui.add(egui::SelectableLabel::new(
+                                                        sel,
+                                                        egui::RichText::new(format!("{}", addr))
+                                                            .monospace(),
+                                                    ));
+                                                    if resp.clicked() {
+                                                        row_clicks.push((
+                                                            addr,
+                                                            resp.ctx.input(|i| i.modifiers),
+                                                        ));
+                                                    }
+                                                });
+
+                                                let cache_u16 = view
+                                                    .u16_map
+                                                    .as_ref()
+                                                    .and_then(|m| m.get(&addr).copied())
+                                                    .unwrap_or(0);
+                                                let cache_bool = view
+                                                    .bool_map
+                                                    .as_ref()
+                                                    .and_then(|m| m.get(&addr).copied())
+                                                    .unwrap_or(false);
+                                                let key = (reg_type_v, addr);
+
+                                                if is_bool {
+                                                    let current = pending
+                                                        .get(&key)
+                                                        .map(|v| *v != 0)
+                                                        .unwrap_or(cache_bool);
+                                                    row.col(|ui| {
+                                                        let mut tmp = current;
+                                                        let resp = uikit::toggle_switch(
+                                                            ui, flavor, &mut tmp,
+                                                        );
+                                                        if resp.clicked() && tmp != current {
+                                                            writes.push((
+                                                                addr,
+                                                                if tmp { 1 } else { 0 },
+                                                            ));
+                                                            pending.remove(&key);
+                                                        }
+                                                    });
+                                                    let name = defs
+                                                        .get(&addr)
+                                                        .map(|(n, _)| n.clone())
+                                                        .unwrap_or_default();
+                                                    let comment = defs
+                                                        .get(&addr)
+                                                        .map(|(_, c)| c.clone())
+                                                        .unwrap_or_default();
+                                                    row.col(|ui| {
+                                                        if !name.is_empty() {
+                                                            ui.monospace(name);
+                                                        }
+                                                    });
+                                                    row.col(|ui| {
+                                                        if !comment.is_empty() {
+                                                            ui.monospace(comment);
+                                                        }
+                                                    });
+                                                } else {
+                                                    row.col(|ui| {
+                                                        let (min_i, max_i) = match mode {
+                                                            ValueDisplayMode::I16 => {
+                                                                (i16::MIN as i32, i16::MAX as i32)
+                                                            }
+                                                            _ => (0, u16::MAX as i32),
+                                                        };
+                                                        let cache_as_display = match mode {
+                                                            ValueDisplayMode::I16 => {
+                                                                cache_u16 as i16 as i32
+                                                            }
+                                                            _ => cache_u16 as i32,
+                                                        };
+                                                        let mut tmp: i32 = pending
+                                                            .get(&key)
+                                                            .copied()
+                                                            .unwrap_or(cache_as_display);
+                                                        let resp = ui.add(
+                                                            egui::DragValue::new(&mut tmp)
+                                                                .range(min_i..=max_i),
+                                                        );
+                                                        let active = resp.has_focus()
+                                                            || resp.dragged()
+                                                            || resp.drag_started()
+                                                            || resp.gained_focus();
+                                                        if active {
+                                                            pending.insert(key, tmp);
+                                                        } else if let Some(prev) =
+                                                            pending.remove(&key)
+                                                        {
+                                                            let v = match mode {
+                                                                ValueDisplayMode::I16 => {
+                                                                    prev.clamp(
+                                                                        i16::MIN as i32,
+                                                                        i16::MAX as i32,
+                                                                    )
+                                                                        as i16
+                                                                        as u16
+                                                                }
+                                                                _ => prev.clamp(0, 65535) as u16,
+                                                            };
+                                                            if v != cache_u16 {
+                                                                writes.push((addr, v));
+                                                            }
+                                                        }
+                                                    });
+                                                    let display_u16 = pending
+                                                        .get(&key)
+                                                        .copied()
+                                                        .map(|v| match mode {
+                                                            ValueDisplayMode::I16 => v.clamp(
+                                                                i16::MIN as i32,
+                                                                i16::MAX as i32,
+                                                            )
+                                                                as i16
+                                                                as u16,
+                                                            _ => v.clamp(0, 65535) as u16,
+                                                        })
+                                                        .unwrap_or(cache_u16);
+                                                    row.col(|ui| {
+                                                        ui.monospace(format_u16(
+                                                            display_u16,
+                                                            U16Format::Hex,
+                                                        ));
+                                                    });
+                                                    row.col(|ui| {
+                                                        ui.monospace(format_u16(
+                                                            display_u16,
+                                                            U16Format::Binary,
+                                                        ));
+                                                    });
+                                                    row.col(|_| {});
+                                                }
+                                            });
+                                        });
+                                    }
+                                },
+                            ); // end left region
                         }); // end StripBuilder left cell
-                        strip.cell(|_ui| { });
+                        strip.cell(|_ui| {});
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0 as i8, 10.0 as i8), |ui| {
-                            let mut selected_vals: Vec<u16> = Vec::new();
-                            let mut base: Option<u16> = None;
-                            // Only take up to 4 selected, in address order, and
-                            // require them to be contiguous for multi-word analysis.
-                            let ordered: Vec<u16> = selected_addrs.iter().copied().take(4).collect();
-                            for (i, a) in ordered.iter().enumerate() {
-                                if i == 0 {
-                                    base = Some(*a);
-                                } else if *a != ordered[i - 1] + 1 {
-                                    // Non-contiguous: stop collecting so ValuePanel
-                                    // only shows formats it can compute safely.
-                                    break;
-                                }
-                                if let Some(v) = view.u16_map.as_ref().and_then(|m| m.get(a).copied()) {
-                                    selected_vals.push(v);
-                                } else if let Some(b) = view.bool_map.as_ref().and_then(|m| m.get(a).copied()) {
-                                    selected_vals.push(if b { 1 } else { 0 });
-                                }
-                            }
-                            if let Some(vp_writes) = value_panel::render(ui, flavor, &selected_vals, base) {
-                                for w in vp_writes {
-                                    writes.push(w);
-                                }
-                            }
-                            }); // end right region
+                            uikit::region(
+                                ui,
+                                flavor,
+                                theme::Layer::L1,
+                                egui::Margin::symmetric(12.0 as i8, 10.0 as i8),
+                                |ui| {
+                                    let mut selected_vals: Vec<u16> = Vec::new();
+                                    let mut base: Option<u16> = None;
+                                    // Only take up to 4 selected, in address order, and
+                                    // require them to be contiguous for multi-word analysis.
+                                    let ordered: Vec<u16> =
+                                        selected_addrs.iter().copied().take(4).collect();
+                                    for (i, a) in ordered.iter().enumerate() {
+                                        if i == 0 {
+                                            base = Some(*a);
+                                        } else if *a != ordered[i - 1] + 1 {
+                                            // Non-contiguous: stop collecting so ValuePanel
+                                            // only shows formats it can compute safely.
+                                            break;
+                                        }
+                                        if let Some(v) =
+                                            view.u16_map.as_ref().and_then(|m| m.get(a).copied())
+                                        {
+                                            selected_vals.push(v);
+                                        } else if let Some(b) =
+                                            view.bool_map.as_ref().and_then(|m| m.get(a).copied())
+                                        {
+                                            selected_vals.push(if b { 1 } else { 0 });
+                                        }
+                                    }
+                                    if let Some(vp_writes) =
+                                        value_panel::render(ui, flavor, &selected_vals, base)
+                                    {
+                                        for w in vp_writes {
+                                            writes.push(w);
+                                        }
+                                    }
+                                },
+                            ); // end right region
                         });
                     }); // end StripBuilder horizontal
 
@@ -2765,11 +3024,17 @@ impl SlaveApp {
                     for (addr, modifiers) in row_clicks {
                         if modifiers.shift {
                             let anchor = self.click_anchor.unwrap_or(addr);
-                            let (a, b) = if anchor <= addr { (anchor, addr) } else { (addr, anchor) };
+                            let (a, b) = if anchor <= addr {
+                                (anchor, addr)
+                            } else {
+                                (addr, anchor)
+                            };
                             self.selected_addrs.clear();
                             for x in a..=b {
                                 self.selected_addrs.insert(x);
-                                if self.selected_addrs.len() >= 16 { break; }
+                                if self.selected_addrs.len() >= 16 {
+                                    break;
+                                }
                             }
                         } else if modifiers.command || modifiers.ctrl {
                             if !self.selected_addrs.remove(&addr) {
@@ -2830,10 +3095,7 @@ impl eframe::App for SlaveApp {
         // Cmd+F / Ctrl+F focuses the RegisterGroup search box (if that view is
         // active). COMMAND maps to ⌘ on macOS / Ctrl elsewhere. Consume up-front
         // so the window system doesn't swallow it.
-        let find_shortcut = egui::KeyboardShortcut::new(
-            egui::Modifiers::COMMAND,
-            egui::Key::F,
-        );
+        let find_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::F);
         if ctx.input_mut(|i| i.consume_shortcut(&find_shortcut))
             && matches!(self.selection, Selection::RegisterGroup { .. })
         {
@@ -2883,12 +3145,20 @@ impl eframe::App for SlaveApp {
                     }
                 });
                 ui.menu_button("视图", |ui| {
-                    if ui.checkbox(&mut self.log_state.open, "显示日志面板").clicked() {
+                    if ui
+                        .checkbox(&mut self.log_state.open, "显示日志面板")
+                        .clicked()
+                    {
                         ui.close_menu();
                     }
                     ui.separator();
                     ui.label("主题 (Catppuccin)");
-                    for f in [Flavor::Mocha, Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
+                    for f in [
+                        Flavor::Mocha,
+                        Flavor::Macchiato,
+                        Flavor::Frappe,
+                        Flavor::Latte,
+                    ] {
                         if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
                             theme::apply(ctx, self.flavor);
                             ui.close_menu();
@@ -2908,10 +3178,7 @@ impl eframe::App for SlaveApp {
                 });
                 ui.menu_button("帮助", |ui| {
                     ui.label("ModbusSlave (egui) · 开发预览");
-                    ui.hyperlink_to(
-                        "GitHub",
-                        "https://github.com/kelsoprotein-lab/ModbusSim",
-                    );
+                    ui.hyperlink_to("GitHub", "https://github.com/kelsoprotein-lab/ModbusSim");
                 });
             });
         });
@@ -2935,7 +3202,12 @@ impl eframe::App for SlaveApp {
                     |ui| {
                         // —— 头部：tiny_caps "连接" + 右上 + 新建 ——
                         egui::Frame::new()
-                            .inner_margin(egui::Margin { left: 14, right: 10, top: 12, bottom: 8 })
+                            .inner_margin(egui::Margin {
+                                left: 14,
+                                right: 10,
+                                top: 12,
+                                bottom: 8,
+                            })
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     theme::text::tiny_caps(ui, self.flavor, "连接");
@@ -2957,7 +3229,12 @@ impl eframe::App for SlaveApp {
                         if self.show_new_tcp_dialog {
                             egui::Frame::new()
                                 .fill(theme::bg_of(self.flavor, theme::Layer::L2))
-                                .inner_margin(egui::Margin { left: 14, right: 10, top: 6, bottom: 8 })
+                                .inner_margin(egui::Margin {
+                                    left: 14,
+                                    right: 10,
+                                    top: 6,
+                                    bottom: 8,
+                                })
                                 .show(ui, |ui| {
                                     egui::Grid::new("new_tcp_form")
                                         .num_columns(2)
@@ -2972,7 +3249,8 @@ impl eframe::App for SlaveApp {
                                         });
                                     ui.add_space(4.0);
                                     ui.horizontal(|ui| {
-                                        if uikit::primary_button(ui, self.flavor, "创建").clicked() {
+                                        if uikit::primary_button(ui, self.flavor, "创建").clicked()
+                                        {
                                             tree_action = Some(TreeAction::Create);
                                             self.show_new_tcp_dialog = false;
                                         }
@@ -3008,10 +3286,7 @@ impl eframe::App for SlaveApp {
                         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                             egui::Frame::new()
                                 .fill(theme::bg_of(self.flavor, theme::Layer::L0))
-                                .stroke(egui::Stroke::new(
-                                    1.0,
-                                    theme::border_subtle(self.flavor),
-                                ))
+                                .stroke(egui::Stroke::new(1.0, theme::border_subtle(self.flavor)))
                                 .inner_margin(egui::Margin {
                                     left: 14,
                                     right: 14,
@@ -3020,14 +3295,13 @@ impl eframe::App for SlaveApp {
                                 })
                                 .show(ui, |ui| {
                                     // Derive active connection id + state from selection
-                                    let active_conn = selection_conn_id(&self.selection)
-                                        .and_then(|id| {
+                                    let active_conn =
+                                        selection_conn_id(&self.selection).and_then(|id| {
                                             self.conn_snapshot.iter().find(|s| s.id == id)
                                         });
                                     if let Some(snap) = active_conn {
                                         let conn_id = snap.id.clone();
-                                        let is_running =
-                                            snap.state == ConnectionState::Running;
+                                        let is_running = snap.state == ConnectionState::Running;
                                         ui.horizontal(|ui| {
                                             let stop_label =
                                                 if is_running { "停止" } else { "启动" };
@@ -3046,16 +3320,10 @@ impl eframe::App for SlaveApp {
                                                 });
                                             }
                                             ui.add_space(14.0);
-                                            if uikit::link_action(
-                                                ui,
-                                                self.flavor,
-                                                "删除连接",
-                                                true,
-                                            )
-                                            .clicked()
+                                            if uikit::link_action(ui, self.flavor, "删除连接", true)
+                                                .clicked()
                                             {
-                                                tree_action =
-                                                    Some(TreeAction::RemoveConn(conn_id));
+                                                tree_action = Some(TreeAction::RemoveConn(conn_id));
                                             }
                                         });
                                     }
@@ -3083,27 +3351,37 @@ impl eframe::App for SlaveApp {
                 ui.horizontal(|ui| {
                     if let Some(err) = &self.last_error {
                         ui.add(egui::Label::new(
-                            egui::RichText::new("●").color(theme::danger(flavor)).size(11.0),
+                            egui::RichText::new("●")
+                                .color(theme::danger(flavor))
+                                .size(11.0),
                         ));
                         ui.add(egui::Label::new(
-                            egui::RichText::new(err).color(theme::danger(flavor)).size(11.0),
+                            egui::RichText::new(err)
+                                .color(theme::danger(flavor))
+                                .size(11.0),
                         ));
                         if uikit::link_action(ui, flavor, "清除", false).clicked() {
                             clear_error = true;
                         }
                     } else if let Some(msg) = &self.status_msg {
                         ui.add(egui::Label::new(
-                            egui::RichText::new("●").color(theme::success(flavor)).size(11.0),
+                            egui::RichText::new("●")
+                                .color(theme::success(flavor))
+                                .size(11.0),
                         ));
                         ui.add(egui::Label::new(
-                            egui::RichText::new(msg).color(theme::success(flavor)).size(11.0),
+                            egui::RichText::new(msg)
+                                .color(theme::success(flavor))
+                                .size(11.0),
                         ));
                         if uikit::link_action(ui, flavor, "清除", false).clicked() {
                             clear_status = true;
                         }
                     } else {
                         ui.add(egui::Label::new(
-                            egui::RichText::new("●").color(theme::success(flavor)).size(11.0),
+                            egui::RichText::new("●")
+                                .color(theme::success(flavor))
+                                .size(11.0),
                         ));
                         theme::text::crumb(ui, flavor, "就绪");
                     }
@@ -3118,8 +3396,12 @@ impl eframe::App for SlaveApp {
                     });
                 });
             });
-        if clear_error { self.last_error = None; }
-        if clear_status { self.status_msg = None; }
+        if clear_error {
+            self.last_error = None;
+        }
+        if clear_status {
+            self.status_msg = None;
+        }
 
         self.render_log_panel(ctx);
 

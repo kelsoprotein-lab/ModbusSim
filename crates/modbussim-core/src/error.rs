@@ -124,7 +124,11 @@ mod tests {
             "connection"
         );
         assert_eq!(
-            ModbusError::ConnectionTimeout { addr: "x".into(), timeout_ms: 1 }.category(),
+            ModbusError::ConnectionTimeout {
+                addr: "x".into(),
+                timeout_ms: 1
+            }
+            .category(),
             "connection"
         );
         assert_eq!(
@@ -132,7 +136,11 @@ mod tests {
             "protocol"
         );
         assert_eq!(
-            ModbusError::CrcMismatch { expected: 0, actual: 1 }.category(),
+            ModbusError::CrcMismatch {
+                expected: 0,
+                actual: 1
+            }
+            .category(),
             "protocol"
         );
         assert_eq!(
@@ -143,8 +151,20 @@ mod tests {
             ModbusError::ProjectFileCorrupt { path: "p".into() }.category(),
             "application"
         );
-        assert_eq!(ModbusError::Io { message: "err".into() }.category(), "generic");
-        assert_eq!(ModbusError::Internal { message: "err".into() }.category(), "generic");
+        assert_eq!(
+            ModbusError::Io {
+                message: "err".into()
+            }
+            .category(),
+            "generic"
+        );
+        assert_eq!(
+            ModbusError::Internal {
+                message: "err".into()
+            }
+            .category(),
+            "generic"
+        );
     }
 
     #[test]
@@ -174,7 +194,9 @@ mod tests {
 
     #[test]
     fn test_error_serialize_io() {
-        let err = ModbusError::Io { message: "disk full".to_string() };
+        let err = ModbusError::Io {
+            message: "disk full".to_string(),
+        };
         let json = serde_json::to_string(&err).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["category"], "io");

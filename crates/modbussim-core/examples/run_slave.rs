@@ -11,8 +11,13 @@ async fn main() {
     };
     let log = Arc::new(LogCollector::new());
     let mut slave = SlaveConnection::new(transport).with_log_collector(log);
-    slave.add_device(SlaveDevice::with_random_registers(1, "Test Slave", 100)).await.unwrap();
+    slave
+        .add_device(SlaveDevice::with_random_registers(1, "Test Slave", 100))
+        .await
+        .unwrap();
     slave.start().await.unwrap();
     println!("Slave running on 0.0.0.0:5020 with LogCollector");
-    loop { tokio::time::sleep(std::time::Duration::from_secs(3600)).await; }
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    }
 }

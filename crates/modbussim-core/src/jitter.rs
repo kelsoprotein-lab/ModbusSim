@@ -35,11 +35,7 @@ impl Default for JitterConfig {
     }
 }
 
-pub fn apply_tick(
-    map: &mut RegisterMap,
-    cfg: &JitterConfig,
-    rng: &mut impl Rng,
-) {
+pub fn apply_tick(map: &mut RegisterMap, cfg: &JitterConfig, rng: &mut impl Rng) {
     if !cfg.enabled {
         return;
     }
@@ -60,11 +56,7 @@ pub fn apply_tick(
     }
 }
 
-fn flip_bools(
-    store: &mut std::collections::HashMap<u16, bool>,
-    rate: u32,
-    rng: &mut impl Rng,
-) {
+fn flip_bools(store: &mut std::collections::HashMap<u16, bool>, rate: u32, rng: &mut impl Rng) {
     for v in store.values_mut() {
         if rng.gen_range(0..100) < rate {
             *v = !*v;
@@ -180,10 +172,18 @@ mod tests {
         // All u16 started at 1000; with delta_percent=50 each result must land in [500, 1500]
         // because the drift is computed as value * rand(-50..=50) / 100 then wrapping_add to value.
         for &v in map.holding_registers.values() {
-            assert!((500..=1500).contains(&v), "holding out of drift range: {}", v);
+            assert!(
+                (500..=1500).contains(&v),
+                "holding out of drift range: {}",
+                v
+            );
         }
         for &v in map.input_registers.values() {
-            assert!((1000..=3000).contains(&v), "input out of drift range: {}", v);
+            assert!(
+                (1000..=3000).contains(&v),
+                "input out of drift range: {}",
+                v
+            );
         }
     }
 

@@ -183,7 +183,10 @@ mod tests {
         let mut p = MasterProject::new();
         p.connections.push(MasterConnectionSave {
             label: "Remote".into(),
-            tcp: TcpSpec { host: "127.0.0.1".into(), port: 5502 },
+            tcp: TcpSpec {
+                host: "127.0.0.1".into(),
+                port: 5502,
+            },
             slave_id: 1,
             timeout_ms: 3000,
             poll: Some(PollSave {

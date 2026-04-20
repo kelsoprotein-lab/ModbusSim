@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  modbussim_app_lib::run();
+    modbussim_app_lib::run();
 }

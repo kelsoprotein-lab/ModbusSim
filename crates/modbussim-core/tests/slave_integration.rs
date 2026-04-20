@@ -27,22 +27,10 @@ async fn start_slave(port: u16) -> SlaveConnection {
     device1.register_map.write_coil(0, true);
     device1.register_map.write_coil(1, false);
     device1.register_map.write_coil(2, true);
-    device1
-        .register_map
-        .input_registers
-        .insert(0, 100);
-    device1
-        .register_map
-        .input_registers
-        .insert(1, 200);
-    device1
-        .register_map
-        .discrete_inputs
-        .insert(0, true);
-    device1
-        .register_map
-        .discrete_inputs
-        .insert(1, false);
+    device1.register_map.input_registers.insert(0, 100);
+    device1.register_map.input_registers.insert(1, 200);
+    device1.register_map.discrete_inputs.insert(0, true);
+    device1.register_map.discrete_inputs.insert(1, false);
     conn.add_device(device1).await.unwrap();
 
     // Add slave device 2

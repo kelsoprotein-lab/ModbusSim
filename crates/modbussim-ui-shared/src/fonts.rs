@@ -14,9 +14,10 @@ pub fn install_cjk_fonts(ctx: &egui::Context) {
     // CJK fallback.
     match load_first_available_cjk_font() {
         Some((name, bytes)) => {
-            fonts
-                .font_data
-                .insert(name.to_string(), std::sync::Arc::new(FontData::from_owned(bytes)));
+            fonts.font_data.insert(
+                name.to_string(),
+                std::sync::Arc::new(FontData::from_owned(bytes)),
+            );
             fonts
                 .families
                 .entry(FontFamily::Proportional)
@@ -48,7 +49,10 @@ fn load_first_available_cjk_font() -> Option<(&'static str, Vec<u8>)> {
     const CANDIDATES: &[(&str, &str)] = &[
         // macOS — PingFang (if present on newer systems)
         ("PingFang-SC", "/System/Library/Fonts/PingFang.ttc"),
-        ("PingFang-Supp", "/System/Library/Fonts/Supplemental/PingFang SC.ttf"),
+        (
+            "PingFang-Supp",
+            "/System/Library/Fonts/Supplemental/PingFang SC.ttf",
+        ),
         ("PingFang-App", "/Library/Fonts/PingFang.ttc"),
         // STHeiti Medium — bolder than Hiragino, renders with more body at 13px
         ("STHeiti", "/System/Library/Fonts/STHeiti Medium.ttc"),
@@ -75,10 +79,7 @@ fn load_first_available_cjk_font() -> Option<(&'static str, Vec<u8>)> {
             "NotoCJK-Arch",
             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         ),
-        (
-            "WQYZenHei",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        ),
+        ("WQYZenHei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
     ];
 
     for (name, path) in CANDIDATES {

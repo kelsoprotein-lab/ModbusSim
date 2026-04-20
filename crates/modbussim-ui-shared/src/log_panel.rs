@@ -84,8 +84,12 @@ pub fn render(
                 let chev = if state.collapsed { "▶" } else { "▼" };
                 if ui
                     .add(
-                        egui::Label::new(RichText::new(chev).size(11.0).color(crate::theme::text_muted(flavor)))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(
+                            RichText::new(chev)
+                                .size(11.0)
+                                .color(crate::theme::text_muted(flavor)),
+                        )
+                        .sense(egui::Sense::click()),
                     )
                     .clicked()
                 {

@@ -242,9 +242,7 @@ async fn test_master_write_multiple_registers() {
 #[tokio::test]
 async fn test_master_not_connected_error() {
     let master = new_master(16010);
-    let result = master
-        .read(ReadFunction::ReadHoldingRegisters, 0, 1)
-        .await;
+    let result = master.read(ReadFunction::ReadHoldingRegisters, 0, 1).await;
     assert!(matches!(result, Err(MasterError::NotConnected)));
 }
 

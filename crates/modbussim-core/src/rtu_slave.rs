@@ -123,7 +123,10 @@ pub async fn run_rtu_slave(
             if let Some(fc_val) = request_pdu.first() {
                 if let Some(fc) = FunctionCode::from_u8(*fc_val) {
                     let detail = if response_pdu.first().map_or(false, |b| b & 0x80 != 0) {
-                        format!("ERR: exception 0x{:02X}", response_pdu.get(1).copied().unwrap_or(0))
+                        format!(
+                            "ERR: exception 0x{:02X}",
+                            response_pdu.get(1).copied().unwrap_or(0)
+                        )
                     } else {
                         "OK".to_string()
                     };
@@ -194,7 +197,10 @@ pub(crate) async fn process_request(
 // Read / Write helpers
 // ---------------------------------------------------------------------------
 
-pub(crate) fn execute_read(register_map: &RegisterMap, req: &ModbusRequest) -> Result<ResponseData, u8> {
+pub(crate) fn execute_read(
+    register_map: &RegisterMap,
+    req: &ModbusRequest,
+) -> Result<ResponseData, u8> {
     match req {
         ModbusRequest::ReadCoils { address, quantity } => {
             validate_quantity(*address, *quantity, 2000)?;
@@ -246,7 +252,9 @@ pub(crate) fn execute_write(
             validate_quantity(*address, quantity, 1968)?;
             register_map.write_coils(*address, values);
             for (i, &val) in values.iter().enumerate() {
-                register_map.discrete_inputs.insert(*address + i as u16, val);
+                register_map
+                    .discrete_inputs
+                    .insert(*address + i as u16, val);
             }
             Ok(ResponseData::WriteMultiple {
                 address: *address,
@@ -258,7 +266,9 @@ pub(crate) fn execute_write(
             validate_quantity(*address, quantity, 123)?;
             register_map.write_holding_registers(*address, values);
             for (i, &val) in values.iter().enumerate() {
-                register_map.input_registers.insert(*address + i as u16, val);
+                register_map
+                    .input_registers
+                    .insert(*address + i as u16, val);
             }
             Ok(ResponseData::WriteMultiple {
                 address: *address,

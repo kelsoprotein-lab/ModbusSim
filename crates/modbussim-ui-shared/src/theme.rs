@@ -37,7 +37,11 @@ impl Flavor {
     }
 
     pub fn palette(self) -> catppuccin_egui::Theme {
-        if self.is_dark() { VSCODE_DARK } else { VSCODE_LIGHT }
+        if self.is_dark() {
+            VSCODE_DARK
+        } else {
+            VSCODE_LIGHT
+        }
     }
 }
 
@@ -112,30 +116,30 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     mauve: rgb(157, 121, 209),
     red: rgb(255, 100, 100),
     maroon: rgb(169, 46, 34),
-    peach: rgb(204, 120, 50),      // #cc7832 — keyword orange (primary accent)
-    yellow: rgb(255, 198, 109),    // #ffc66d — class / highlight
-    green: rgb(106, 135, 89),      // #6a8759 — string / success
+    peach: rgb(204, 120, 50),   // #cc7832 — keyword orange (primary accent)
+    yellow: rgb(255, 198, 109), // #ffc66d — class / highlight
+    green: rgb(106, 135, 89),   // #6a8759 — string / success
     teal: rgb(119, 159, 165),
     sky: rgb(152, 195, 250),
     sapphire: rgb(106, 135, 175),
-    blue: rgb(106, 135, 175),      // #6a87af — secondary blue
+    blue: rgb(106, 135, 175), // #6a87af — secondary blue
     lavender: rgb(157, 121, 209),
     // Foreground
-    text: rgb(220, 223, 228),      // #dcdfe4 — brighter than stock Darcula #a9b7c6
+    text: rgb(220, 223, 228), // #dcdfe4 — brighter than stock Darcula #a9b7c6
     subtext1: rgb(180, 183, 188),
-    subtext0: rgb(156, 160, 164),  // #9ca0a4 — still muted but ≥4.5:1 on #2b2b2b
+    subtext0: rgb(156, 160, 164), // #9ca0a4 — still muted but ≥4.5:1 on #2b2b2b
     // Borders / strokes (warm gray)
     overlay2: rgb(98, 101, 104),
-    overlay1: rgb(81, 86, 89),     // #515659 — separator
+    overlay1: rgb(81, 86, 89), // #515659 — separator
     overlay0: rgb(69, 73, 74),
     // Surfaces — one-step layering
     surface2: rgb(77, 80, 82),
-    surface1: rgb(60, 63, 65),     // #3c3f41 — side panels
-    surface0: rgb(49, 51, 53),     // #313335
+    surface1: rgb(60, 63, 65), // #3c3f41 — side panels
+    surface0: rgb(49, 51, 53), // #313335
     // Backgrounds — Darcula reference values
-    base: rgb(43, 43, 43),         // #2b2b2b — editor bg
-    mantle: rgb(60, 63, 65),       // #3c3f41 — tool windows
-    crust: rgb(37, 37, 37),        // #252525 — darkest
+    base: rgb(43, 43, 43),   // #2b2b2b — editor bg
+    mantle: rgb(60, 63, 65), // #3c3f41 — tool windows
+    crust: rgb(37, 37, 37),  // #252525 — darkest
 };
 
 pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
@@ -153,20 +157,20 @@ pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
     teal: rgb(0, 128, 128),
     sky: rgb(0, 120, 180),
     sapphire: rgb(0, 90, 180),
-    blue: rgb(59, 154, 232),          // #3b9ae8 — redisant industrial blue
+    blue: rgb(59, 154, 232), // #3b9ae8 — redisant industrial blue
     lavender: rgb(94, 68, 172),
-    text: rgb(51, 51, 51),            // #333333
+    text: rgb(51, 51, 51), // #333333
     subtext1: rgb(102, 102, 102),
     subtext0: rgb(140, 140, 140),
     overlay2: rgb(168, 172, 180),
     overlay1: rgb(192, 196, 204),
-    overlay0: rgb(208, 208, 208),     // #d0d0d0 — card stroke
+    overlay0: rgb(208, 208, 208), // #d0d0d0 — card stroke
     surface2: rgb(232, 232, 232),
     surface1: rgb(240, 240, 240),
-    surface0: rgb(245, 245, 245),     // #f5f5f5 — toolbar
-    base: rgb(255, 255, 255),         // #ffffff — editor
-    mantle: rgb(245, 245, 245),       // #f5f5f5 — side panels
-    crust: rgb(232, 232, 232),        // #e8e8e8 — deepest light
+    surface0: rgb(245, 245, 245), // #f5f5f5 — toolbar
+    base: rgb(255, 255, 255),     // #ffffff — editor
+    mantle: rgb(245, 245, 245),   // #f5f5f5 — side panels
+    crust: rgb(232, 232, 232),    // #e8e8e8 — deepest light
 };
 
 /// Apply palette + tight VS Code-ish layout/type defaults.
@@ -178,15 +182,15 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
     // fields ourselves to match the target industrial palette.
     ctx.style_mut(|s| {
         if flavor.is_dark() {
-            let panel       = bg_of(flavor, Layer::L1);                 // #0d1117
-            let panel_alt   = bg_of(flavor, Layer::L0);                 // #010409
-            let raised      = bg_of(flavor, Layer::L2);                 // #161b22
-            let stroke      = border_strong(flavor);                    // #30363d
-            let stroke_soft = border_subtle(flavor);                    // #21262d
-            let fg          = text_body(flavor);                        // #c9d1d9
-            let strong_fg   = text_primary(flavor);                     // #e6edf3
-            let sel_bg      = bg_selected_row(flavor);
-            let acc         = accent(flavor);                           // #1f6feb
+            let panel = bg_of(flavor, Layer::L1); // #0d1117
+            let panel_alt = bg_of(flavor, Layer::L0); // #010409
+            let raised = bg_of(flavor, Layer::L2); // #161b22
+            let stroke = border_strong(flavor); // #30363d
+            let stroke_soft = border_subtle(flavor); // #21262d
+            let fg = text_body(flavor); // #c9d1d9
+            let strong_fg = text_primary(flavor); // #e6edf3
+            let sel_bg = bg_selected_row(flavor);
+            let acc = accent(flavor); // #1f6feb
             s.visuals.panel_fill = panel;
             s.visuals.window_fill = panel_alt;
             s.visuals.extreme_bg_color = panel_alt;
@@ -215,15 +219,15 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
             s.visuals.error_fg_color = danger(flavor);
             s.visuals.warn_fg_color = warn(flavor);
         } else {
-            let panel       = bg_of(flavor, Layer::L1);
-            let _panel_alt  = bg_of(flavor, Layer::L0);
-            let raised      = bg_of(flavor, Layer::L2);
-            let stroke      = border_strong(flavor);
+            let panel = bg_of(flavor, Layer::L1);
+            let _panel_alt = bg_of(flavor, Layer::L0);
+            let raised = bg_of(flavor, Layer::L2);
+            let stroke = border_strong(flavor);
             let stroke_soft = border_subtle(flavor);
-            let fg          = text_body(flavor);
-            let strong_fg   = text_primary(flavor);
-            let sel_bg      = bg_selected_row(flavor);
-            let acc         = accent(flavor);
+            let fg = text_body(flavor);
+            let strong_fg = text_primary(flavor);
+            let sel_bg = bg_selected_row(flavor);
+            let acc = accent(flavor);
             s.visuals.panel_fill = panel;
             s.visuals.window_fill = raised;
             s.visuals.extreme_bg_color = raised;
@@ -271,56 +275,119 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
         s.visuals.menu_corner_radius = 6.0.into();
 
         use egui::TextStyle::*;
-        s.text_styles.insert(Heading,   egui::FontId::new(15.0, egui::FontFamily::Proportional));
-        s.text_styles.insert(Body,      egui::FontId::new(12.5, egui::FontFamily::Proportional));
-        s.text_styles.insert(Button,    egui::FontId::new(12.0, egui::FontFamily::Proportional));
-        s.text_styles.insert(Monospace, egui::FontId::new(12.5, egui::FontFamily::Monospace));
-        s.text_styles.insert(Small,     egui::FontId::new(10.5, egui::FontFamily::Proportional));
+        s.text_styles.insert(
+            Heading,
+            egui::FontId::new(15.0, egui::FontFamily::Proportional),
+        );
+        s.text_styles.insert(
+            Body,
+            egui::FontId::new(12.5, egui::FontFamily::Proportional),
+        );
+        s.text_styles.insert(
+            Button,
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        );
+        s.text_styles.insert(
+            Monospace,
+            egui::FontId::new(12.5, egui::FontFamily::Monospace),
+        );
+        s.text_styles.insert(
+            Small,
+            egui::FontId::new(10.5, egui::FontFamily::Proportional),
+        );
     });
 }
 
 // --- Semantic color helpers used by app code ---
 
 pub fn accent(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x1f, 0x6f, 0xeb) } else { rgb(0x25, 0x63, 0xeb) }
+    if flavor.is_dark() {
+        rgb(0x1f, 0x6f, 0xeb)
+    } else {
+        rgb(0x25, 0x63, 0xeb)
+    }
 }
 pub fn accent_fg(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x58, 0xa6, 0xff) } else { rgb(0x3b, 0x82, 0xf6) }
+    if flavor.is_dark() {
+        rgb(0x58, 0xa6, 0xff)
+    } else {
+        rgb(0x3b, 0x82, 0xf6)
+    }
 }
 pub fn success(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x3f, 0xb9, 0x50) } else { rgb(0x15, 0x80, 0x3d) }
+    if flavor.is_dark() {
+        rgb(0x3f, 0xb9, 0x50)
+    } else {
+        rgb(0x15, 0x80, 0x3d)
+    }
 }
 pub fn warn(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0xf0, 0x88, 0x3e) } else { rgb(0xc2, 0x41, 0x0c) }
+    if flavor.is_dark() {
+        rgb(0xf0, 0x88, 0x3e)
+    } else {
+        rgb(0xc2, 0x41, 0x0c)
+    }
 }
 pub fn danger(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0xf8, 0x51, 0x49) } else { rgb(0xb9, 0x1c, 0x1c) }
+    if flavor.is_dark() {
+        rgb(0xf8, 0x51, 0x49)
+    } else {
+        rgb(0xb9, 0x1c, 0x1c)
+    }
 }
 pub fn alias(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0xd2, 0xa8, 0xff) } else { rgb(0x7c, 0x3a, 0xed) }
+    if flavor.is_dark() {
+        rgb(0xd2, 0xa8, 0xff)
+    } else {
+        rgb(0x7c, 0x3a, 0xed)
+    }
 }
 pub fn border_subtle(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x21, 0x26, 0x2d) } else { rgb(0xe4, 0xe4, 0xe7) }
+    if flavor.is_dark() {
+        rgb(0x21, 0x26, 0x2d)
+    } else {
+        rgb(0xe4, 0xe4, 0xe7)
+    }
 }
 pub fn border_strong(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x30, 0x36, 0x3d) } else { rgb(0xd4, 0xd4, 0xd8) }
+    if flavor.is_dark() {
+        rgb(0x30, 0x36, 0x3d)
+    } else {
+        rgb(0xd4, 0xd4, 0xd8)
+    }
 }
 pub fn text_primary(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0xe6, 0xed, 0xf3) } else { rgb(0x09, 0x09, 0x0b) }
+    if flavor.is_dark() {
+        rgb(0xe6, 0xed, 0xf3)
+    } else {
+        rgb(0x09, 0x09, 0x0b)
+    }
 }
 pub fn text_body(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0xc9, 0xd1, 0xd9) } else { rgb(0x3f, 0x3f, 0x46) }
+    if flavor.is_dark() {
+        rgb(0xc9, 0xd1, 0xd9)
+    } else {
+        rgb(0x3f, 0x3f, 0x46)
+    }
 }
 pub fn text_muted(flavor: Flavor) -> Color32 {
-    if flavor.is_dark() { rgb(0x6e, 0x76, 0x81) } else { rgb(0x71, 0x71, 0x7a) }
+    if flavor.is_dark() {
+        rgb(0x6e, 0x76, 0x81)
+    } else {
+        rgb(0x71, 0x71, 0x7a)
+    }
 }
-pub fn subtext(flavor: Flavor) -> Color32 { text_muted(flavor) } // 旧调用点回退
-pub fn surface(flavor: Flavor) -> Color32 { bg_of(flavor, Layer::L2) } // 旧调用点回退
+pub fn subtext(flavor: Flavor) -> Color32 {
+    text_muted(flavor)
+} // 旧调用点回退
+pub fn surface(flavor: Flavor) -> Color32 {
+    bg_of(flavor, Layer::L2)
+} // 旧调用点回退
 
 /// 文本渲染辅助：tiny_caps / crumb 等语义文本样式。
 pub mod text {
-    use super::{Flavor, text_muted, accent_fg};
-    use egui::{Ui, RichText};
+    use super::{accent_fg, text_muted, Flavor};
+    use egui::{RichText, Ui};
 
     /// 表头 / 分组标题用：10.5px 大写、字距感由空格 + 字色弱化体现。
     pub fn tiny_caps(ui: &mut Ui, flavor: Flavor, s: &str) {
