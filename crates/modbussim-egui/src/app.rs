@@ -1872,6 +1872,8 @@ impl SlaveApp {
 
                         // ----- Jitter card (run-time register mutation for master-stress) -----
                         ui.separator();
+                        // Pass empty icon: phosphor font isn't actually embedded, so any
+                        // phosphor glyph renders as a placeholder box (same as "✕" did).
                         uikit::section_heading(ui, "", "寄存器抖动（压测）");
 
                         let cur_jitter: modbussim_core::jitter::JitterConfig = {
