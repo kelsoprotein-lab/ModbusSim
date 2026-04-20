@@ -25,3 +25,4 @@ env_logger = { workspace = true }
 anyhow = { workspace = true }
 modbussim-core = { workspace = true }
 modbussim-ui-shared = { workspace = true }
+rand = "0.8"

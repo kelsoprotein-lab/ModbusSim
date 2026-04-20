@@ -374,6 +374,52 @@ impl SlaveApp {
             });
         }
 
+        // Background jitter runner: every 100 ms, iterate connections → devices,
+        // apply `jitter::apply_tick` to any device whose jitter is enabled and
+        // whose interval_ms has elapsed since its last tick.
+        {
+            let connections = connections.clone();
+            rt.spawn(async move {
+                use rand::SeedableRng;
+                let mut rng = rand::rngs::StdRng::from_entropy();
+                let mut last_tick: std::collections::HashMap<(String, u8), Instant> =
+                    std::collections::HashMap::new();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    let now = Instant::now();
+                    let conns = connections.read().await;
+                    for entry in conns.iter() {
+                        let conn_id = entry.id.clone();
+                        let conn = entry.connection.read().await;
+                        let mut devs = conn.devices.write().await;
+                        for (slave_id, dev) in devs.iter_mut() {
+                            if !dev.jitter.enabled {
+                                last_tick.remove(&(conn_id.clone(), *slave_id));
+                                continue;
+                            }
+                            let interval = std::time::Duration::from_millis(
+                                dev.jitter.interval_ms.clamp(100, 5000),
+                            );
+                            let key = (conn_id.clone(), *slave_id);
+                            let due = match last_tick.get(&key) {
+                                Some(t) => now.duration_since(*t) >= interval,
+                                None => true,
+                            };
+                            if !due {
+                                continue;
+                            }
+                            modbussim_core::jitter::apply_tick(
+                                &mut dev.register_map,
+                                &dev.jitter,
+                                &mut rng,
+                            );
+                            last_tick.insert(key, now);
+                        }
+                    }
+                }
+            });
+        }
+
         Self {
             rt,
             connections,
