@@ -25,7 +25,9 @@ pub enum Flavor {
 
 impl Default for Flavor {
     fn default() -> Self {
-        Flavor::Mocha
+        // Industrial apps in the Modbus space typically ship light by default;
+        // redisant MSE, Modscan32, KEPServerEX all use white bases.
+        Flavor::Latte
     }
 }
 
@@ -73,10 +75,10 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     teal: rgb(78, 201, 176),
     sky: rgb(86, 156, 214),
     sapphire: rgb(78, 166, 217),
-    blue: rgb(14, 99, 156), // #0e639c — VS Code button primary
+    blue: rgb(59, 154, 232),        // #3b9ae8 — same industrial blue as light
     lavender: rgb(197, 134, 192),
     // Foreground
-    text: rgb(204, 204, 204),      // #cccccc
+    text: rgb(220, 220, 220),      // #dcdcdc
     subtext1: rgb(170, 170, 170),
     subtext0: rgb(133, 133, 133),   // #858585
     // Borders / strokes (slightly cooler)
@@ -87,13 +89,15 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     surface2: rgb(55, 59, 70),
     surface1: rgb(45, 49, 60),
     surface0: rgb(37, 41, 50),       // #252932 — card fill
-    // Backgrounds — near-black with a cool blue cast; cards pop on top
-    base: rgb(16, 20, 28),           // #10141c (central panel)
-    mantle: rgb(22, 27, 38),         // #161b26 (side panels)
-    crust: rgb(10, 13, 20),          // #0a0d14 (darkest)
+    // Backgrounds — VS Code standard, neutral
+    base: rgb(30, 30, 30),           // #1e1e1e (central panel)
+    mantle: rgb(37, 37, 38),         // #252526 (side panels)
+    crust: rgb(51, 51, 51),          // #333333 (darkest)
 };
 
 pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
+    // redisant-MSE–inspired light palette: near-white base, light gray
+    // toolbars, a crisp industrial blue accent.
     rosewater: rgb(142, 95, 0),
     flamingo: rgb(141, 76, 43),
     pink: rgb(175, 0, 219),
@@ -102,24 +106,24 @@ pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
     maroon: rgb(157, 20, 15),
     peach: rgb(175, 82, 0),
     yellow: rgb(145, 120, 0),
-    green: rgb(0, 128, 0),
+    green: rgb(0, 128, 64),
     teal: rgb(0, 128, 128),
     sky: rgb(0, 120, 180),
     sapphire: rgb(0, 90, 180),
-    blue: rgb(0, 122, 204),         // #007acc (VS Code accent)
+    blue: rgb(59, 154, 232),          // #3b9ae8 — redisant industrial blue
     lavender: rgb(94, 68, 172),
-    text: rgb(51, 51, 51),
+    text: rgb(51, 51, 51),            // #333333
     subtext1: rgb(102, 102, 102),
     subtext0: rgb(140, 140, 140),
-    overlay2: rgb(200, 200, 200),
-    overlay1: rgb(210, 210, 210),
-    overlay0: rgb(220, 220, 220),
+    overlay2: rgb(168, 172, 180),
+    overlay1: rgb(192, 196, 204),
+    overlay0: rgb(208, 208, 208),     // #d0d0d0 — card stroke
     surface2: rgb(232, 232, 232),
     surface1: rgb(240, 240, 240),
-    surface0: rgb(244, 244, 244),
-    base: rgb(253, 253, 253),
-    mantle: rgb(243, 243, 243),
-    crust: rgb(225, 225, 225),
+    surface0: rgb(245, 245, 245),     // #f5f5f5 — toolbar
+    base: rgb(255, 255, 255),         // #ffffff — editor
+    mantle: rgb(245, 245, 245),       // #f5f5f5 — side panels
+    crust: rgb(232, 232, 232),        // #e8e8e8 — deepest light
 };
 
 /// Apply palette + tight VS Code-ish layout/type defaults.

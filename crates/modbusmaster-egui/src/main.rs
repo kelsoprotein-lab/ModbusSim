@@ -29,7 +29,7 @@ fn main() -> eframe::Result<()> {
             modbussim_ui_shared::fonts::install_cjk_fonts(&cc.egui_ctx);
             let flavor = cc
                 .storage
-                .and_then(|s| eframe::get_value::<modbussim_ui_shared::theme::Flavor>(s, "flavor"))
+                .and_then(|s| eframe::get_value::<modbussim_ui_shared::theme::Flavor>(s, "flavor_v2"))
                 .unwrap_or_default();
             modbussim_ui_shared::theme::apply(&cc.egui_ctx, flavor);
             Ok(Box::new(app::MasterApp::new(rt.clone(), flavor)))

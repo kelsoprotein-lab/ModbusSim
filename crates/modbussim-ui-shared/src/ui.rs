@@ -8,43 +8,37 @@ use egui::{Color32, Response, RichText, Ui};
 use crate::theme::Flavor;
 
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
-    // Cool steel-blue dark panels — clearly distinct from the near-black base
-    // so cards visibly float, and with a cold-neutral hue that reads as
-    // "industrial instrumentation" rather than toy-like purple.
+    // Industrial flat-panel: card fill is the panel base color (white in light
+    // mode, near-black in dark), and a crisp 1 px stroke does the dividing —
+    // no shadow, no rounding, no "float". Matches the redisant / Modscan look.
     if flavor.is_dark() {
         (
-            Color32::from_rgb(30, 40, 56),   // card fill  (#1e2838)
-            Color32::from_rgb(72, 88, 112),  // stroke     (#485870)
+            Color32::from_rgb(37, 37, 38),   // #252526 — slightly above base
+            Color32::from_rgb(80, 80, 82),   // #505052
         )
     } else {
         (
-            Color32::from_rgb(252, 253, 255),
-            Color32::from_rgb(210, 215, 224),
+            Color32::from_rgb(255, 255, 255), // #ffffff — card is as white as base
+            Color32::from_rgb(208, 208, 208), // #d0d0d0 — subtle gray stroke
         )
     }
 }
 
-/// Rounded "card" frame that visually lifts its content above the panel
-/// background. Hardcoded fill + visible stroke + soft shadow + 8px corners.
+/// Flat bordered panel. No shadow, 2 px corner radius, 10 px padding — mimics
+/// the GroupBox / section divider used in desktop industrial tools.
 pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let (fill, stroke_color) = card_colors(flavor);
-    let shadow = egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 2.0),
-        blur: 8.0,
-        spread: 0.0,
-        color: Color32::from_black_alpha(90),
-    };
     egui::Frame::none()
         .fill(fill)
-        .rounding(8.0)
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .rounding(2.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .stroke(egui::Stroke::new(1.0, stroke_color))
-        .shadow(shadow)
         .show(ui, add)
         .inner
 }
 
-/// Card variant with a 3px accent stripe along the left edge.
+/// Same as `card`, plus a 2 px accent line along the top edge. Used for the
+/// current-context header (e.g. "FC04 Input Registers — slave_1").
 pub fn accent_card<R>(
     ui: &mut Ui,
     flavor: Flavor,
@@ -52,30 +46,24 @@ pub fn accent_card<R>(
 ) -> R {
     let accent = crate::theme::accent(flavor);
     let (fill, stroke_color) = card_colors(flavor);
-    let shadow = egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 2.0),
-        blur: 8.0,
-        spread: 0.0,
-        color: Color32::from_black_alpha(90),
-    };
     let resp = egui::Frame::none()
         .fill(fill)
-        .rounding(8.0)
+        .rounding(2.0)
         .inner_margin(egui::Margin {
-            left: 16.0,
-            right: 14.0,
-            top: 12.0,
-            bottom: 12.0,
+            left: 10.0,
+            right: 10.0,
+            top: 10.0,
+            bottom: 8.0,
         })
         .stroke(egui::Stroke::new(1.0, stroke_color))
-        .shadow(shadow)
         .show(ui, add);
+    // Paint a 2 px accent stripe across the top.
     let rect = resp.response.rect;
     let stripe = egui::Rect::from_min_max(
         rect.left_top(),
-        egui::pos2(rect.left() + 3.0, rect.bottom()),
+        egui::pos2(rect.right(), rect.top() + 2.0),
     );
-    ui.painter().rect_filled(stripe, 2.0, accent);
+    ui.painter().rect_filled(stripe, 0.0, accent);
     resp.inner
 }
 
