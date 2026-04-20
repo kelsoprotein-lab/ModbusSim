@@ -14,28 +14,28 @@
 
 ## 2. Phase 2 · 引入 egui-shadcn 并试跑
 
-- [ ] 2.1 workspace `Cargo.toml` 加 `egui-shadcn = "0.3"`
-- [ ] 2.2 `modbussim-ui-shared/Cargo.toml` 加 `egui-shadcn = { workspace = true }`
-- [ ] 2.3 新建 `crates/modbussim-ui-shared/src/shadcn_preview.rs`，写一个 `preview_widgets(ui)` 函数展示 Button 的 4 个变体 + Switch + Size variants，用于手动验证
-- [ ] 2.4 新建 bin target `crates/modbussim-egui/src/bin/shadcn_preview.rs`，单窗口调 `preview_widgets`
-- [ ] 2.5 在 `modbussim-ui-shared/src/lib.rs` 加 `pub mod shadcn_preview;` 让 bin 能引
-- [ ] 2.6 `cargo run -p modbussim-egui --bin shadcn_preview` 目视四种按钮 + 开关能画出来
-- [ ] 2.7 阅读 egui-shadcn 文档 + 源码，在 design.md "未决问题" 里填答案：变体符号 / theme token API / size 枚举名
-- [ ] 2.8 commit: `feat(ui-shared): 引入 egui-shadcn + preview bin 验证 API`
+- [x] 2.1 workspace `Cargo.toml` 加 `egui-shadcn = "0.3"`
+- [x] 2.2 `modbussim-ui-shared/Cargo.toml` 加 `egui-shadcn = { workspace = true }`
+- [x] 2.3 新建 `crates/modbussim-ui-shared/src/shadcn_preview.rs`，写一个 `preview_widgets(ui)` 函数展示 Button 的 4 个变体 + Switch + Size variants，用于手动验证
+- [x] 2.4 新建 bin target `crates/modbussim-egui/src/bin/shadcn_preview.rs`，单窗口调 `preview_widgets`
+- [x] 2.5 在 `modbussim-ui-shared/src/lib.rs` 加 `pub mod shadcn_preview;` 让 bin 能引
+- [x] 2.6 `cargo run -p modbussim-egui --bin shadcn_preview` 目视四种按钮 + 开关能画出来
+- [x] 2.7 阅读 egui-shadcn 文档 + 源码，在 design.md "未决问题" 里填答案：变体符号 / theme token API / size 枚举名
+- [x] 2.8 commit: `feat(ui-shared): 引入 egui-shadcn + preview bin 验证 API`
 
 ## 3. Phase 3 · ui.rs wrapper 切到 shadcn
 
-- [ ] 3.1 在 `theme::apply` 里追加 shadcn theme token 同步（primary = #cc7832, destructive = #bc3f3c, background = L1, foreground = #d4d7db, ring = accent）
-- [ ] 3.2 `primary_button` 内部替换为 `shadcn::button(ui, text).variant(Default).size(Md)`
-- [ ] 3.3 `secondary_button` 内部替换为 Outline 变体
-- [ ] 3.4 `danger_button` 内部替换为 Destructive 变体
-- [ ] 3.5 `icon_button` 内部替换为 Ghost 变体 + icon content
-- [ ] 3.6 `toggle_switch` 内部整段替换为 `shadcn::switch(ui, value)`，保留 `Response` 返回
-- [ ] 3.7 旧自绘代码（`rect_filled` 画椭圆 / `circle_filled` 画滑块）从 ui.rs 中删除
-- [ ] 3.8 `cargo build -p modbussim-egui -p modbusmaster-egui` 无错
-- [ ] 3.9 启动 Slave 手测：批量添加按钮是橙 shadcn Default；"停止 / 删除"是 shadcn Outline；FC01 toggle 是 shadcn Switch（有滑动动画）
-- [ ] 3.10 启动 Master 手测：三个 tab 按钮 OK；读/写/轮询按钮 OK；结果表 OK
-- [ ] 3.11 commit: `feat(ui-shared): 按钮 + toggle 切换到 shadcn 底层实现`
+- [x] 3.1 在 `theme::apply` 里追加 shadcn theme token 同步（primary = #cc7832, destructive = #bc3f3c, background = L1, foreground = #d4d7db, ring = accent）
+- [x] 3.2 `primary_button` 内部替换为 `shadcn::button(ui, text).variant(Default).size(Md)`
+- [x] 3.3 `secondary_button` 内部替换为 Outline 变体
+- [x] 3.4 `danger_button` 内部替换为 Destructive 变体
+- [x] 3.5 `icon_button` 内部替换为 Ghost 变体 + icon content
+- [x] 3.6 `toggle_switch` 内部整段替换为 `shadcn::switch(ui, value)`，保留 `Response` 返回
+- [x] 3.7 旧自绘代码（`rect_filled` 画椭圆 / `circle_filled` 画滑块）从 ui.rs 中删除
+- [x] 3.8 `cargo build -p modbussim-egui -p modbusmaster-egui` 无错
+- [x] 3.9 启动 Slave 手测：批量添加按钮是橙 shadcn Default；"停止 / 删除"是 shadcn Outline；FC01 toggle 是 shadcn Switch（有滑动动画）
+- [x] 3.10 启动 Master 手测：三个 tab 按钮 OK；读/写/轮询按钮 OK；结果表 OK
+- [x] 3.11 commit: `feat(ui-shared): 按钮 + toggle 切换到 shadcn 底层实现`
 
 ## 4. Phase 4 · 清理 + CI
 

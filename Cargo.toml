@@ -17,6 +17,7 @@ egui-modal = "0.5"
 egui-toast = "0.15"
 catppuccin-egui = { version = "5.7", default-features = false, features = ["egui33"] }
 egui-phosphor = "0.11"
+egui-shadcn = "0.3"
 arc-swap = "1"
 crossbeam-channel = "0.5"
 rfd = "0.15"

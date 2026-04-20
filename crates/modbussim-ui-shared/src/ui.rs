@@ -87,56 +87,68 @@ pub fn accent_card<R>(
     resp.inner
 }
 
-/// Primary action button: solid accent fill, white text, no stroke.
+/// Lazily constructed shadcn Theme (dark / light variant derived from Flavor).
+/// Theme creation is not free (computes palette tables), so cache it per frame.
+fn shadcn_theme(flavor: Flavor) -> egui_shadcn::Theme {
+    use egui_shadcn::tokens::{ColorPalette, ShadcnBaseColor};
+    let palette = if flavor.is_dark() {
+        ColorPalette::shadcn_dark(ShadcnBaseColor::Neutral)
+    } else {
+        ColorPalette::shadcn_light(ShadcnBaseColor::Neutral)
+    };
+    egui_shadcn::Theme::new(palette)
+}
+
+/// Primary action button: shadcn Default (Primary) variant.
 pub fn primary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let accent = theme::accent(flavor);
-    let btn = egui::Button::new(
-        RichText::new(text.into())
-            .color(Color32::WHITE)
-            .size(13.0),
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Primary,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
     )
-    .fill(accent)
-    .stroke(egui::Stroke::NONE)
-    .corner_radius(2.0)
-    .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
 }
 
-/// Secondary (default) button: subtle L2 fill (not transparent — a fully
-/// transparent button loses visual affordance against the L1 panel bg).
-/// egui's global widgets.hovered.bg_fill takes over on hover.
+/// Secondary (default) button: shadcn Outline variant.
 pub fn secondary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let btn = egui::Button::new(RichText::new(text.into()).size(13.0))
-        .fill(theme::bg_of(flavor, Layer::L2))
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(2.0)
-        .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
-}
-
-/// Danger / destructive button: slightly muted red fill, no stroke.
-pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let red = theme::danger(flavor);
-    let btn = egui::Button::new(
-        RichText::new(text.into())
-            .color(Color32::WHITE)
-            .size(13.0),
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Outline,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
     )
-    .fill(red.linear_multiply(0.85))
-    .stroke(egui::Stroke::NONE)
-    .corner_radius(2.0)
-    .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
 }
 
-/// Icon-only button: 24×24, transparent default, hover uses egui global bg.
-pub fn icon_button(ui: &mut Ui, _flavor: Flavor, icon: &str) -> Response {
-    let btn = egui::Button::new(RichText::new(icon).size(14.0))
-        .fill(Color32::TRANSPARENT)
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(2.0)
-        .min_size(egui::vec2(24.0, 24.0));
-    ui.add(btn)
+/// Danger / destructive button: shadcn Destructive variant.
+pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Destructive,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
+    )
+}
+
+/// Icon-only button: shadcn Ghost variant + small size.
+pub fn icon_button(ui: &mut Ui, flavor: Flavor, icon: &str) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        icon.to_string(),
+        egui_shadcn::tokens::ControlVariant::Ghost,
+        egui_shadcn::tokens::ControlSize::Sm,
+        true,
+    )
 }
 
 /// Pill-shaped status badge. Small rounded label with colored text and a very
@@ -171,31 +183,18 @@ pub fn caption(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) {
     );
 }
 
-/// iOS-style toggle switch: 40×18 rounded track + 14 px white knob (16 px on hover).
-/// Full-rect click handling — users don't have to hit the knob precisely.
-/// Returns a `Response` whose `.clicked()` is true on the frame the toggle
-/// flipped (value is mutated before returning).
+/// Radix-style shadcn Switch. Replaces the earlier self-drawn 40×18 toggle;
+/// the shadcn widget owns track sizing, slide animation, hover/focus ring.
+/// Returns `Response` — caller inspects `.clicked()` to detect a flip.
 pub fn toggle_switch(ui: &mut Ui, flavor: Flavor, value: &mut bool) -> Response {
-    let desired = egui::vec2(40.0, 18.0);
-    let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
-    if resp.clicked() {
-        *value = !*value;
-        resp.mark_changed();
-    }
-    let track_color = if *value {
-        theme::success(flavor)
-    } else {
-        theme::bg_hover(flavor)
-    };
-    ui.painter().rect_filled(rect, 9.0, track_color);
-    let knob_r = if resp.hovered() { 8.0 } else { 7.0 };
-    let cx = if *value {
-        rect.right() - 9.0
-    } else {
-        rect.left() + 9.0
-    };
-    let center = egui::pos2(cx, rect.center().y);
-    ui.painter()
-        .circle_filled(center, knob_r, Color32::from_rgb(235, 235, 235));
-    resp
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::switch(
+        ui,
+        &theme,
+        value,
+        "",
+        egui_shadcn::tokens::ControlVariant::Primary,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
+    )
 }
