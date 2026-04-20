@@ -1,19 +1,31 @@
 # ModbusSim
 
-跨平台 Modbus 仿真套件 — 包含 **ModbusSlave**（从站模拟器）和 **ModbusMaster**（主站工具），基于 Tauri 2、Rust 和 Vue 3 构建。支持 **TCP、TCP+TLS、RTU、ASCII、RTU-over-TCP** 五种传输模式。
+跨平台 Modbus 仿真套件 — 包含 **ModbusSlave**（从站模拟器）和 **ModbusMaster**（主站工具），提供两套 UI：**Tauri 2 + Vue 3** 桌面版，以及 **Rust + egui** 原生版。支持 **TCP、TCP+TLS、RTU、ASCII、RTU-over-TCP** 五种传输模式。
 
 [English](README.md)
 
 ## 下载
 
-**[最新版本下载](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
+**→ [最新版本 (v0.12.0)](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
 
-| 平台 | ModbusSlave | ModbusMaster |
-|------|------------|--------------|
-| macOS (Apple Silicon) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_aarch64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_aarch64.dmg) |
-| macOS (Intel) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64.dmg) |
-| Windows | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64_en-US.msi) | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64_en-US.msi) |
-| Linux | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave-0.1.0-1.x86_64.rpm) | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster-0.1.0-1.x86_64.rpm) |
+每次 GitHub Release 会附带 Tauri 版预编译安装包：
+
+| 平台 | 安装包格式 |
+|------|-----------|
+| macOS (Apple Silicon / Intel) | `.dmg` |
+| Windows (x64) | `.exe` (NSIS) / `.msi` |
+| Linux (x64) | `.deb` / `.AppImage` / `.rpm` |
+
+egui 版暂未打包 release 产物，本地运行见下方 [开发](#开发) 章节：`cargo run -p modbussim-egui` / `cargo run -p modbusmaster-egui`。
+
+## v0.12.0 更新要点
+
+- **egui 版** — ModbusSlave / ModbusMaster 新增纯 Rust 原生 egui 桌面版（`modbussim-egui`、`modbusmaster-egui`），共享 `modbussim-ui-shared` crate（主题 / 字体 / 日志面板 / ValuePanel / 项目读写）。
+- **从站寄存器抖动** — 每个从站独立 `JitterConfig`，后台 runner 每 100 ms 驱动一次（bool 翻转概率、u16 百分比漂移）；序列化进 `.modbusproj`，老工程 `#[serde(default)]` 兼容。
+- **寄存器表 UX** — 搜索 + 地址跳转（`Cmd/Ctrl+F`）、bool 改 `○ / ●` 圆点切换、改 4 列布局（地址 / 值 / 名称 / 注释）、新增 `RegViewCache` 缓存名称与注释。
+- **数据源扩展** — egui 从站快添加菜单补齐 Sawtooth / Triangle / CsvPlayback。
+- **视觉重构** — 扁平分层「redisant 工业风」浅色主题、暖灰 + 橙色 accent 的 Darcula 深色面板、L0/L1/L2 三级 region、iOS 风格 toggle 开关。
+- **CI** — 新增 `ci-egui.yml`，在 macOS / Linux / Windows 三平台验证 egui 二进制可构建。
 
 ## 功能
 
@@ -48,7 +60,8 @@
 ### 共享架构
 
 - **统一错误系统** — 结构化 `ModbusError`，分类错误类型（连接/协议/应用），序列化为 JSON 供前端解析
-- **共享前端组件** — 通用 composables 和类型定义通过 `shared-frontend` npm workspace 在两个应用间共享
+- **共享 Vue 组件** — 通用 composables 和类型定义通过 `shared-frontend` npm workspace 在两个 Tauri 应用间共享
+- **共享 egui 组件** — `modbussim-ui-shared` crate：扁平分层主题、CJK 字体注入、日志面板、ValuePanel、寄存器搜索、`.modbusproj` 项目读写
 
 ## 支持的功能码
 
@@ -75,10 +88,10 @@
 
 ## 技术栈
 
-- **后端**: Rust + [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
+- **核心（Rust）**: [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
 - **TLS**: [native-tls](https://crates.io/crates/native-tls)（系统 TLS：macOS Security.framework、Linux OpenSSL、Windows SChannel）
-- **前端**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual)
-- **框架**: [Tauri 2](https://tauri.app/)
+- **Tauri UI**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual) + [Tauri 2](https://tauri.app/)
+- **egui UI**: [eframe](https://crates.io/crates/eframe) + [egui](https://github.com/emilk/egui) + egui_extras / egui-modal / egui-toast
 - **串口**: [serialport](https://crates.io/crates/serialport) 端口枚举
 
 ## 项目结构
@@ -104,8 +117,11 @@ ModbusSim/
 │   │   │   ├── log_collector.rs # 线程安全日志环形缓冲区
 │   │   │   └── ...
 │   ├── modbussim-app/         # Tauri 应用 — ModbusSlave
-│   └── modbusmaster-app/      # Tauri 应用 — ModbusMaster
-├── shared-frontend/           # 共享 Vue composables 和组件
+│   ├── modbusmaster-app/      # Tauri 应用 — ModbusMaster
+│   ├── modbussim-egui/        # egui 原生应用 — ModbusSlave
+│   ├── modbusmaster-egui/     # egui 原生应用 — ModbusMaster
+│   └── modbussim-ui-shared/   # egui 共享组件：主题 / 字体 / log_panel / value_panel / project
+├── shared-frontend/           # 共享 Vue composables 和组件（Tauri UI 用）
 │   └── src/
 │       ├── composables/       # useDialog, useValueFormat, useLogPanel, useLogFilter, useErrorHandler
 │       ├── components/        # AppDialog
@@ -122,7 +138,7 @@ ModbusSim/
 - [Node.js](https://nodejs.org/)（v18+）
 - [Tauri CLI](https://tauri.app/start/prerequisites/)
 
-### 启动开发
+### 启动开发 — Tauri 版
 
 ```bash
 # 安装前端依赖（npm workspaces）
@@ -135,11 +151,21 @@ cd crates/modbussim-app && cargo tauri dev
 cd crates/modbusmaster-app && cargo tauri dev
 ```
 
-### 构建
+### 构建 — Tauri 版
 
 ```bash
 cd crates/modbussim-app && cargo tauri build
 cd crates/modbusmaster-app && cargo tauri build
+```
+
+### 运行 — egui 版
+
+```bash
+# ModbusSlave（原生 egui）
+cargo run -p modbussim-egui --release
+
+# ModbusMaster（原生 egui）
+cargo run -p modbusmaster-egui --release
 ```
 
 ### 运行测试

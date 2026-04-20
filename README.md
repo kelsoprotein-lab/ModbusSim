@@ -1,19 +1,31 @@
 # ModbusSim
 
-Cross-platform Modbus simulation suite — includes **ModbusSlave** and **ModbusMaster**, built with Tauri 2, Rust, and Vue 3. Supports **TCP, TCP+TLS, RTU, ASCII, and RTU-over-TCP** transports.
+Cross-platform Modbus simulation suite — includes **ModbusSlave** and **ModbusMaster**, with two UIs: a **Tauri 2 + Vue 3** desktop build and a **native Rust + egui** build. Supports **TCP, TCP+TLS, RTU, ASCII, and RTU-over-TCP** transports.
 
 [中文文档](README_CN.md)
 
 ## Download
 
-**[Latest Release](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
+**→ [Latest Release (v0.12.0)](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest)**
 
-| Platform | ModbusSlave | ModbusMaster |
-|----------|------------|--------------|
-| macOS (Apple Silicon) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_aarch64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_aarch64.dmg) |
-| macOS (Intel) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64.dmg) | [.dmg](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64.dmg) |
-| Windows | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_x64_en-US.msi) | [.exe](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64-setup.exe) / [.msi](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_x64_en-US.msi) |
-| Linux | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusSlave-0.1.0-1.x86_64.rpm) | [.deb](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.deb) / [.AppImage](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster_0.1.0_amd64.AppImage) / [.rpm](https://github.com/kelsoprotein-lab/ModbusSim/releases/latest/download/ModbusMaster-0.1.0-1.x86_64.rpm) |
+Pre-built Tauri installers are attached to every GitHub Release:
+
+| Platform | Installer formats |
+|----------|-------------------|
+| macOS (Apple Silicon / Intel) | `.dmg` |
+| Windows (x64) | `.exe` (NSIS) / `.msi` |
+| Linux (x64) | `.deb` / `.AppImage` / `.rpm` |
+
+The egui edition is not packaged yet — build locally with `cargo run -p modbussim-egui` / `cargo run -p modbusmaster-egui` (see [Development](#development)).
+
+## What's New in v0.12.0
+
+- **egui edition** — new pure-Rust desktop builds for both ModbusSlave and ModbusMaster (`modbussim-egui`, `modbusmaster-egui`), sharing a `modbussim-ui-shared` crate (theme / fonts / log panel / value panel / project I/O).
+- **Slave register jitter** — per-slave `JitterConfig` with a background runner (bool flip probability, u16 % drift); serialized to `.modbusproj` with backward-compat defaults.
+- **Register table UX** — search + address jump (`Cmd/Ctrl+F`), bool `○ / ●` toggle, 4-column layout (Address / Value / Name / Comment), `RegViewCache` for name/comment lookup.
+- **Data sources** — egui slave adds Sawtooth / Triangle / CsvPlayback to the quick-add menu.
+- **Visual refresh** — flat layered "redisant industrial" light theme, refined Darcula dark palette, region-based frame hierarchy (L0/L1/L2), iOS-style toggle switch.
+- **CI** — `ci-egui.yml` verifies egui binaries build on macOS / Linux / Windows.
 
 ## Features
 
@@ -48,7 +60,8 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 ### Shared Architecture
 
 - **Unified Error System** — Structured `ModbusError` with categorized error types (connection/protocol/application), serialized to JSON for frontend parsing
-- **Shared Frontend Components** — Common composables and types shared between both apps via `shared-frontend` npm workspace
+- **Shared Vue Components** — Common composables and types shared between both Tauri apps via the `shared-frontend` npm workspace
+- **Shared egui Widgets** — `modbussim-ui-shared` crate: flat layered theme, CJK font injection, log panel, value panel, register search, `.modbusproj` project I/O
 
 ## Supported Function Codes
 
@@ -75,10 +88,10 @@ Cross-platform Modbus simulation suite — includes **ModbusSlave** and **Modbus
 
 ## Tech Stack
 
-- **Backend**: Rust + [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
+- **Core (Rust)**: [tokio-modbus](https://github.com/slowtec/tokio-modbus) + [tokio-serial](https://github.com/berkowski/tokio-serial)
 - **TLS**: [native-tls](https://crates.io/crates/native-tls) (system TLS: macOS Security.framework, Linux OpenSSL, Windows SChannel)
-- **Frontend**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual)
-- **Framework**: [Tauri 2](https://tauri.app/)
+- **Tauri UI**: Vue 3 + TypeScript + [@tanstack/vue-virtual](https://tanstack.com/virtual) on [Tauri 2](https://tauri.app/)
+- **egui UI**: [eframe](https://crates.io/crates/eframe) + [egui](https://github.com/emilk/egui) + egui_extras / egui-modal / egui-toast
 - **Serial**: [serialport](https://crates.io/crates/serialport) for port enumeration
 
 ## Project Structure
@@ -104,8 +117,11 @@ ModbusSim/
 │   │   │   ├── log_collector.rs # Thread-safe log ring buffer
 │   │   │   └── ...
 │   ├── modbussim-app/         # Tauri app — ModbusSlave
-│   └── modbusmaster-app/      # Tauri app — ModbusMaster
-├── shared-frontend/           # Shared Vue composables and components
+│   ├── modbusmaster-app/      # Tauri app — ModbusMaster
+│   ├── modbussim-egui/        # egui native app — ModbusSlave
+│   ├── modbusmaster-egui/     # egui native app — ModbusMaster
+│   └── modbussim-ui-shared/   # Shared egui widgets: theme, fonts, log_panel, value_panel, project
+├── shared-frontend/           # Shared Vue composables and components (Tauri UI)
 │   └── src/
 │       ├── composables/       # useDialog, useValueFormat, useLogPanel, useLogFilter, useErrorHandler
 │       ├── components/        # AppDialog
@@ -122,7 +138,7 @@ ModbusSim/
 - [Node.js](https://nodejs.org/) (v18+)
 - [Tauri CLI](https://tauri.app/start/prerequisites/)
 
-### Setup
+### Setup — Tauri edition
 
 ```bash
 # Install frontend dependencies (npm workspaces)
@@ -135,11 +151,21 @@ cd crates/modbussim-app && cargo tauri dev
 cd crates/modbusmaster-app && cargo tauri dev
 ```
 
-### Build
+### Build — Tauri edition
 
 ```bash
 cd crates/modbussim-app && cargo tauri build
 cd crates/modbusmaster-app && cargo tauri build
+```
+
+### Run — egui edition
+
+```bash
+# ModbusSlave (native egui)
+cargo run -p modbussim-egui --release
+
+# ModbusMaster (native egui)
+cargo run -p modbusmaster-egui --release
 ```
 
 ### Run Tests
