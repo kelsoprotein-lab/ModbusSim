@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 
 /// Theme flavor. Serde-compat with older "mocha"/"latte"/... values so a
 /// storage-persisted flavor from an earlier build still deserializes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Flavor {
     /// Dark+ — default dark theme (bg #1e1e1e)
+    #[default]
     Mocha,
     /// Dark+ alias (kept for serde compat with older save files)
     Macchiato,
@@ -21,15 +22,6 @@ pub enum Flavor {
     Frappe,
     /// Light+ — light mode (bg #f3f3f3)
     Latte,
-}
-
-impl Default for Flavor {
-    fn default() -> Self {
-        // Darcula-style warm gray is the default dark look that Modbus users
-        // consistently land on (JetBrains IDEs, Android Studio — decades of
-        // industrial-desktop precedent).
-        Flavor::Mocha
-    }
 }
 
 impl Flavor {
@@ -70,15 +62,15 @@ pub enum Layer {
 pub fn bg_of(flavor: Flavor, layer: Layer) -> Color32 {
     if flavor.is_dark() {
         match layer {
-            Layer::L0 => rgb(0x1e, 0x1f, 0x22), // #1e1f22 chrome
-            Layer::L1 => rgb(0x2b, 0x2d, 0x30), // #2b2d30 main
-            Layer::L2 => rgb(0x31, 0x33, 0x38), // #313338 data container
+            Layer::L0 => rgb(0x01, 0x04, 0x09), // #010409 chrome
+            Layer::L1 => rgb(0x0d, 0x11, 0x17), // #0d1117 surface
+            Layer::L2 => rgb(0x16, 0x1b, 0x22), // #161b22 raised
         }
     } else {
         match layer {
-            Layer::L0 => rgb(232, 232, 232), // #e8e8e8
-            Layer::L1 => rgb(245, 245, 245), // #f5f5f5
-            Layer::L2 => rgb(255, 255, 255), // #ffffff
+            Layer::L0 => rgb(0xf4, 0xf4, 0xf5), // #f4f4f5
+            Layer::L1 => rgb(0xfa, 0xfa, 0xfa), // #fafafa
+            Layer::L2 => rgb(0xff, 0xff, 0xff), // #ffffff
         }
     }
 }
@@ -86,19 +78,19 @@ pub fn bg_of(flavor: Flavor, layer: Layer) -> Color32 {
 /// Hover fill used by non-primary buttons and list rows.
 pub fn bg_hover(flavor: Flavor) -> Color32 {
     if flavor.is_dark() {
-        rgb(0x3c, 0x3f, 0x45)
+        rgb(0x16, 0x1b, 0x22) // = Layer::L2
     } else {
-        rgb(0xe0, 0xe6, 0xed)
+        rgb(0xe4, 0xe4, 0xe7)
     }
 }
 
 /// Selected row fill (applied full-row in register tables / scan-group list).
 pub fn bg_selected_row(flavor: Flavor) -> Color32 {
     if flavor.is_dark() {
-        // #214283 @ 30% alpha on L2 — rendered via rect_filled with alpha
-        Color32::from_rgba_unmultiplied(0x21, 0x42, 0x83, 0x4d)
+        // accent.primary @ 15% alpha → 解多重不蒙底色
+        Color32::from_rgba_unmultiplied(0x1f, 0x6f, 0xeb, 0x26)
     } else {
-        rgb(0xc9, 0xda, 0xf8) // #c9daf8
+        Color32::from_rgba_unmultiplied(0x25, 0x63, 0xeb, 0x1a)
     }
 }
 
@@ -186,152 +178,162 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
     // fields ourselves to match the target industrial palette.
     ctx.style_mut(|s| {
         if flavor.is_dark() {
-            // Three-level layered Darcula + orange accent
-            let panel = bg_of(flavor, Layer::L1);            // #2b2d30 central
-            let panel_alt = bg_of(flavor, Layer::L0);        // #1e1f22 chrome (side / bottom)
-            let input_bg = bg_of(flavor, Layer::L2);         // #313338 input / data container
-            let stroke = Color32::from_rgb(81, 86, 89);      // #515659 (functional borders only)
-            let fg = Color32::from_rgb(220, 223, 228);       // #dcdfe4 — brighter body
-            let strong_fg = Color32::from_rgb(248, 248, 242); // #f8f8f2 — near-white for headers/strong
-            let sel_bg = Color32::from_rgb(75, 110, 175);    // #4b6eaf — Darcula selection
-            let accent = Color32::from_rgb(204, 120, 50);    // #cc7832 orange
+            let panel       = bg_of(flavor, Layer::L1);                 // #0d1117
+            let panel_alt   = bg_of(flavor, Layer::L0);                 // #010409
+            let raised      = bg_of(flavor, Layer::L2);                 // #161b22
+            let stroke      = border_strong(flavor);                    // #30363d
+            let stroke_soft = border_subtle(flavor);                    // #21262d
+            let fg          = text_body(flavor);                        // #c9d1d9
+            let strong_fg   = text_primary(flavor);                     // #e6edf3
+            let sel_bg      = bg_selected_row(flavor);
+            let acc         = accent(flavor);                           // #1f6feb
             s.visuals.panel_fill = panel;
             s.visuals.window_fill = panel_alt;
-            s.visuals.extreme_bg_color = Color32::from_rgb(37, 37, 37); // #252525 input-ish bg
-            s.visuals.faint_bg_color = Color32::from_rgb(49, 51, 53);    // #313335 — striped row
-            s.visuals.code_bg_color = Color32::from_rgb(49, 51, 53);
+            s.visuals.extreme_bg_color = panel_alt;
+            s.visuals.faint_bg_color = raised;
+            s.visuals.code_bg_color = raised;
             s.visuals.widgets.noninteractive.bg_fill = panel_alt;
             s.visuals.widgets.noninteractive.weak_bg_fill = panel;
-            s.visuals.widgets.noninteractive.bg_stroke.color = stroke;
+            s.visuals.widgets.noninteractive.bg_stroke.color = stroke_soft;
             s.visuals.widgets.noninteractive.fg_stroke.color = fg;
-            s.visuals.widgets.inactive.bg_fill = input_bg;
+            s.visuals.widgets.inactive.bg_fill = raised;
             s.visuals.widgets.inactive.weak_bg_fill = panel_alt;
-            // Keep stroke for functional borders (TextEdit outlines); buttons
-            // override locally to NONE via primary/secondary/danger helpers.
             s.visuals.widgets.inactive.bg_stroke.color = stroke;
             s.visuals.widgets.inactive.fg_stroke.color = fg;
             s.visuals.widgets.hovered.bg_fill = bg_hover(flavor);
-            // No visible stroke on hover — flat-layered style
             s.visuals.widgets.hovered.bg_stroke.color = bg_hover(flavor);
             s.visuals.widgets.hovered.fg_stroke.color = strong_fg;
-            // active = pressed state AND egui uses its fg_stroke as strong_text_color()
-            // for table headers. Use near-white so headers pop; orange bg is rarely
-            // clicked on so white-on-orange is fine.
-            s.visuals.widgets.active.bg_fill = accent;
-            s.visuals.widgets.active.bg_stroke.color = accent;
-            s.visuals.widgets.active.fg_stroke.color = strong_fg;
-            s.visuals.widgets.open.bg_fill = input_bg;
-            s.visuals.window_stroke.color = stroke;
+            s.visuals.widgets.active.bg_fill = acc;
+            s.visuals.widgets.active.bg_stroke.color = acc;
+            s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+            s.visuals.widgets.open.bg_fill = raised;
+            s.visuals.window_stroke.color = stroke_soft;
             s.visuals.selection.bg_fill = sel_bg;
-            s.visuals.selection.stroke.color = accent;
+            s.visuals.selection.stroke.color = acc;
             s.visuals.override_text_color = Some(fg);
-            s.visuals.hyperlink_color = Color32::from_rgb(104, 151, 187); // darcula ctor blue
-            s.visuals.error_fg_color = Color32::from_rgb(255, 100, 100);
-            s.visuals.warn_fg_color = Color32::from_rgb(255, 198, 109);
+            s.visuals.hyperlink_color = accent_fg(flavor);
+            s.visuals.error_fg_color = danger(flavor);
+            s.visuals.warn_fg_color = warn(flavor);
         } else {
-            let panel = Color32::from_rgb(245, 245, 245);    // #f5f5f5
-            let white = Color32::from_rgb(255, 255, 255);    // #ffffff
-            let stroke = Color32::from_rgb(208, 208, 208);   // #d0d0d0
-            let stroke_strong = Color32::from_rgb(190, 190, 190);
-            let fg = Color32::from_rgb(51, 51, 51);          // #333333
-            let sel_bg = Color32::from_rgb(201, 218, 248);   // #c9daf8 row highlight
-            let accent = Color32::from_rgb(59, 154, 232);    // #3b9ae8
+            let panel       = bg_of(flavor, Layer::L1);
+            let _panel_alt  = bg_of(flavor, Layer::L0);
+            let raised      = bg_of(flavor, Layer::L2);
+            let stroke      = border_strong(flavor);
+            let stroke_soft = border_subtle(flavor);
+            let fg          = text_body(flavor);
+            let strong_fg   = text_primary(flavor);
+            let sel_bg      = bg_selected_row(flavor);
+            let acc         = accent(flavor);
             s.visuals.panel_fill = panel;
-            s.visuals.window_fill = white;
-            s.visuals.extreme_bg_color = white;
-            s.visuals.faint_bg_color = Color32::from_rgb(248, 248, 248);
-            s.visuals.code_bg_color = Color32::from_rgb(240, 240, 240);
+            s.visuals.window_fill = raised;
+            s.visuals.extreme_bg_color = raised;
+            s.visuals.faint_bg_color = panel;
+            s.visuals.code_bg_color = panel;
             s.visuals.widgets.noninteractive.bg_fill = panel;
             s.visuals.widgets.noninteractive.weak_bg_fill = panel;
-            s.visuals.widgets.noninteractive.bg_stroke.color = stroke;
+            s.visuals.widgets.noninteractive.bg_stroke.color = stroke_soft;
             s.visuals.widgets.noninteractive.fg_stroke.color = fg;
-            s.visuals.widgets.inactive.bg_fill = Color32::from_rgb(240, 240, 240);
-            s.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(245, 245, 245);
+            s.visuals.widgets.inactive.bg_fill = raised;
+            s.visuals.widgets.inactive.weak_bg_fill = panel;
             s.visuals.widgets.inactive.bg_stroke.color = stroke;
             s.visuals.widgets.inactive.fg_stroke.color = fg;
-            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(230, 230, 230);
-            s.visuals.widgets.hovered.bg_stroke.color = stroke_strong;
-            s.visuals.widgets.hovered.fg_stroke.color = fg;
-            s.visuals.widgets.active.bg_fill = accent;
-            s.visuals.widgets.active.bg_stroke.color = accent;
+            s.visuals.widgets.hovered.bg_fill = bg_hover(flavor);
+            s.visuals.widgets.hovered.bg_stroke.color = bg_hover(flavor);
+            s.visuals.widgets.hovered.fg_stroke.color = strong_fg;
+            s.visuals.widgets.active.bg_fill = acc;
+            s.visuals.widgets.active.bg_stroke.color = acc;
             s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
-            s.visuals.widgets.open.bg_fill = Color32::from_rgb(230, 230, 230);
-            s.visuals.window_stroke.color = stroke;
+            s.visuals.widgets.open.bg_fill = raised;
+            s.visuals.window_stroke.color = stroke_soft;
             s.visuals.selection.bg_fill = sel_bg;
-            s.visuals.selection.stroke.color = accent;
+            s.visuals.selection.stroke.color = acc;
             s.visuals.override_text_color = Some(fg);
-            s.visuals.hyperlink_color = accent;
-            s.visuals.error_fg_color = Color32::from_rgb(200, 51, 54);
-            s.visuals.warn_fg_color = Color32::from_rgb(175, 82, 0);
+            s.visuals.hyperlink_color = accent_fg(flavor);
+            s.visuals.error_fg_color = danger(flavor);
+            s.visuals.warn_fg_color = warn(flavor);
         }
     });
 
     ctx.style_mut(|s| {
-        // Tight spacing — VS Code-like density
-        s.spacing.item_spacing = egui::vec2(8.0, 4.0);
-        s.spacing.button_padding = egui::vec2(9.0, 3.0);
-        s.spacing.menu_margin = egui::Margin::symmetric(6.0 as i8, 4.0 as i8);
+        s.spacing.item_spacing = egui::vec2(10.0, 6.0);
+        s.spacing.button_padding = egui::vec2(12.0, 4.0);
+        s.spacing.menu_margin = egui::Margin::symmetric(8.0 as i8, 5.0 as i8);
         s.spacing.indent = 14.0;
-        s.spacing.interact_size.y = 22.0;
+        s.spacing.interact_size.y = 24.0;
 
-        // Slight rounding — VS Code uses mostly 2-4px, not 8+
-        let r: egui::Rounding = 3.0.into();
+        let r: egui::CornerRadius = 4.0.into();
         s.visuals.widgets.noninteractive.corner_radius = r;
         s.visuals.widgets.inactive.corner_radius = r;
         s.visuals.widgets.hovered.corner_radius = r;
         s.visuals.widgets.active.corner_radius = r;
         s.visuals.widgets.open.corner_radius = r;
-        s.visuals.window_corner_radius = 4.0.into();
-        s.visuals.menu_corner_radius = 4.0.into();
+        s.visuals.window_corner_radius = 6.0.into();
+        s.visuals.menu_corner_radius = 6.0.into();
 
-        // Type scale — smaller than our previous version, closer to VS Code
         use egui::TextStyle::*;
-        s.text_styles.insert(
-            Heading,
-            egui::FontId::new(15.0, egui::FontFamily::Proportional),
-        );
-        s.text_styles.insert(
-            Body,
-            egui::FontId::new(13.0, egui::FontFamily::Proportional),
-        );
-        s.text_styles.insert(
-            Button,
-            egui::FontId::new(13.0, egui::FontFamily::Proportional),
-        );
-        s.text_styles.insert(
-            Monospace,
-            egui::FontId::new(12.5, egui::FontFamily::Monospace),
-        );
-        s.text_styles.insert(
-            Small,
-            egui::FontId::new(11.0, egui::FontFamily::Proportional),
-        );
+        s.text_styles.insert(Heading,   egui::FontId::new(15.0, egui::FontFamily::Proportional));
+        s.text_styles.insert(Body,      egui::FontId::new(12.5, egui::FontFamily::Proportional));
+        s.text_styles.insert(Button,    egui::FontId::new(12.0, egui::FontFamily::Proportional));
+        s.text_styles.insert(Monospace, egui::FontId::new(12.5, egui::FontFamily::Monospace));
+        s.text_styles.insert(Small,     egui::FontId::new(10.5, egui::FontFamily::Proportional));
     });
 }
 
 // --- Semantic color helpers used by app code ---
 
 pub fn accent(flavor: Flavor) -> Color32 {
-    // Darcula orange (#cc7832) for dark; redisant industrial blue for light.
-    if flavor.is_dark() {
-        flavor.palette().peach
-    } else {
-        flavor.palette().blue
-    }
+    if flavor.is_dark() { rgb(0x1f, 0x6f, 0xeb) } else { rgb(0x25, 0x63, 0xeb) }
 }
-
+pub fn accent_fg(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0x58, 0xa6, 0xff) } else { rgb(0x3b, 0x82, 0xf6) }
+}
 pub fn success(flavor: Flavor) -> Color32 {
-    flavor.palette().green
+    if flavor.is_dark() { rgb(0x3f, 0xb9, 0x50) } else { rgb(0x15, 0x80, 0x3d) }
 }
-
+pub fn warn(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0xf0, 0x88, 0x3e) } else { rgb(0xc2, 0x41, 0x0c) }
+}
 pub fn danger(flavor: Flavor) -> Color32 {
-    flavor.palette().red
+    if flavor.is_dark() { rgb(0xf8, 0x51, 0x49) } else { rgb(0xb9, 0x1c, 0x1c) }
 }
-
-pub fn subtext(flavor: Flavor) -> Color32 {
-    flavor.palette().subtext0
+pub fn alias(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0xd2, 0xa8, 0xff) } else { rgb(0x7c, 0x3a, 0xed) }
 }
+pub fn border_subtle(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0x21, 0x26, 0x2d) } else { rgb(0xe4, 0xe4, 0xe7) }
+}
+pub fn border_strong(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0x30, 0x36, 0x3d) } else { rgb(0xd4, 0xd4, 0xd8) }
+}
+pub fn text_primary(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0xe6, 0xed, 0xf3) } else { rgb(0x09, 0x09, 0x0b) }
+}
+pub fn text_body(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0xc9, 0xd1, 0xd9) } else { rgb(0x3f, 0x3f, 0x46) }
+}
+pub fn text_muted(flavor: Flavor) -> Color32 {
+    if flavor.is_dark() { rgb(0x6e, 0x76, 0x81) } else { rgb(0x71, 0x71, 0x7a) }
+}
+pub fn subtext(flavor: Flavor) -> Color32 { text_muted(flavor) } // 旧调用点回退
+pub fn surface(flavor: Flavor) -> Color32 { bg_of(flavor, Layer::L2) } // 旧调用点回退
 
-pub fn surface(flavor: Flavor) -> Color32 {
-    flavor.palette().surface0
+/// 文本渲染辅助：tiny_caps / crumb 等语义文本样式。
+pub mod text {
+    use super::{Flavor, text_muted, accent_fg};
+    use egui::{Ui, RichText};
+
+    /// 表头 / 分组标题用：10.5px 大写、字距感由空格 + 字色弱化体现。
+    pub fn tiny_caps(ui: &mut Ui, flavor: Flavor, s: &str) {
+        ui.label(
+            RichText::new(s.to_uppercase())
+                .size(10.5)
+                .color(accent_fg(flavor))
+                .strong(),
+        );
+    }
+
+    /// 面包屑 / 元信息：11px、muted。
+    pub fn crumb(ui: &mut Ui, flavor: Flavor, s: &str) {
+        ui.label(RichText::new(s).size(11.0).color(text_muted(flavor)));
+    }
 }

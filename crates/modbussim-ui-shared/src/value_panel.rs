@@ -8,7 +8,7 @@
 //!
 //! - 1 word  → U16 Unsigned / Signed / Hex / Binary
 //! - 2 words → U32, I32, Float32 each in 4 byte orders (AB CD / CD AB /
-//!             BA DC / DC BA)
+//!   BA DC / DC BA)
 //! - 4 words → Float64 in 4 byte orders
 
 use egui::{Id, Key, RichText};
