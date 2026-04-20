@@ -592,6 +592,24 @@ impl SlaveApp {
         });
     }
 
+    fn set_device_jitter(
+        &self,
+        conn_id: String,
+        slave_id: u8,
+        cfg: modbussim_core::jitter::JitterConfig,
+    ) {
+        let connections = self.connections.clone();
+        self.rt.spawn(async move {
+            let conns = connections.read().await;
+            let Some(entry) = conns.iter().find(|e| e.id == conn_id) else { return };
+            let conn = entry.connection.read().await;
+            let mut devs = conn.devices.write().await;
+            if let Some(dev) = devs.get_mut(&slave_id) {
+                dev.jitter = cfg;
+            }
+        });
+    }
+
     fn open_add_device_modal(&mut self, conn_id: String) {
         let next_slave_id = self
             .conn_snapshot
@@ -1851,6 +1869,65 @@ impl SlaveApp {
                                 self.remove_device(conn_id.clone(), *slave_id, ui.ctx().clone());
                             }
                         });
+
+                        // ----- Jitter card (run-time register mutation for master-stress) -----
+                        ui.separator();
+                        uikit::section_heading(ui, "", "寄存器抖动（压测）");
+
+                        let cur_jitter: modbussim_core::jitter::JitterConfig = {
+                            let conns = self.connections.blocking_read();
+                            let entry = conns.iter().find(|e| e.id == *conn_id);
+                            let jitter_opt = entry.and_then(|e| {
+                                let conn = e.connection.blocking_read();
+                                let devs = conn.devices.blocking_read();
+                                devs.get(slave_id).map(|d| d.jitter.clone())
+                            });
+                            jitter_opt.unwrap_or_default()
+                        };
+                        let mut new_jitter = cur_jitter.clone();
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut new_jitter.enabled, "启用");
+                        });
+                        let mut interval = new_jitter.interval_ms as i32;
+                        let mut rate = new_jitter.mutation_rate as i32;
+                        let mut delta = new_jitter.delta_percent as i32;
+                        egui::Grid::new("jitter_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label("周期");
+                                ui.add(
+                                    egui::Slider::new(&mut interval, 100..=5000)
+                                        .suffix(" ms"),
+                                );
+                                ui.end_row();
+                                ui.label("变位率");
+                                ui.add(
+                                    egui::Slider::new(&mut rate, 0..=100)
+                                        .suffix(" %"),
+                                );
+                                ui.end_row();
+                                ui.label("漂移幅度");
+                                ui.add(
+                                    egui::Slider::new(&mut delta, 0..=100)
+                                        .suffix(" %"),
+                                );
+                                ui.end_row();
+                            });
+                        new_jitter.interval_ms = interval as u64;
+                        new_jitter.mutation_rate = rate as u8;
+                        new_jitter.delta_percent = delta as u8;
+                        ui.horizontal(|ui| {
+                            ui.label("影响范围");
+                            ui.checkbox(&mut new_jitter.affect_coils, "线圈");
+                            ui.checkbox(&mut new_jitter.affect_discrete, "离散");
+                            ui.checkbox(&mut new_jitter.affect_holding, "保持");
+                            ui.checkbox(&mut new_jitter.affect_input, "输入");
+                        });
+
+                        if new_jitter != cur_jitter {
+                            self.set_device_jitter(conn_id.clone(), *slave_id, new_jitter);
+                        }
 
                         ui.separator();
                         uikit::section_heading(ui, icons::GEAR, "数据源");
