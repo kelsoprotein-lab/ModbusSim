@@ -1,8 +1,9 @@
-//! Small reusable UI building blocks: region, card, primary_button, status_pill.
+//! Small reusable UI building blocks: region, card, primary_button, status_pill,
+//! panel_header, link_action.
 //!
-//! Visual defaults: Darcula three-level bg layering, orange accent
-//! (#cc7832 primary fill), no default stroke on buttons — hover relies on
-//! bg_hover fill instead of borders.
+//! Visual defaults: cold-blue palette (#0d1117 surface), green primary action
+//! (#3fb950 "+ 批量添加"), blue accent_fg (#58a6ff links/hover). No hardcoded
+//! RGB — all colors delegated to `theme::` token functions.
 
 use egui::{Color32, Response, RichText, Ui};
 
