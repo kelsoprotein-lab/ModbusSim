@@ -36,16 +36,79 @@ impl Default for JitterConfig {
 }
 
 pub fn apply_tick(
-    _map: &mut RegisterMap,
-    _cfg: &JitterConfig,
-    _rng: &mut impl Rng,
+    map: &mut RegisterMap,
+    cfg: &JitterConfig,
+    rng: &mut impl Rng,
 ) {
-    unimplemented!()
+    if !cfg.enabled {
+        return;
+    }
+    let rate = cfg.mutation_rate.min(100) as u32;
+    let delta_pct = cfg.delta_percent.min(100) as i32;
+
+    if cfg.affect_coils {
+        flip_bools(&mut map.coils, rate, rng);
+    }
+    if cfg.affect_discrete {
+        flip_bools(&mut map.discrete_inputs, rate, rng);
+    }
+    if cfg.affect_holding {
+        perturb_u16(&mut map.holding_registers, rate, delta_pct, rng);
+    }
+    if cfg.affect_input {
+        perturb_u16(&mut map.input_registers, rate, delta_pct, rng);
+    }
+}
+
+fn flip_bools(
+    store: &mut std::collections::HashMap<u16, bool>,
+    rate: u32,
+    rng: &mut impl Rng,
+) {
+    for v in store.values_mut() {
+        if rng.gen_range(0..100) < rate {
+            *v = !*v;
+        }
+    }
+}
+
+fn perturb_u16(
+    store: &mut std::collections::HashMap<u16, u16>,
+    rate: u32,
+    delta_pct: i32,
+    rng: &mut impl Rng,
+) {
+    for v in store.values_mut() {
+        if rng.gen_range(0..100) >= rate {
+            continue;
+        }
+        if delta_pct == 0 {
+            continue;
+        }
+        // Use the current value (min 1 so drift works on zero-seeded registers).
+        let base = (*v as i32).max(1);
+        let pct = rng.gen_range(-delta_pct..=delta_pct);
+        let delta = base * pct / 100;
+        *v = (*v).wrapping_add(delta as u16);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    fn fixture_map() -> RegisterMap {
+        let mut m = RegisterMap::new();
+        for addr in 0..10u16 {
+            m.coils.insert(addr, false);
+            m.discrete_inputs.insert(addr, false);
+            m.holding_registers.insert(addr, 1000);
+            m.input_registers.insert(addr, 2000);
+        }
+        m
+    }
 
     #[test]
     fn default_is_disabled_with_sensible_values() {
@@ -72,5 +135,81 @@ mod tests {
         let s = serde_json::to_string(&original).expect("serialize");
         let back: JitterConfig = serde_json::from_str(&s).expect("deserialize");
         assert_eq!(original, back);
+    }
+
+    #[test]
+    fn mutation_rate_zero_leaves_map_unchanged() {
+        let mut map = fixture_map();
+        let expected = map.clone();
+        let cfg = JitterConfig {
+            enabled: true,
+            interval_ms: 100,
+            mutation_rate: 0,
+            delta_percent: 50,
+            affect_coils: true,
+            affect_discrete: true,
+            affect_holding: true,
+            affect_input: true,
+        };
+        let mut rng = StdRng::seed_from_u64(42);
+        apply_tick(&mut map, &cfg, &mut rng);
+        assert_eq!(map.coils, expected.coils);
+        assert_eq!(map.discrete_inputs, expected.discrete_inputs);
+        assert_eq!(map.holding_registers, expected.holding_registers);
+        assert_eq!(map.input_registers, expected.input_registers);
+    }
+
+    #[test]
+    fn full_rate_flips_all_bools_and_perturbs_all_u16() {
+        let mut map = fixture_map();
+        let cfg = JitterConfig {
+            enabled: true,
+            interval_ms: 100,
+            mutation_rate: 100,
+            delta_percent: 50,
+            affect_coils: true,
+            affect_discrete: true,
+            affect_holding: true,
+            affect_input: true,
+        };
+        let mut rng = StdRng::seed_from_u64(42);
+        apply_tick(&mut map, &cfg, &mut rng);
+        // All bool registers started at false; with mutation_rate=100 each must flip to true.
+        assert!(map.coils.values().all(|&v| v));
+        assert!(map.discrete_inputs.values().all(|&v| v));
+        // All u16 started at 1000; with delta_percent=50 each result must land in [500, 1500]
+        // because the drift is computed as value * rand(-50..=50) / 100 then wrapping_add to value.
+        for &v in map.holding_registers.values() {
+            assert!((500..=1500).contains(&v), "holding out of drift range: {}", v);
+        }
+        for &v in map.input_registers.values() {
+            assert!((1000..=3000).contains(&v), "input out of drift range: {}", v);
+        }
+    }
+
+    #[test]
+    fn type_selection_filters_which_registers_mutate() {
+        let mut map = fixture_map();
+        let baseline = map.clone();
+        let cfg = JitterConfig {
+            enabled: true,
+            interval_ms: 100,
+            mutation_rate: 100,
+            delta_percent: 50,
+            affect_coils: false,
+            affect_discrete: false,
+            affect_holding: true,
+            affect_input: false,
+        };
+        let mut rng = StdRng::seed_from_u64(42);
+        apply_tick(&mut map, &cfg, &mut rng);
+        // Coils / discrete / input should be untouched.
+        assert_eq!(map.coils, baseline.coils);
+        assert_eq!(map.discrete_inputs, baseline.discrete_inputs);
+        assert_eq!(map.input_registers, baseline.input_registers);
+        // Holding should have shifted for every address.
+        for &v in map.holding_registers.values() {
+            assert!((500..=1500).contains(&v));
+        }
     }
 }
