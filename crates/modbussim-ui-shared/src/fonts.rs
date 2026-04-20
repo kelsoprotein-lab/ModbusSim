@@ -16,7 +16,7 @@ pub fn install_cjk_fonts(ctx: &egui::Context) {
         Some((name, bytes)) => {
             fonts
                 .font_data
-                .insert(name.to_string(), FontData::from_owned(bytes));
+                .insert(name.to_string(), std::sync::Arc::new(FontData::from_owned(bytes)));
             fonts
                 .families
                 .entry(FontFamily::Proportional)

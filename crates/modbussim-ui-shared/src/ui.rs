@@ -31,10 +31,10 @@ fn card_colors(flavor: Flavor) -> (Color32, Color32) {
 /// background-layer differences instead of stroke borders.
 pub fn card<R>(ui: &mut Ui, flavor: Flavor, add: impl FnOnce(&mut Ui) -> R) -> R {
     let (fill, stroke_color) = card_colors(flavor);
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(fill)
-        .rounding(2.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .corner_radius(2.0)
+        .inner_margin(egui::Margin::symmetric(10.0 as i8, 8.0 as i8))
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add)
         .inner
@@ -50,7 +50,7 @@ pub fn region<R>(
     margin: egui::Margin,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(theme::bg_of(flavor, layer))
         .inner_margin(margin)
         .show(ui, add)
@@ -66,14 +66,14 @@ pub fn accent_card<R>(
 ) -> R {
     let accent = crate::theme::accent(flavor);
     let (fill, stroke_color) = card_colors(flavor);
-    let resp = egui::Frame::none()
+    let resp = egui::Frame::new()
         .fill(fill)
-        .rounding(2.0)
+        .corner_radius(2.0)
         .inner_margin(egui::Margin {
-            left: 10.0,
-            right: 10.0,
-            top: 10.0,
-            bottom: 8.0,
+            left: 10,
+            right: 10,
+            top: 10,
+            bottom: 8,
         })
         .stroke(egui::Stroke::new(1.0, stroke_color))
         .show(ui, add);
@@ -87,66 +87,108 @@ pub fn accent_card<R>(
     resp.inner
 }
 
-/// Primary action button: solid accent fill, white text, no stroke.
+/// Lazily constructed shadcn Theme (dark / light variant derived from Flavor).
+/// Theme creation is not free (computes palette tables), so cache it per frame.
+/// Overrides shadcn's Neutral base palette with our Darcula orange / industrial
+/// blue tokens so buttons and switches pick up our accent color instead of
+/// rendering as washed-out gray.
+fn shadcn_theme(flavor: Flavor) -> egui_shadcn::Theme {
+    use egui_shadcn::tokens::{ColorPalette, ShadcnBaseColor};
+    let mut palette = if flavor.is_dark() {
+        ColorPalette::shadcn_dark(ShadcnBaseColor::Neutral)
+    } else {
+        ColorPalette::shadcn_light(ShadcnBaseColor::Neutral)
+    };
+    if flavor.is_dark() {
+        // Darcula orange accent + Layer::L1/L2 background alignment
+        palette.primary = Color32::from_rgb(0xcc, 0x78, 0x32);
+        palette.primary_foreground = Color32::from_rgb(0x1e, 0x1e, 0x1e);
+        palette.destructive = Color32::from_rgb(0xbc, 0x3f, 0x3c);
+        palette.destructive_foreground = Color32::WHITE;
+        palette.ring = Color32::from_rgb(0xcc, 0x78, 0x32);
+        palette.border = Color32::from_rgb(0x51, 0x56, 0x59);
+        palette.background = Color32::from_rgb(0x2b, 0x2d, 0x30);
+        palette.foreground = Color32::from_rgb(0xd4, 0xd7, 0xdb);
+        palette.muted_foreground = Color32::from_rgb(0x9c, 0xa0, 0xa4);
+        palette.accent = palette.primary;
+        palette.accent_foreground = palette.primary_foreground;
+    } else {
+        // redisant industrial blue accent
+        palette.primary = Color32::from_rgb(0x3b, 0x9a, 0xe8);
+        palette.primary_foreground = Color32::WHITE;
+        palette.destructive = Color32::from_rgb(0xc8, 0x33, 0x36);
+        palette.destructive_foreground = Color32::WHITE;
+        palette.ring = Color32::from_rgb(0x3b, 0x9a, 0xe8);
+        palette.border = Color32::from_rgb(0xd0, 0xd0, 0xd0);
+        palette.background = Color32::from_rgb(0xf5, 0xf5, 0xf5);
+        palette.foreground = Color32::from_rgb(0x33, 0x33, 0x33);
+        palette.muted_foreground = Color32::from_rgb(0x66, 0x66, 0x66);
+        palette.accent = palette.primary;
+        palette.accent_foreground = palette.primary_foreground;
+    }
+    egui_shadcn::Theme::new(palette)
+}
+
+/// Primary action button: shadcn Default (Primary) variant.
 pub fn primary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let accent = theme::accent(flavor);
-    let btn = egui::Button::new(
-        RichText::new(text.into())
-            .color(Color32::WHITE)
-            .size(13.0),
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Primary,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
     )
-    .fill(accent)
-    .stroke(egui::Stroke::NONE)
-    .rounding(2.0)
-    .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
 }
 
-/// Secondary (default) button: subtle L2 fill (not transparent — a fully
-/// transparent button loses visual affordance against the L1 panel bg).
-/// egui's global widgets.hovered.bg_fill takes over on hover.
+/// Secondary (default) button: shadcn Outline variant.
 pub fn secondary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let btn = egui::Button::new(RichText::new(text.into()).size(13.0))
-        .fill(theme::bg_of(flavor, Layer::L2))
-        .stroke(egui::Stroke::NONE)
-        .rounding(2.0)
-        .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
-}
-
-/// Danger / destructive button: slightly muted red fill, no stroke.
-pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
-    let red = theme::danger(flavor);
-    let btn = egui::Button::new(
-        RichText::new(text.into())
-            .color(Color32::WHITE)
-            .size(13.0),
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Outline,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
     )
-    .fill(red.linear_multiply(0.85))
-    .stroke(egui::Stroke::NONE)
-    .rounding(2.0)
-    .min_size(egui::vec2(0.0, 24.0));
-    ui.add(btn)
 }
 
-/// Icon-only button: 24×24, transparent default, hover uses egui global bg.
-pub fn icon_button(ui: &mut Ui, _flavor: Flavor, icon: &str) -> Response {
-    let btn = egui::Button::new(RichText::new(icon).size(14.0))
-        .fill(Color32::TRANSPARENT)
-        .stroke(egui::Stroke::NONE)
-        .rounding(2.0)
-        .min_size(egui::vec2(24.0, 24.0));
-    ui.add(btn)
+/// Danger / destructive button: shadcn Destructive variant.
+pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Destructive,
+        egui_shadcn::tokens::ControlSize::Md,
+        true,
+    )
+}
+
+/// Icon-only button: shadcn Ghost variant + small size.
+pub fn icon_button(ui: &mut Ui, flavor: Flavor, icon: &str) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        icon.to_string(),
+        egui_shadcn::tokens::ControlVariant::Ghost,
+        egui_shadcn::tokens::ControlSize::Sm,
+        true,
+    )
 }
 
 /// Pill-shaped status badge. Small rounded label with colored text and a very
 /// faint tinted background — never loud.
 pub fn status_pill(ui: &mut Ui, text: impl Into<String>, color: Color32) {
     let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 36);
-    egui::Frame::none()
+    egui::Frame::new()
         .fill(bg)
-        .rounding(3.0)
-        .inner_margin(egui::Margin::symmetric(6.0, 1.0))
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(6.0 as i8, 1.0 as i8))
         .show(ui, |ui| {
             ui.label(RichText::new(text.into()).color(color).size(11.5));
         });
@@ -171,31 +213,29 @@ pub fn caption(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) {
     );
 }
 
-/// iOS-style toggle switch: 40×18 rounded track + 14 px white knob (16 px on hover).
-/// Full-rect click handling — users don't have to hit the knob precisely.
-/// Returns a `Response` whose `.clicked()` is true on the frame the toggle
-/// flipped (value is mutated before returning).
+/// Radix-style shadcn Switch. Replaces the earlier self-drawn 40×18 toggle;
+/// the shadcn widget owns track sizing, slide animation, hover/focus ring.
+/// Wrapped in a fixed 48×24 centered sub-Ui so that inside an `exact`/`initial`
+/// table column the switch stays at its native ~35×20 track size and doesn't
+/// inherit the cell's full width (which would leave it left-aligned with a
+/// cavernous click area).
 pub fn toggle_switch(ui: &mut Ui, flavor: Flavor, value: &mut bool) -> Response {
-    let desired = egui::vec2(40.0, 18.0);
-    let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
-    if resp.clicked() {
-        *value = !*value;
-        resp.mark_changed();
-    }
-    let track_color = if *value {
-        theme::success(flavor)
-    } else {
-        theme::bg_hover(flavor)
-    };
-    ui.painter().rect_filled(rect, 9.0, track_color);
-    let knob_r = if resp.hovered() { 8.0 } else { 7.0 };
-    let cx = if *value {
-        rect.right() - 9.0
-    } else {
-        rect.left() + 9.0
-    };
-    let center = egui::pos2(cx, rect.center().y);
-    ui.painter()
-        .circle_filled(center, knob_r, Color32::from_rgb(235, 235, 235));
-    resp
+    let theme = shadcn_theme(flavor);
+    let desired = egui::vec2(48.0, 24.0);
+    ui.allocate_ui_with_layout(
+        desired,
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            egui_shadcn::switch(
+                ui,
+                &theme,
+                value,
+                "",
+                egui_shadcn::tokens::ControlVariant::Primary,
+                egui_shadcn::tokens::ControlSize::Md,
+                true,
+            )
+        },
+    )
+    .inner
 }

@@ -69,6 +69,8 @@ jobs:
             **ModbusSlave** - Modbus TCP 从站模拟器
             **ModbusMaster** - Modbus TCP 主站工具
 
+            **egui 版**（独立原生二进制，无 WebView 依赖） — 文件名含 `-egui-` 后缀
+
             See the assets below to download for your platform.
           releaseDraft: false
           prerelease: false
@@ -93,7 +95,96 @@ jobs:
             **ModbusSlave** - Modbus TCP 从站模拟器
             **ModbusMaster** - Modbus TCP 主站工具
 
+            **egui 版**（独立原生二进制，无 WebView 依赖） — 文件名含 `-egui-` 后缀
+
             See the assets below to download for your platform.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  # egui 原生二进制（与 Tauri 版并行附加到同一 release）
+  release-egui:
+    permissions:
+      contents: write
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            arch_label: macos-aarch64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            arch_label: macos-x86_64
+          - platform: ubuntu-22.04
+            target: ''
+            arch_label: linux-x86_64
+          - platform: windows-latest
+            target: ''
+            arch_label: windows-x86_64
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: egui-release-${{ matrix.platform }}-${{ matrix.arch_label }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libudev-dev
+
+      - name: Build egui release binaries
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --target ${{ matrix.target }} -p modbussim-egui -p modbusmaster-egui
+          else
+            cargo build --release -p modbussim-egui -p modbusmaster-egui
+          fi
+
+      - name: Package egui binaries (Unix)
+        if: matrix.platform != 'windows-latest'
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            target_dir="target/${{ matrix.target }}/release"
+          else
+            target_dir="target/release"
+          fi
+          mkdir -p dist
+          tar -czf dist/ModbusSlave-egui-${{ matrix.arch_label }}.tar.gz -C "$target_dir" modbussim-egui
+          tar -czf dist/ModbusMaster-egui-${{ matrix.arch_label }}.tar.gz -C "$target_dir" modbusmaster-egui
+
+      - name: Package egui binaries (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $target_dir = "target/release"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$target_dir/modbussim-egui.exe" -DestinationPath "dist/ModbusSlave-egui-${{ matrix.arch_label }}.zip"
+          Compress-Archive -Path "$target_dir/modbusmaster-egui.exe" -DestinationPath "dist/ModbusMaster-egui-${{ matrix.arch_label }}.zip"
+
+      - name: Upload egui assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          append_body: false

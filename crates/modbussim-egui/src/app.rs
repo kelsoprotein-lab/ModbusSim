@@ -2177,7 +2177,7 @@ impl SlaveApp {
                     ui,
                     flavor,
                     theme::Layer::L1,
-                    egui::Margin::symmetric(14.0, 10.0),
+                    egui::Margin::symmetric(14.0 as i8, 10.0 as i8),
                     |ui| {
                         ui.horizontal(|ui| {
                             ui.heading(format!("{}  {}", reg_icon, group_label));
@@ -2297,7 +2297,7 @@ impl SlaveApp {
                     .size(Size::remainder().at_least(260.0))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0, 6.0), |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L2, egui::Margin::symmetric(8.0 as i8, 6.0 as i8), |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
                     let group_rows = view.row_count / stride;
@@ -2451,23 +2451,26 @@ impl SlaveApp {
                     let avail_h = ui.available_height();
                     // Column layout differs for bool: (地址 / 值 / 名称 / 注释)
                     // vs u16: (地址 / 值 / Hex / Binary / 空).
+                    // Column::exact() hard-locks range(w..=w), defeating resizable(true).
+                    // Use initial() + at_least() + clip(true) so users can drag column
+                    // dividers; at_least prevents dragging to 0 (would hide column).
                     let mut tb = TableBuilder::new(ui)
                         .striped(true)
                         .resizable(true)
                         .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(Column::exact(80.0));
+                        .column(Column::initial(80.0).at_least(60.0).clip(true)); // 地址
                     if is_bool {
                         tb = tb
-                            .column(Column::exact(170.0))  // 值 (toggle_switch 40px + 留白)
-                            .column(Column::exact(200.0))  // 名称
-                            .column(Column::remainder()); // 注释
+                            .column(Column::initial(72.0).at_least(56.0).clip(true))  // 值 (48×24 toggle + 余量)
+                            .column(Column::initial(200.0).at_least(80.0).clip(true)) // 名称
+                            .column(Column::remainder().at_least(80.0).clip(true));   // 注释
                     } else {
                         tb = tb
-                            .column(Column::exact(110.0))
-                            .column(Column::exact(100.0))
-                            .column(Column::exact(140.0))
-                            .column(Column::remainder());
+                            .column(Column::initial(110.0).at_least(72.0).clip(true)) // 值
+                            .column(Column::initial(100.0).at_least(72.0).clip(true)) // Hex
+                            .column(Column::initial(140.0).at_least(96.0).clip(true)) // Binary
+                            .column(Column::remainder().at_least(80.0).clip(true));   // 尾
                     }
                     if let Some(idx) = scroll_to_row {
                         tb = tb.scroll_to_row(idx, Some(egui::Align::Center));
@@ -2621,7 +2624,7 @@ impl SlaveApp {
                         }); // end StripBuilder left cell
                         strip.cell(|_ui| { });
                         strip.cell(|ui| {
-                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0, 10.0), |ui| {
+                            uikit::region(ui, flavor, theme::Layer::L1, egui::Margin::symmetric(12.0 as i8, 10.0 as i8), |ui| {
                             let mut selected_vals: Vec<u16> = Vec::new();
                             let mut base: Option<u16> = None;
                             // Only take up to 4 selected, in address order, and
@@ -2799,7 +2802,7 @@ impl eframe::App for SlaveApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L0))
-                    .inner_margin(egui::Margin::symmetric(12.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(12.0 as i8, 10.0 as i8)),
             )
             .show(ctx, |ui| {
                 ui.heading("连接");
@@ -2863,7 +2866,7 @@ impl eframe::App for SlaveApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L1))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(14.0 as i8, 10.0 as i8)),
             )
             .show(ctx, |ui| {
                 self.render_main(ui);
