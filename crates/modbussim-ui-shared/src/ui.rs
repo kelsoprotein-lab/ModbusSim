@@ -102,11 +102,12 @@ pub fn primary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> R
     ui.add(btn)
 }
 
-/// Secondary (default) button: transparent default, egui's global
-/// widgets.hovered.bg_fill takes over on hover. No stroke anywhere.
-pub fn secondary_button(ui: &mut Ui, _flavor: Flavor, text: impl Into<String>) -> Response {
+/// Secondary (default) button: subtle L2 fill (not transparent — a fully
+/// transparent button loses visual affordance against the L1 panel bg).
+/// egui's global widgets.hovered.bg_fill takes over on hover.
+pub fn secondary_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
     let btn = egui::Button::new(RichText::new(text.into()).size(13.0))
-        .fill(Color32::TRANSPARENT)
+        .fill(theme::bg_of(flavor, Layer::L2))
         .stroke(egui::Stroke::NONE)
         .rounding(2.0)
         .min_size(egui::vec2(0.0, 24.0));
@@ -168,4 +169,33 @@ pub fn caption(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) {
             .color(crate::theme::subtext(flavor))
             .size(11.0),
     );
+}
+
+/// iOS-style toggle switch: 40×18 rounded track + 14 px white knob (16 px on hover).
+/// Full-rect click handling — users don't have to hit the knob precisely.
+/// Returns a `Response` whose `.clicked()` is true on the frame the toggle
+/// flipped (value is mutated before returning).
+pub fn toggle_switch(ui: &mut Ui, flavor: Flavor, value: &mut bool) -> Response {
+    let desired = egui::vec2(40.0, 18.0);
+    let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+    if resp.clicked() {
+        *value = !*value;
+        resp.mark_changed();
+    }
+    let track_color = if *value {
+        theme::success(flavor)
+    } else {
+        theme::bg_hover(flavor)
+    };
+    ui.painter().rect_filled(rect, 9.0, track_color);
+    let knob_r = if resp.hovered() { 8.0 } else { 7.0 };
+    let cx = if *value {
+        rect.right() - 9.0
+    } else {
+        rect.left() + 9.0
+    };
+    let center = egui::pos2(cx, rect.center().y);
+    ui.painter()
+        .circle_filled(center, knob_r, Color32::from_rgb(235, 235, 235));
+    resp
 }
