@@ -13,6 +13,14 @@ async fn start_slave(port: u16) -> SlaveConnection {
 
     // Add slave device 1 with some preset values
     let mut device1 = SlaveDevice::new(1, "Device 1");
+    // Pre-fill addresses 0..60 for all four areas so write-path tests
+    // (which target addresses 10 / 50 / etc) don't hit IllegalDataAddress.
+    for addr in 0..60u16 {
+        device1.register_map.holding_registers.insert(addr, 0);
+        device1.register_map.input_registers.insert(addr, 0);
+        device1.register_map.coils.insert(addr, false);
+        device1.register_map.discrete_inputs.insert(addr, false);
+    }
     device1.register_map.write_holding_register(0, 1000);
     device1.register_map.write_holding_register(1, 2000);
     device1.register_map.write_holding_register(2, 3000);
