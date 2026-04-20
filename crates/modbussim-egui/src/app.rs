@@ -113,6 +113,36 @@ impl DsKind {
     }
 }
 
+/// What the user's search-box input semantically means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SearchIntent {
+    /// Empty input — no filtering, no jump.
+    None,
+    /// Valid u16 address — scroll-to-row and highlight.
+    Jump(u16),
+    /// Non-numeric / out-of-range — substring filter on address text (rendered as
+    /// decimal); matches register rows whose "1234"-style address contains the
+    /// lowercased needle. Name/comment filtering will be added when register_defs
+    /// get cached in RegViewCache.
+    Filter(String),
+}
+
+fn parse_search_intent(raw: &str) -> SearchIntent {
+    let t = raw.trim();
+    if t.is_empty() {
+        return SearchIntent::None;
+    }
+    if let Some(rest) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        if let Ok(n) = u16::from_str_radix(rest, 16) {
+            return SearchIntent::Jump(n);
+        }
+    }
+    if let Ok(n) = t.parse::<u16>() {
+        return SearchIntent::Jump(n);
+    }
+    SearchIntent::Filter(t.to_lowercase())
+}
+
 fn source_short_desc(s: &DataSource) -> String {
     match s {
         DataSource::Fixed { value } => format!("Fixed={}", value),
@@ -271,6 +301,16 @@ pub struct SlaveApp {
     // ctrl-click; shift-click always ranges [anchor .. addr]. Prevents anchor
     // drift when shift-clicking multiple times in a row.
     click_anchor: Option<u16>,
+
+    // RegisterGroup search: per-(conn_id, slave_id, reg_type) text, so moving
+    // between groups preserves what the user typed. Filters / jumps based on
+    // the input shape (see parse_search_intent).
+    search_buf: HashMap<(String, u8, RegisterType), String>,
+    /// Row currently being highlighted from an address jump. Fades over 2s.
+    highlight: Option<(String, u8, RegisterType, u16, Instant)>,
+    /// Tells the RegisterGroup renderer to `request_focus()` the search
+    /// TextEdit on the next frame (Cmd+F / Ctrl+F sets this).
+    want_focus_search: bool,
 
     // Data source "add" form
     ds_add_addr: u32,
@@ -443,6 +483,9 @@ impl SlaveApp {
             pending_edits: HashMap::new(),
             selected_addrs: BTreeSet::new(),
             click_anchor: None,
+            search_buf: HashMap::new(),
+            highlight: None,
+            want_focus_search: false,
             ds_add_addr: 0,
             ds_add_kind: DsKind::Counter,
             ds_add_interval_ms: 1000,
@@ -2107,6 +2150,13 @@ impl SlaveApp {
                     RegisterType::HoldingRegister => icons::HARD_DRIVES,
                 };
                 let mut open_batch = false;
+                let search_key = (conn_id.clone(), *slave_id, *reg_type);
+                let mut search_text = self
+                    .search_buf
+                    .get(&search_key)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut want_focus = self.want_focus_search;
                 uikit::region(
                     ui,
                     flavor,
@@ -2132,11 +2182,37 @@ impl SlaveApp {
                                     {
                                         open_batch = true;
                                     }
+                                    ui.add_space(8.0);
+                                    let resp = ui.add(
+                                        egui::TextEdit::singleline(&mut search_text)
+                                            .hint_text("地址 / 名称…")
+                                            .desired_width(160.0),
+                                    );
+                                    if want_focus {
+                                        resp.request_focus();
+                                        // Also select-all so the next keystroke overwrites.
+                                        if let Some(mut state) =
+                                            egui::TextEdit::load_state(ui.ctx(), resp.id)
+                                        {
+                                            let cc = egui::text::CCursor::new(search_text.chars().count());
+                                            state.cursor.set_char_range(Some(
+                                                egui::text::CCursorRange::two(
+                                                    egui::text::CCursor::new(0),
+                                                    cc,
+                                                ),
+                                            ));
+                                            state.store(ui.ctx(), resp.id);
+                                        }
+                                        want_focus = false;
+                                    }
                                 },
                             );
                         });
                     },
                 );
+                self.search_buf.insert(search_key.clone(), search_text.clone());
+                self.want_focus_search = want_focus;
+                let search_intent = parse_search_intent(&search_text);
                 if open_batch {
                     self.open_batch_modal(conn_id.clone(), *slave_id, *reg_type);
                 }
@@ -2316,8 +2392,48 @@ impl SlaveApp {
                             });
                         });
                 } else {
+                    // Apply search intent: Jump sets a one-shot scroll_to + highlight;
+                    // Filter builds a reduced addr list that drives body.rows.
+                    let filtered_addrs: Option<Vec<u16>> = match &search_intent {
+                        SearchIntent::None | SearchIntent::Jump(_) => None,
+                        SearchIntent::Filter(q) => {
+                            let ndl = q.as_str();
+                            let v: Vec<u16> = (0..view.row_count as u16)
+                                .filter(|a| a.to_string().contains(ndl))
+                                .collect();
+                            Some(v)
+                        }
+                    };
+                    let mut scroll_to_row: Option<usize> = None;
+                    if let SearchIntent::Jump(addr) = search_intent {
+                        if (addr as usize) < view.row_count {
+                            // Only start a new highlight if the target changed — prevents
+                            // re-scroll on every keystroke once the user stops typing.
+                            let new_key = (conn_id.clone(), *slave_id, *reg_type, addr);
+                            let same = self
+                                .highlight
+                                .as_ref()
+                                .map(|h| (h.0.clone(), h.1, h.2, h.3) == new_key)
+                                .unwrap_or(false);
+                            if !same {
+                                self.highlight =
+                                    Some((new_key.0, new_key.1, new_key.2, addr, Instant::now()));
+                                scroll_to_row = Some(addr as usize);
+                            }
+                        }
+                    }
+
+                    if let Some(list) = &filtered_addrs {
+                        if list.is_empty() {
+                            ui.add_space(8.0);
+                            uikit::caption(ui, flavor, "无匹配寄存器");
+                            return;
+                        }
+                    }
+
+                    let body_row_count = filtered_addrs.as_ref().map(|v| v.len()).unwrap_or(view.row_count);
                     let avail_h = ui.available_height();
-                    TableBuilder::new(ui)
+                    let mut tb = TableBuilder::new(ui)
                         .striped(true)
                         .resizable(true)
                         .max_scroll_height(avail_h)
@@ -2326,7 +2442,18 @@ impl SlaveApp {
                         .column(Column::exact(110.0))
                         .column(Column::exact(100.0))
                         .column(Column::exact(140.0))
-                        .column(Column::remainder())
+                        .column(Column::remainder());
+                    if let Some(idx) = scroll_to_row {
+                        tb = tb.scroll_to_row(idx, Some(egui::Align::Center));
+                    }
+                    let highlight_addr: Option<u16> = self.highlight.as_ref().and_then(|h| {
+                        if &h.0 == conn_id && h.1 == *slave_id && h.2 == *reg_type {
+                            Some(h.3)
+                        } else {
+                            None
+                        }
+                    });
+                    tb
                         .header(22.0, |mut header| {
                             header.col(|ui| { ui.strong("地址"); });
                             header.col(|ui| {
@@ -2341,8 +2468,15 @@ impl SlaveApp {
                             header.col(|ui| { ui.strong(""); });
                         })
                         .body(|body| {
-                            body.rows(row_h, view.row_count, |mut row| {
-                                let addr = row.index() as u16;
+                            body.rows(row_h, body_row_count, |mut row| {
+                                let addr = if let Some(list) = &filtered_addrs {
+                                    list[row.index()]
+                                } else {
+                                    row.index() as u16
+                                };
+                                if Some(addr) == highlight_addr {
+                                    row.set_selected(true);
+                                }
                                 row.col(|ui| {
                                     let sel = selected_addrs.contains(&addr);
                                     let resp = ui.add(egui::SelectableLabel::new(
@@ -2574,6 +2708,28 @@ impl eframe::App for SlaveApp {
         self.drain_events();
         self.refresh_reg_view();
         self.refresh_log_cache();
+
+        // Cmd+F / Ctrl+F focuses the RegisterGroup search box (if that view is
+        // active). COMMAND maps to ⌘ on macOS / Ctrl elsewhere. Consume up-front
+        // so the window system doesn't swallow it.
+        let find_shortcut = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND,
+            egui::Key::F,
+        );
+        if ctx.input_mut(|i| i.consume_shortcut(&find_shortcut))
+            && matches!(self.selection, Selection::RegisterGroup { .. })
+        {
+            self.want_focus_search = true;
+        }
+
+        // Fade highlights: drop any stale ones older than 2s.
+        if let Some((_, _, _, _, t)) = &self.highlight {
+            if t.elapsed().as_secs_f32() > 2.0 {
+                self.highlight = None;
+            } else {
+                ctx.request_repaint();
+            }
+        }
 
         let mut do_save = false;
         let mut do_load = false;

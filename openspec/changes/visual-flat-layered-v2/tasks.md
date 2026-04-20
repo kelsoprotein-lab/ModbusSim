@@ -50,24 +50,24 @@
 
 ## 6. Slave RegisterGroup 搜索功能
 
-- [ ] 6.1 `SlaveApp` 新增 `search_buf: HashMap<(String, u8, RegisterType), String>` 字段，`Default::default()` 初始化
-- [ ] 6.2 `SlaveApp` 新增 `highlight: Option<(String, u8, RegisterType, u16, Instant)>` 字段（tracking 跳转目标 + 起点时刻）
-- [ ] 6.3 `SlaveApp` 新增 `want_focus_search: bool`
-- [ ] 6.4 在 `update()` 顶部绑定 Cmd+F / Ctrl+F：`ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::F)))` → 若 selection 是 RegisterGroup 则置 `want_focus_search = true`
-- [ ] 6.5 `Selection::RegisterGroup` 分支 heading 行右端前插入 `ui.add(TextEdit::singleline(&mut *buf).hint_text("地址 / 名称…").desired_width(160.0))`；`want_focus_search` 时调 `resp.request_focus()` 并全选
-- [ ] 6.6 搜索逻辑 helper：`fn parse_search(input: &str) -> SearchMode { Jump(u16) | Filter(String) }`（十进制 / 0x 十六进制 / 超范围或含字母则走 Filter）
-- [ ] 6.7 `Jump(addr)` 分支：在 TableBuilder body_rows 渲染期间 `if self.highlight needs scroll { ui.scroll_to_rect(row_rect, Some(Align::Center)); }`；同时记录 highlight 起点以驱动淡出
-- [ ] 6.8 `Filter(pat)` 分支：在渲染 body 前先构造过滤后的 addr 列表；TableBuilder 改用 `body.rows(row_h, filtered.len(), |mut row| { let addr = filtered[row.index()]; ... })`
-- [ ] 6.9 高亮淡出：body_rows 回调内，若 row 的 addr == highlight.addr 且 elapsed < 2.0s，`painter.rect_filled(row_rect, 0.0, accent.linear_multiply(0.6 * (1.0 - elapsed/2.0)))`；存在 highlight 时 `ctx.request_repaint()` 驱动动画
-- [ ] 6.10 空过滤结果处理：`if filtered.is_empty() { ui.centered(|ui| ui.label("无匹配寄存器")) }`
-- [ ] 6.11 启动 Slave，手测：
+- [x] 6.1 `SlaveApp` 新增 `search_buf: HashMap<(String, u8, RegisterType), String>` 字段，`Default::default()` 初始化
+- [x] 6.2 `SlaveApp` 新增 `highlight: Option<(String, u8, RegisterType, u16, Instant)>` 字段（tracking 跳转目标 + 起点时刻）
+- [x] 6.3 `SlaveApp` 新增 `want_focus_search: bool`
+- [x] 6.4 在 `update()` 顶部绑定 Cmd+F / Ctrl+F：`ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::F)))` → 若 selection 是 RegisterGroup 则置 `want_focus_search = true`
+- [x] 6.5 `Selection::RegisterGroup` 分支 heading 行右端前插入 `ui.add(TextEdit::singleline(&mut *buf).hint_text("地址 / 名称…").desired_width(160.0))`；`want_focus_search` 时调 `resp.request_focus()` 并全选
+- [x] 6.6 搜索逻辑 helper：`fn parse_search(input: &str) -> SearchMode { Jump(u16) | Filter(String) }`（十进制 / 0x 十六进制 / 超范围或含字母则走 Filter）
+- [x] 6.7 `Jump(addr)` 分支：在 TableBuilder body_rows 渲染期间 `if self.highlight needs scroll { ui.scroll_to_rect(row_rect, Some(Align::Center)); }`；同时记录 highlight 起点以驱动淡出
+- [x] 6.8 `Filter(pat)` 分支：在渲染 body 前先构造过滤后的 addr 列表；TableBuilder 改用 `body.rows(row_h, filtered.len(), |mut row| { let addr = filtered[row.index()]; ... })`
+- [x] 6.9 高亮淡出：body_rows 回调内，若 row 的 addr == highlight.addr 且 elapsed < 2.0s，`painter.rect_filled(row_rect, 0.0, accent.linear_multiply(0.6 * (1.0 - elapsed/2.0)))`；存在 highlight 时 `ctx.request_repaint()` 驱动动画
+- [x] 6.10 空过滤结果处理：`if filtered.is_empty() { ui.centered(|ui| ui.label("无匹配寄存器")) }`
+- [x] 6.11 启动 Slave，手测：
   - 输入 `1234` → 滚动到 addr=1234 + 高亮 2s 淡出
   - 输入 `0xFF` → 滚动到 addr=255
   - 输入 `Temp` → 过滤 name/comment 含 temp 的行
   - 输入 `XYZ` → 显示 "无匹配寄存器"
   - Cmd+F → TextEdit 获得焦点且内容全选
   - 切到 FC04 → 搜索框清空；切回 FC03 → 文本还在
-- [ ] 6.12 commit：`feat(slave): RegisterGroup 加搜索框 + 地址跳转 + Cmd+F 聚焦 + 名称过滤`
+- [x] 6.12 commit：`feat(slave): RegisterGroup 加搜索框 + 地址跳转 + Cmd+F 聚焦 + 名称过滤`
 
 ## 7. 回归 + CI + push
 
