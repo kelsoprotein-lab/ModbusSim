@@ -20,13 +20,13 @@
 
 ## 3. Master 三个 Tab 改造
 
-- [ ] 3.1 `modbusmaster-egui/src/app.rs` 顶部连接栏去 `uikit::card`，改 `region(L0)`
-- [ ] 3.2 Read Tab 内容 `uikit::card` → `region(L1)`；按钮（"读取"等）改 primary/secondary
-- [ ] 3.3 Write Tab 同样改造
-- [ ] 3.4 Poll Tab 的 ScanGroup 左侧列表用 `region(L1)`；选中组详情右侧用 `region(L2)`；ScanGroup 列表项 selected 态用 `bg_selected_row` 整行填色
-- [ ] 3.5 结果表 wrapper 改 `region(L2)`；删除结果表附近的 `ui.separator()`
-- [ ] 3.6 `cargo build -p modbusmaster-egui` 通过；启动目视 3 Tab 视觉一致
-- [ ] 3.7 commit：`style(master): Tab 内容去 card，按钮换橙色 accent`
+- [x] 3.1 `modbusmaster-egui/src/app.rs` 顶部连接栏去 `uikit::card`，改 `region(L0)`
+- [x] 3.2 Read Tab 内容 `uikit::card` → `region(L1)`；按钮（"读取"等）改 primary/secondary
+- [x] 3.3 Write Tab 同样改造
+- [x] 3.4 Poll Tab 的 ScanGroup 左侧列表用 `region(L1)`；选中组详情右侧用 `region(L2)`；ScanGroup 列表项 selected 态用 `bg_selected_row` 整行填色
+- [x] 3.5 结果表 wrapper 改 `region(L2)`；删除结果表附近的 `ui.separator()`
+- [x] 3.6 `cargo build -p modbusmaster-egui` 通过；启动目视 3 Tab 视觉一致
+- [x] 3.7 commit：`style(master): Tab 内容去 card，按钮换橙色 accent`
 
 ## 4. Slave 非 RegisterGroup 三个分支改造（None / Connection / Device）
 
