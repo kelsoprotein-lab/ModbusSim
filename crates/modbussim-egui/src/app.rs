@@ -2481,10 +2481,7 @@ impl SlaveApp {
                         ui.add_space(4.0);
                         egui::Frame::new()
                             .fill(theme::bg_of(flavor, theme::Layer::L2))
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                theme::border_strong(flavor),
-                            ))
+                            .stroke(egui::Stroke::new(1.0, theme::border_strong(flavor)))
                             .corner_radius(12.0)
                             .inner_margin(egui::Margin::symmetric(8, 2))
                             .show(ui, |ui| {
@@ -2521,23 +2518,16 @@ impl SlaveApp {
                         ),
                     );
                     if !is_bool {
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if uikit::link_action(ui, flavor, "清零选中", false).clicked() {
-                                    self.selected_addrs.clear();
-                                    self.click_anchor = None;
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if uikit::link_action(ui, flavor, "清零选中", false).clicked() {
+                                self.selected_addrs.clear();
+                                self.click_anchor = None;
+                            }
+                        });
                     }
                 });
                 if !is_bool && mode.is_multi_word() {
-                    theme::text::crumb(
-                        ui,
-                        flavor,
-                        "多字格式 · 只读显示；要编辑请切回 U16",
-                    );
+                    theme::text::crumb(ui, flavor, "多字格式 · 只读显示；要编辑请切回 U16");
                 }
 
                 let row_h = 20.0;
@@ -2661,16 +2651,15 @@ impl SlaveApp {
                                                         } else {
                                                             format!("{}..{}", base, base + 1)
                                                         };
-                                                        let resp = ui.add(
-                                                            egui::Button::selectable(
+                                                        let resp =
+                                                            ui.add(egui::Button::selectable(
                                                                 sel,
                                                                 egui::RichText::new(label)
                                                                     .monospace()
                                                                     .color(theme::text_muted(
                                                                         flavor,
                                                                     )),
-                                                            ),
-                                                        );
+                                                            ));
                                                         if resp.clicked() {
                                                             row_clicks.push((
                                                                 base,
@@ -2882,7 +2871,10 @@ impl SlaveApp {
                                                     let x1 = 8000.0_f32;
                                                     ui.painter().line_segment(
                                                         [egui::pos2(x0, y), egui::pos2(x1, y)],
-                                                        egui::Stroke::new(2.0, theme::accent(flavor)),
+                                                        egui::Stroke::new(
+                                                            2.0,
+                                                            theme::accent(flavor),
+                                                        ),
                                                     );
                                                 });
                                             } else {
@@ -2903,7 +2895,10 @@ impl SlaveApp {
                                                     let x1 = 8000.0_f32;
                                                     ui.painter().line_segment(
                                                         [egui::pos2(x0, y), egui::pos2(x1, y)],
-                                                        egui::Stroke::new(2.0, theme::accent(flavor)),
+                                                        egui::Stroke::new(
+                                                            2.0,
+                                                            theme::accent(flavor),
+                                                        ),
                                                     );
                                                 });
                                             }
@@ -2920,14 +2915,12 @@ impl SlaveApp {
                                                 }
                                                 row.col(|ui| {
                                                     let sel = selected_addrs.contains(&addr);
-                                                    let resp = ui.add(
-                                                        egui::Button::selectable(
-                                                            sel,
-                                                            egui::RichText::new(format!("{}", addr))
-                                                                .monospace()
-                                                                .color(theme::text_muted(flavor)),
-                                                        ),
-                                                    );
+                                                    let resp = ui.add(egui::Button::selectable(
+                                                        sel,
+                                                        egui::RichText::new(format!("{}", addr))
+                                                            .monospace()
+                                                            .color(theme::text_muted(flavor)),
+                                                    ));
                                                     if resp.clicked() {
                                                         row_clicks.push((
                                                             addr,
@@ -3220,10 +3213,7 @@ impl eframe::App for SlaveApp {
                     self.click_anchor = None;
                 }
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::Slash)
-                    && matches!(
-                        self.selection,
-                        Selection::RegisterGroup { .. }
-                    )
+                    && matches!(self.selection, Selection::RegisterGroup { .. })
                 {
                     self.want_focus_search = true;
                 }
