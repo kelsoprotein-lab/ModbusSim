@@ -22,4 +22,5 @@ tokio-native-tls = "0.3"
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 rcgen = "0.13"
-openssl = "0.10"
+# vendored: 编译 OpenSSL 源码，避免 Windows MSVC CI 上找不到系统 OpenSSL
+openssl = { version = "0.10", features = ["vendored"] }
