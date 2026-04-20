@@ -71,8 +71,8 @@
 
 ## 7. 回归 + CI + push
 
-- [ ] 7.1 `cargo test --workspace --exclude modbussim-app --exclude modbusmaster-app` 全绿
-- [ ] 7.2 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
-- [ ] 7.3 Slave + Master 双端启动目视：三层背景差肉眼可辨；无多余硬分割线；Bool 圆点正常；搜索功能完整
-- [ ] 7.4 `git push origin refactor/egui-skeleton`；CI（`ci-egui.yml`）三平台绿
-- [ ] 7.5 `openspec-cn validate visual-flat-layered-v2` 通过
+- [x] 7.1 `cargo test --workspace --exclude modbussim-app --exclude modbusmaster-app` 全绿
+- [x] 7.2 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
+- [x] 7.3 Slave + Master 双端启动目视：三层背景差肉眼可辨；无多余硬分割线；Bool 圆点正常；搜索功能完整
+- [x] 7.4 `git push origin refactor/egui-skeleton`；CI（`ci-egui.yml`）三平台绿
+- [x] 7.5 `openspec-cn validate visual-flat-layered-v2` 通过
