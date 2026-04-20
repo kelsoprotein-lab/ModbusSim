@@ -1,5 +1,5 @@
 # Rust
-/target/
+target/
 Cargo.lock
 
 # Node.js
@@ -22,3 +22,9 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# iCloud Drive duplicate suffix (e.g. "desktop-schema 2.json")
+* [0-9].json
+* [0-9].toml
+* [0-9].rs
+* [0-9].md
