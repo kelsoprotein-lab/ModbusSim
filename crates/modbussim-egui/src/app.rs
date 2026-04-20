@@ -247,6 +247,10 @@ pub struct SlaveApp {
 
     // Row selection for ValuePanel multi-register analysis
     selected_addrs: BTreeSet<u16>,
+    // Anchor row for shift-click range selection. Set on plain click or
+    // ctrl-click; shift-click always ranges [anchor .. addr]. Prevents anchor
+    // drift when shift-clicking multiple times in a row.
+    click_anchor: Option<u16>,
 
     // Data source "add" form
     ds_add_addr: u32,
@@ -372,6 +376,7 @@ impl SlaveApp {
             status_msg: None,
             pending_edits: HashMap::new(),
             selected_addrs: BTreeSet::new(),
+            click_anchor: None,
             ds_add_addr: 0,
             ds_add_kind: DsKind::Counter,
             ds_add_interval_ms: 1000,
@@ -1311,7 +1316,7 @@ const REG_GROUPS: &[(RegisterType, &str)] = &[
 ];
 
 /// Which interpretation to apply when rendering u16 register values.
-/// U16/I16 are single-word; F32/U32/I32 consume 2 consecutive words.
+/// U16/I16 are single-word; F32/U32/I32 consume 2 words; F64 consumes 4 words.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ValueDisplayMode {
     U16,
@@ -1319,6 +1324,7 @@ pub enum ValueDisplayMode {
     F32(Endian),
     U32(Endian),
     I32(Endian),
+    F64(Endian),
 }
 
 impl ValueDisplayMode {
@@ -1338,13 +1344,21 @@ impl ValueDisplayMode {
             Self::I32(Endian::Little) => "I32 CD AB",
             Self::I32(Endian::MidBig) => "I32 BA DC",
             Self::I32(Endian::MidLittle) => "I32 DC BA",
+            Self::F64(Endian::Big) => "F64 AB CD",
+            Self::F64(Endian::Little) => "F64 CD AB",
+            Self::F64(Endian::MidBig) => "F64 BA DC",
+            Self::F64(Endian::MidLittle) => "F64 DC BA",
         }
     }
     pub fn is_multi_word(&self) -> bool {
-        matches!(self, Self::F32(_) | Self::U32(_) | Self::I32(_))
+        matches!(self, Self::F32(_) | Self::U32(_) | Self::I32(_) | Self::F64(_))
     }
     pub fn stride(&self) -> usize {
-        if self.is_multi_word() { 2 } else { 1 }
+        match self {
+            Self::F64(_) => 4,
+            Self::F32(_) | Self::U32(_) | Self::I32(_) => 2,
+            _ => 1,
+        }
     }
 }
 
@@ -1359,6 +1373,10 @@ const DISPLAY_MODES: &[ValueDisplayMode] = &[
     ValueDisplayMode::U32(Endian::Little),
     ValueDisplayMode::I32(Endian::Big),
     ValueDisplayMode::I32(Endian::Little),
+    ValueDisplayMode::F64(Endian::Big),
+    ValueDisplayMode::F64(Endian::Little),
+    ValueDisplayMode::F64(Endian::MidBig),
+    ValueDisplayMode::F64(Endian::MidLittle),
 ];
 
 const DATA_TYPES: &[DataType] = &[
@@ -1371,6 +1389,29 @@ const DATA_TYPES: &[DataType] = &[
 ];
 
 const ENDIANS: &[Endian] = &[Endian::Big, Endian::Little, Endian::MidBig, Endian::MidLittle];
+
+/// Combine 4 u16 words into big-endian f64 bytes under the given byte order.
+/// Mirrors the word_pair composition used in modbussim_ui_shared::value_panel
+/// so the Slave's F64 table and the Master's ValuePanel agree.
+fn f64_bytes_from_words(ws: &[u16], endian: Endian) -> [u8; 8] {
+    let w0 = ws.first().copied().unwrap_or(0);
+    let w1 = ws.get(1).copied().unwrap_or(0);
+    let w2 = ws.get(2).copied().unwrap_or(0);
+    let w3 = ws.get(3).copied().unwrap_or(0);
+    let pair = |a: u16, b: u16| -> (u8, u8, u8, u8) {
+        let r0 = a.to_be_bytes();
+        let r1 = b.to_be_bytes();
+        match endian {
+            Endian::Big => (r0[0], r0[1], r1[0], r1[1]),
+            Endian::Little => (r1[0], r1[1], r0[0], r0[1]),
+            Endian::MidBig => (r0[1], r0[0], r1[1], r1[0]),
+            Endian::MidLittle => (r1[1], r1[0], r0[1], r0[0]),
+        }
+    };
+    let (a0, b0, c0, d0) = pair(w0, w1);
+    let (a1, b1, c1, d1) = pair(w2, w3);
+    [a0, b0, c0, d0, a1, b1, c1, d1]
+}
 
 fn selection_conn_id(s: &Selection) -> Option<&str> {
     match s {
@@ -1522,16 +1563,19 @@ impl SlaveApp {
                 self.selection = Selection::Connection(id);
                 self.pending_edits.clear();
                 self.selected_addrs.clear();
+                self.click_anchor = None;
             }
             TreeAction::SelectDevice { conn_id, slave_id } => {
                 self.selection = Selection::Device { conn_id, slave_id };
                 self.pending_edits.clear();
                 self.selected_addrs.clear();
+                self.click_anchor = None;
             }
             TreeAction::SelectGroup { conn_id, slave_id, reg_type } => {
                 self.selection = Selection::RegisterGroup { conn_id, slave_id, reg_type };
                 self.pending_edits.clear();
                 self.selected_addrs.clear();
+                self.click_anchor = None;
             }
             TreeAction::StartConn(id) => self.start_connection(&id, ctx.clone()),
             TreeAction::StopConn(id) => self.stop_connection(&id, ctx.clone()),
@@ -2029,12 +2073,13 @@ impl SlaveApp {
                             uikit::card(ui, flavor, |ui| {
                 if !is_bool && mode.is_multi_word() {
                     let stride = mode.stride();
-                    let pair_rows = view.row_count / stride;
-                    let (dtype, endian) = match mode {
-                        ValueDisplayMode::F32(e) => (DataType::Float32, e),
-                        ValueDisplayMode::U32(e) => (DataType::UInt32, e),
-                        ValueDisplayMode::I32(e) => (DataType::Int32, e),
-                        _ => (DataType::UInt16, Endian::Big),
+                    let group_rows = view.row_count / stride;
+                    let endian = match mode {
+                        ValueDisplayMode::F32(e)
+                        | ValueDisplayMode::U32(e)
+                        | ValueDisplayMode::I32(e)
+                        | ValueDisplayMode::F64(e) => e,
+                        _ => Endian::Big,
                     };
                     let avail_h = ui.available_height();
                     TableBuilder::new(ui)
@@ -2042,9 +2087,9 @@ impl SlaveApp {
                         .resizable(true)
                         .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .column(Column::exact(100.0))
+                        .column(Column::exact(110.0))
+                        .column(Column::exact(220.0))
                         .column(Column::exact(200.0))
-                        .column(Column::exact(160.0))
                         .column(Column::remainder())
                         .header(22.0, |mut h| {
                             h.col(|ui| { ui.strong("地址"); });
@@ -2053,48 +2098,82 @@ impl SlaveApp {
                             h.col(|ui| { ui.strong(""); });
                         })
                         .body(|body| {
-                            body.rows(row_h, pair_rows, |mut row| {
+                            body.rows(row_h, group_rows, |mut row| {
                                 let base = row.index() as u16 * stride as u16;
-                                let addr0 = base;
-                                let addr1 = base + 1;
-                                let r0 = view
-                                    .u16_map
-                                    .as_ref()
-                                    .and_then(|m| m.get(&addr0).copied());
-                                let r1 = view
-                                    .u16_map
-                                    .as_ref()
-                                    .and_then(|m| m.get(&addr1).copied());
+                                // Gather stride u16 values.
+                                let mut ws: Vec<u16> = Vec::with_capacity(stride);
+                                let mut all_present = true;
+                                for i in 0..stride as u16 {
+                                    match view
+                                        .u16_map
+                                        .as_ref()
+                                        .and_then(|m| m.get(&(base + i)).copied())
+                                    {
+                                        Some(v) => ws.push(v),
+                                        None => { all_present = false; break; }
+                                    }
+                                }
                                 row.col(|ui| {
-                                    let sel = selected_addrs.contains(&addr0)
-                                        || selected_addrs.contains(&addr1);
+                                    let sel = (0..stride as u16)
+                                        .any(|i| selected_addrs.contains(&(base + i)));
+                                    let label = if stride == 4 {
+                                        format!("{}..{}", base, base + 3)
+                                    } else {
+                                        format!("{}..{}", base, base + 1)
+                                    };
                                     let resp = ui.add(egui::SelectableLabel::new(
                                         sel,
-                                        egui::RichText::new(format!("{}..{}", addr0, addr1)).monospace(),
+                                        egui::RichText::new(label).monospace(),
                                     ));
                                     if resp.clicked() {
-                                        row_clicks.push((addr0, resp.ctx.input(|i| i.modifiers)));
+                                        row_clicks.push((base, resp.ctx.input(|i| i.modifiers)));
                                     }
                                 });
-                                row.col(|ui| match (r0, r1) {
-                                    (Some(a), Some(b)) => {
-                                        let decoded = decode_value(&[a, b], dtype, endian)
-                                            .unwrap_or(f64::NAN);
-                                        let text = match dtype {
-                                            DataType::Float32 => format!("{:.6}", decoded as f32),
-                                            DataType::UInt32 => format!("{}", decoded as u32),
-                                            DataType::Int32 => format!("{}", decoded as i32),
-                                            _ => "?".to_string(),
-                                        };
-                                        ui.monospace(text);
+                                row.col(|ui| {
+                                    if !all_present {
+                                        ui.monospace("—");
+                                        return;
                                     }
-                                    _ => { ui.monospace("—"); }
+                                    let text = match mode {
+                                        ValueDisplayMode::F32(_) => {
+                                            let d = decode_value(&ws, DataType::Float32, endian)
+                                                .unwrap_or(f64::NAN);
+                                            format!("{:.6}", d as f32)
+                                        }
+                                        ValueDisplayMode::U32(_) => {
+                                            let d = decode_value(&ws, DataType::UInt32, endian)
+                                                .unwrap_or(f64::NAN);
+                                            format!("{}", d as u32)
+                                        }
+                                        ValueDisplayMode::I32(_) => {
+                                            let d = decode_value(&ws, DataType::Int32, endian)
+                                                .unwrap_or(f64::NAN);
+                                            format!("{}", d as i32)
+                                        }
+                                        ValueDisplayMode::F64(_) => {
+                                            let bytes = f64_bytes_from_words(&ws, endian);
+                                            let v = f64::from_be_bytes(bytes);
+                                            if v.is_finite() {
+                                                format!("{:.9}", v)
+                                            } else {
+                                                "NaN / Inf".to_string()
+                                            }
+                                        }
+                                        _ => "?".to_string(),
+                                    };
+                                    ui.monospace(text);
                                 });
-                                row.col(|ui| match (r0, r1) {
-                                    (Some(a), Some(b)) => {
-                                        ui.monospace(format!("{:04X} {:04X}", a, b));
+                                row.col(|ui| {
+                                    if !all_present {
+                                        ui.monospace("");
+                                        return;
                                     }
-                                    _ => { ui.monospace(""); }
+                                    let joined = ws
+                                        .iter()
+                                        .map(|w| format!("{:04X}", w))
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    ui.monospace(joined);
                                 });
                                 row.col(|_| {});
                             });
@@ -2258,27 +2337,28 @@ impl SlaveApp {
                     }); // end StripBuilder horizontal
 
                 // Apply row clicks to selected_addrs with modifier semantics.
+                // Plain / ctrl click sets (or updates) click_anchor.
+                // Shift click always ranges [anchor, addr] — anchor never moves
+                // during consecutive shift clicks, so extending a range works.
                 if !row_clicks.is_empty() {
-                    let last = self.selected_addrs.iter().last().copied();
                     for (addr, modifiers) in row_clicks {
                         if modifiers.shift {
-                            if let Some(anchor) = last {
-                                let (a, b) = if anchor <= addr { (anchor, addr) } else { (addr, anchor) };
-                                self.selected_addrs.clear();
-                                for x in a..=b {
-                                    self.selected_addrs.insert(x);
-                                    if self.selected_addrs.len() >= 16 { break; }
-                                }
-                            } else {
-                                self.selected_addrs.insert(addr);
+                            let anchor = self.click_anchor.unwrap_or(addr);
+                            let (a, b) = if anchor <= addr { (anchor, addr) } else { (addr, anchor) };
+                            self.selected_addrs.clear();
+                            for x in a..=b {
+                                self.selected_addrs.insert(x);
+                                if self.selected_addrs.len() >= 16 { break; }
                             }
                         } else if modifiers.command || modifiers.ctrl {
                             if !self.selected_addrs.remove(&addr) {
                                 self.selected_addrs.insert(addr);
                             }
+                            self.click_anchor = Some(addr);
                         } else {
                             self.selected_addrs.clear();
                             self.selected_addrs.insert(addr);
+                            self.click_anchor = Some(addr);
                         }
                     }
                 }
