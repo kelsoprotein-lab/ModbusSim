@@ -2797,18 +2797,19 @@ impl eframe::App for SlaveApp {
 
         egui::SidePanel::left("connections")
             .resizable(true)
-            .default_width(320.0)
+            .default_width(240.0)
+            .min_width(200.0)
             .show_separator_line(false)
             .frame(
                 egui::Frame::none()
                     .fill(theme::bg_of(self.flavor, theme::Layer::L0))
-                    .inner_margin(egui::Margin::symmetric(12.0 as i8, 10.0 as i8)),
+                    .inner_margin(egui::Margin::symmetric(14.0 as i8, 12.0 as i8)),
             )
             .show(ctx, |ui| {
-                ui.heading("连接");
-                ui.separator();
+                theme::text::tiny_caps(ui, self.flavor, "连接");
+                ui.add_space(6.0);
 
-                ui.collapsing("新建 TCP 连接", |ui| {
+                ui.collapsing("+ 新建 TCP 连接", |ui| {
                     egui::Grid::new("new_tcp_form")
                         .num_columns(2)
                         .spacing([8.0, 4.0])
@@ -2820,12 +2821,12 @@ impl eframe::App for SlaveApp {
                             ui.text_edit_singleline(&mut self.new_port);
                             ui.end_row();
                         });
-                    if ui.button("创建").clicked() {
+                    if uikit::primary_button(ui, self.flavor, "创建").clicked() {
                         tree_action = Some(TreeAction::Create);
                     }
                 });
 
-                ui.separator();
+                ui.add_space(8.0);
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if let Some(a) = self.render_tree(ui) {
