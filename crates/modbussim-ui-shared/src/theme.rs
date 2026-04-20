@@ -87,10 +87,10 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     surface2: rgb(55, 59, 70),
     surface1: rgb(45, 49, 60),
     surface0: rgb(37, 41, 50),       // #252932 — card fill
-    // Backgrounds — deeper than VS Code default so cards stand out
-    base: rgb(22, 24, 28),           // #16181c (central panel)
-    mantle: rgb(28, 31, 38),         // #1c1f26 (side panels)
-    crust: rgb(15, 17, 21),          // #0f1115 (darkest)
+    // Backgrounds — near-black with a cool blue cast; cards pop on top
+    base: rgb(16, 20, 28),           // #10141c (central panel)
+    mantle: rgb(22, 27, 38),         // #161b26 (side panels)
+    crust: rgb(10, 13, 20),          // #0a0d14 (darkest)
 };
 
 pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {

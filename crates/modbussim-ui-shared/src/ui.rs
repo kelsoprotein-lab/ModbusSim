@@ -8,12 +8,13 @@ use egui::{Color32, Response, RichText, Ui};
 use crate::theme::Flavor;
 
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
-    // Hard-coded to guarantee contrast regardless of how the palette maps into
-    // egui's Visuals. Dark mode: fill ~rgb(44,49,60), stroke ~rgb(82,88,102).
+    // Cool steel-blue dark panels — clearly distinct from the near-black base
+    // so cards visibly float, and with a cold-neutral hue that reads as
+    // "industrial instrumentation" rather than toy-like purple.
     if flavor.is_dark() {
         (
-            Color32::from_rgb(44, 49, 60),
-            Color32::from_rgb(82, 88, 102),
+            Color32::from_rgb(30, 40, 56),   // card fill  (#1e2838)
+            Color32::from_rgb(72, 88, 112),  // stroke     (#485870)
         )
     } else {
         (

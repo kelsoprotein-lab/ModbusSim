@@ -2036,9 +2036,11 @@ impl SlaveApp {
                         ValueDisplayMode::I32(e) => (DataType::Int32, e),
                         _ => (DataType::UInt16, Endian::Big),
                     };
+                    let avail_h = ui.available_height();
                     TableBuilder::new(ui)
                         .striped(true)
                         .resizable(true)
+                        .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .column(Column::exact(100.0))
                         .column(Column::exact(200.0))
@@ -2098,9 +2100,11 @@ impl SlaveApp {
                             });
                         });
                 } else {
+                    let avail_h = ui.available_height();
                     TableBuilder::new(ui)
                         .striped(true)
                         .resizable(true)
+                        .max_scroll_height(avail_h)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .column(Column::exact(80.0))
                         .column(Column::exact(110.0))
