@@ -1,0 +1,51 @@
+name: CI (egui)
+
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: egui-${{ matrix.os }}
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libudev-dev
+
+      - name: Build egui apps
+        run: cargo build --release -p modbussim-egui -p modbusmaster-egui
+
+      - name: Test workspace
+        run: cargo test --workspace --exclude modbussim-app --exclude modbusmaster-app
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: egui-${{ matrix.os }}
+          path: |
+            target/release/modbussim-egui*
+            target/release/modbusmaster-egui*
+          if-no-files-found: warn
+          retention-days: 7
