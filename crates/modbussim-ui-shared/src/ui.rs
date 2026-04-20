@@ -215,16 +215,27 @@ pub fn caption(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) {
 
 /// Radix-style shadcn Switch. Replaces the earlier self-drawn 40×18 toggle;
 /// the shadcn widget owns track sizing, slide animation, hover/focus ring.
-/// Returns `Response` — caller inspects `.clicked()` to detect a flip.
+/// Wrapped in a fixed 48×24 centered sub-Ui so that inside an `exact`/`initial`
+/// table column the switch stays at its native ~35×20 track size and doesn't
+/// inherit the cell's full width (which would leave it left-aligned with a
+/// cavernous click area).
 pub fn toggle_switch(ui: &mut Ui, flavor: Flavor, value: &mut bool) -> Response {
     let theme = shadcn_theme(flavor);
-    egui_shadcn::switch(
-        ui,
-        &theme,
-        value,
-        "",
-        egui_shadcn::tokens::ControlVariant::Primary,
-        egui_shadcn::tokens::ControlSize::Md,
-        true,
+    let desired = egui::vec2(48.0, 24.0);
+    ui.allocate_ui_with_layout(
+        desired,
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            egui_shadcn::switch(
+                ui,
+                &theme,
+                value,
+                "",
+                egui_shadcn::tokens::ControlVariant::Primary,
+                egui_shadcn::tokens::ControlSize::Md,
+                true,
+            )
+        },
     )
+    .inner
 }
