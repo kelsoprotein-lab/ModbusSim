@@ -7,11 +7,11 @@
 
 ## 2. RegViewCache 增加 defs 缓存
 
-- [ ] 2.1 `crates/modbussim-egui/src/app.rs` `RegViewCache` 结构加字段：`pub defs: Arc<std::collections::HashMap<u16, (String, String)>>`（addr → (name, comment)）
-- [ ] 2.2 `refresh_reg_view`（async 路径）填充 defs：遍历 `dev.register_defs.iter().filter(|d| d.register_type == reg_type)`，把 `(d.address, (d.name.clone(), d.comment.clone()))` 插 HashMap
-- [ ] 2.3 `RegViewCache::new()` 或初始化处给 defs 默认 Arc::new(HashMap::new())
-- [ ] 2.4 `cargo build -p modbussim-egui` 通过
-- [ ] 2.5 commit: `feat(slave): RegViewCache 缓存 register_defs 的 name/comment`
+- [x] 2.1 `crates/modbussim-egui/src/app.rs` `RegViewCache` 结构加字段：`pub defs: Arc<std::collections::HashMap<u16, (String, String)>>`（addr → (name, comment)）
+- [x] 2.2 `refresh_reg_view`（async 路径）填充 defs：遍历 `dev.register_defs.iter().filter(|d| d.register_type == reg_type)`，把 `(d.address, (d.name.clone(), d.comment.clone()))` 插 HashMap
+- [x] 2.3 `RegViewCache::new()` 或初始化处给 defs 默认 Arc::new(HashMap::new())
+- [x] 2.4 `cargo build -p modbussim-egui` 通过
+- [x] 2.5 commit: `feat(slave): RegViewCache 缓存 register_defs 的 name/comment`
 
 ## 3. Bool 分支 TableBuilder 列重配置 + toggle 渲染
 

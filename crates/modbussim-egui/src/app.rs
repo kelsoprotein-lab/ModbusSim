@@ -260,6 +260,10 @@ pub struct RegViewCache {
     pub u16_map: Option<Arc<std::collections::HashMap<u16, u16>>>,
     /// Snapshot for FC01 / FC02.
     pub bool_map: Option<Arc<std::collections::HashMap<u16, bool>>>,
+    /// addr → (name, comment) from the device's register_defs for this reg_type.
+    /// Populated during refresh_reg_view so the table body can display names /
+    /// comments without re-locking `connections` per frame.
+    pub defs: Arc<std::collections::HashMap<u16, (String, String)>>,
 }
 
 pub struct SlaveApp {
@@ -975,6 +979,17 @@ impl SlaveApp {
 
         let row_count = row_count.min(self.reg_row_limit.max(1));
 
+        // Build a (name, comment) lookup from register_defs for this reg_type.
+        let mut defs_map: std::collections::HashMap<u16, (String, String)> =
+            std::collections::HashMap::new();
+        for d in &dev.register_defs {
+            if d.register_type == reg_type
+                && (!d.name.is_empty() || !d.comment.is_empty())
+            {
+                defs_map.insert(d.address, (d.name.clone(), d.comment.clone()));
+            }
+        }
+
         self.reg_view = Some(RegViewCache {
             conn_id,
             slave_id,
@@ -982,6 +997,7 @@ impl SlaveApp {
             row_count,
             u16_map,
             bool_map,
+            defs: Arc::new(defs_map),
         });
         self.reg_view_last_refresh = Some(Instant::now());
     }
