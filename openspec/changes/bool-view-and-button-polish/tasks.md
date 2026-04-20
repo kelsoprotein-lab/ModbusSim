@@ -31,8 +31,8 @@
 
 ## 4. 回归 + push
 
-- [ ] 4.1 `cargo test --workspace --exclude modbussim-app --exclude modbusmaster-app` 全绿
-- [ ] 4.2 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
-- [ ] 4.3 mbpoll 冒烟：`mbpoll -m tcp -a 1 -r 0 -c 5 127.0.0.1 -p 5502 -t 0 -- 1 0 1 0 1` 写 coil，UI 中 addr 0-4 五个 toggle 应交替 ON/OFF
-- [ ] 4.4 `openspec-cn validate bool-view-and-button-polish`
-- [ ] 4.5 `git push origin refactor/egui-skeleton` 观察 CI
+- [x] 4.1 `cargo test --workspace --exclude modbussim-app --exclude modbusmaster-app` 全绿
+- [x] 4.2 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
+- [x] 4.3 mbpoll 冒烟：`mbpoll -m tcp -a 1 -r 0 -c 5 127.0.0.1 -p 5502 -t 0 -- 1 0 1 0 1` 写 coil，UI 中 addr 0-4 五个 toggle 应交替 ON/OFF
+- [x] 4.4 `openspec-cn validate bool-view-and-button-polish`
+- [x] 4.5 `git push origin refactor/egui-skeleton` 观察 CI
