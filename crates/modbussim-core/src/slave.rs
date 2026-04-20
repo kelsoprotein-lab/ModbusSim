@@ -684,6 +684,7 @@ mod tests {
     #[test]
     fn test_handle_write_single_coil() {
         let mut map = RegisterMap::new();
+        map.coils.insert(5, false);
         let response = handle_write(&mut map, Request::WriteSingleCoil(5, true)).unwrap();
         assert!(matches!(response, Response::WriteSingleCoil(5, true)));
         assert_eq!(map.read_coils(5, 1), vec![true]);
@@ -692,6 +693,7 @@ mod tests {
     #[test]
     fn test_handle_write_single_register() {
         let mut map = RegisterMap::new();
+        map.holding_registers.insert(10, 0);
         let response =
             handle_write(&mut map, Request::WriteSingleRegister(10, 0xABCD)).unwrap();
         assert!(matches!(response, Response::WriteSingleRegister(10, 0xABCD)));
@@ -701,6 +703,9 @@ mod tests {
     #[test]
     fn test_handle_write_multiple_coils() {
         let mut map = RegisterMap::new();
+        for a in 0..3 {
+            map.coils.insert(a, false);
+        }
         let values = vec![true, false, true];
         let response = handle_write(
             &mut map,
@@ -714,6 +719,9 @@ mod tests {
     #[test]
     fn test_handle_write_multiple_registers() {
         let mut map = RegisterMap::new();
+        for a in 0..3 {
+            map.holding_registers.insert(a, 0);
+        }
         let values = vec![100, 200, 300];
         let response = handle_write(
             &mut map,
