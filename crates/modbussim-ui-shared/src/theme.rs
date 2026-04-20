@@ -25,9 +25,10 @@ pub enum Flavor {
 
 impl Default for Flavor {
     fn default() -> Self {
-        // Industrial apps in the Modbus space typically ship light by default;
-        // redisant MSE, Modscan32, KEPServerEX all use white bases.
-        Flavor::Latte
+        // Darcula-style warm gray is the default dark look that Modbus users
+        // consistently land on (JetBrains IDEs, Android Studio — decades of
+        // industrial-desktop precedent).
+        Flavor::Mocha
     }
 }
 
@@ -61,38 +62,39 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
 ///   text    = main fg            = #cccccc
 ///   subtext = muted fg           = #858585
 ///   blue    = accent             = #0e639c (button primary)
+/// JetBrains Darcula palette: warm-gray editor with orange accent.
 pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
-    // Accents (VS Code semantic tokens)
-    rosewater: rgb(220, 170, 124),
-    flamingo: rgb(206, 145, 120),
-    pink: rgb(197, 134, 192),
-    mauve: rgb(155, 121, 186),
-    red: rgb(244, 135, 113),
-    maroon: rgb(161, 38, 13),
-    peach: rgb(206, 145, 120),
-    yellow: rgb(220, 220, 170),
-    green: rgb(78, 201, 176),
-    teal: rgb(78, 201, 176),
-    sky: rgb(86, 156, 214),
-    sapphire: rgb(78, 166, 217),
-    blue: rgb(59, 154, 232),        // #3b9ae8 — same industrial blue as light
-    lavender: rgb(197, 134, 192),
+    // Accents — Darcula semantic tokens
+    rosewater: rgb(255, 198, 109),
+    flamingo: rgb(204, 120, 50),
+    pink: rgb(189, 126, 199),
+    mauve: rgb(157, 121, 209),
+    red: rgb(255, 100, 100),
+    maroon: rgb(169, 46, 34),
+    peach: rgb(204, 120, 50),      // #cc7832 — keyword orange (primary accent)
+    yellow: rgb(255, 198, 109),    // #ffc66d — class / highlight
+    green: rgb(106, 135, 89),      // #6a8759 — string / success
+    teal: rgb(119, 159, 165),
+    sky: rgb(152, 195, 250),
+    sapphire: rgb(106, 135, 175),
+    blue: rgb(106, 135, 175),      // #6a87af — secondary blue
+    lavender: rgb(157, 121, 209),
     // Foreground
-    text: rgb(220, 220, 220),      // #dcdcdc
-    subtext1: rgb(170, 170, 170),
-    subtext0: rgb(133, 133, 133),   // #858585
-    // Borders / strokes (slightly cooler)
-    overlay2: rgb(74, 78, 88),
-    overlay1: rgb(56, 60, 70),
-    overlay0: rgb(42, 46, 54),       // #2a2e36 — card stroke
-    // Surfaces — cards sit one step above base
-    surface2: rgb(55, 59, 70),
-    surface1: rgb(45, 49, 60),
-    surface0: rgb(37, 41, 50),       // #252932 — card fill
-    // Backgrounds — VS Code standard, neutral
-    base: rgb(30, 30, 30),           // #1e1e1e (central panel)
-    mantle: rgb(37, 37, 38),         // #252526 (side panels)
-    crust: rgb(51, 51, 51),          // #333333 (darkest)
+    text: rgb(169, 183, 198),      // #a9b7c6 — Darcula default
+    subtext1: rgb(152, 152, 152),
+    subtext0: rgb(128, 128, 128),  // #808080 — comment
+    // Borders / strokes (warm gray)
+    overlay2: rgb(98, 101, 104),
+    overlay1: rgb(81, 86, 89),     // #515659 — separator
+    overlay0: rgb(69, 73, 74),
+    // Surfaces — one-step layering
+    surface2: rgb(77, 80, 82),
+    surface1: rgb(60, 63, 65),     // #3c3f41 — side panels
+    surface0: rgb(49, 51, 53),     // #313335
+    // Backgrounds — Darcula reference values
+    base: rgb(43, 43, 43),         // #2b2b2b — editor bg
+    mantle: rgb(60, 63, 65),       // #3c3f41 — tool windows
+    crust: rgb(37, 37, 37),        // #252525 — darkest
 };
 
 pub const VSCODE_LIGHT: catppuccin_egui::Theme = catppuccin_egui::Theme {
@@ -135,32 +137,41 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
     // fields ourselves to match the target industrial palette.
     ctx.style_mut(|s| {
         if flavor.is_dark() {
-            let panel = Color32::from_rgb(30, 30, 30);       // #1e1e1e
-            let panel_alt = Color32::from_rgb(37, 37, 38);   // #252526
-            let stroke = Color32::from_rgb(64, 64, 66);      // #404042
-            let fg = Color32::from_rgb(220, 220, 220);
-            let sel_bg = Color32::from_rgb(52, 73, 103);     // mild blue
-            let accent = Color32::from_rgb(59, 154, 232);
+            // Darcula warm-gray + orange accent
+            let panel = Color32::from_rgb(43, 43, 43);       // #2b2b2b (editor)
+            let panel_alt = Color32::from_rgb(60, 63, 65);   // #3c3f41 (tool window)
+            let input_bg = Color32::from_rgb(69, 73, 74);    // #45494a
+            let stroke = Color32::from_rgb(81, 86, 89);      // #515659
+            let fg = Color32::from_rgb(187, 187, 187);       // #bbbbbb
+            let sel_bg = Color32::from_rgb(75, 110, 175);    // #4b6eaf — Darcula selection
+            let accent = Color32::from_rgb(204, 120, 50);    // #cc7832 orange
             s.visuals.panel_fill = panel;
             s.visuals.window_fill = panel_alt;
-            s.visuals.extreme_bg_color = panel;
-            s.visuals.faint_bg_color = Color32::from_rgb(40, 40, 40);
+            s.visuals.extreme_bg_color = Color32::from_rgb(37, 37, 37); // #252525 input-ish bg
+            s.visuals.faint_bg_color = Color32::from_rgb(49, 51, 53);    // #313335 — striped row
+            s.visuals.code_bg_color = Color32::from_rgb(49, 51, 53);
             s.visuals.widgets.noninteractive.bg_fill = panel_alt;
             s.visuals.widgets.noninteractive.weak_bg_fill = panel;
             s.visuals.widgets.noninteractive.bg_stroke.color = stroke;
             s.visuals.widgets.noninteractive.fg_stroke.color = fg;
-            s.visuals.widgets.inactive.bg_fill = Color32::from_rgb(45, 45, 48);
-            s.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 37, 38);
+            s.visuals.widgets.inactive.bg_fill = input_bg;
+            s.visuals.widgets.inactive.weak_bg_fill = panel_alt;
             s.visuals.widgets.inactive.bg_stroke.color = stroke;
             s.visuals.widgets.inactive.fg_stroke.color = fg;
-            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(62, 62, 66);
-            s.visuals.widgets.hovered.bg_stroke.color = stroke;
+            s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(91, 95, 97);
+            s.visuals.widgets.hovered.bg_stroke.color = Color32::from_rgb(112, 116, 119);
+            s.visuals.widgets.hovered.fg_stroke.color = fg;
             s.visuals.widgets.active.bg_fill = accent;
-            s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+            s.visuals.widgets.active.bg_stroke.color = accent;
+            s.visuals.widgets.active.fg_stroke.color = Color32::from_rgb(30, 30, 30);
+            s.visuals.widgets.open.bg_fill = input_bg;
             s.visuals.window_stroke.color = stroke;
             s.visuals.selection.bg_fill = sel_bg;
             s.visuals.selection.stroke.color = accent;
             s.visuals.override_text_color = Some(fg);
+            s.visuals.hyperlink_color = Color32::from_rgb(104, 151, 187); // darcula ctor blue
+            s.visuals.error_fg_color = Color32::from_rgb(255, 100, 100);
+            s.visuals.warn_fg_color = Color32::from_rgb(255, 198, 109);
         } else {
             let panel = Color32::from_rgb(245, 245, 245);    // #f5f5f5
             let white = Color32::from_rgb(255, 255, 255);    // #ffffff

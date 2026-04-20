@@ -8,18 +8,17 @@ use egui::{Color32, Response, RichText, Ui};
 use crate::theme::Flavor;
 
 fn card_colors(flavor: Flavor) -> (Color32, Color32) {
-    // Industrial flat-panel: card fill is the panel base color (white in light
-    // mode, near-black in dark), and a crisp 1 px stroke does the dividing —
-    // no shadow, no rounding, no "float". Matches the redisant / Modscan look.
+    // Flat panel. Dark mode = Darcula tool-window fill #3c3f41 on editor
+    // #2b2b2b with #515659 stroke (same as IDE "chrome panel" contrast).
     if flavor.is_dark() {
         (
-            Color32::from_rgb(37, 37, 38),   // #252526 — slightly above base
-            Color32::from_rgb(80, 80, 82),   // #505052
+            Color32::from_rgb(60, 63, 65),   // #3c3f41
+            Color32::from_rgb(81, 86, 89),   // #515659
         )
     } else {
         (
-            Color32::from_rgb(255, 255, 255), // #ffffff — card is as white as base
-            Color32::from_rgb(208, 208, 208), // #d0d0d0 — subtle gray stroke
+            Color32::from_rgb(255, 255, 255),
+            Color32::from_rgb(208, 208, 208),
         )
     }
 }
