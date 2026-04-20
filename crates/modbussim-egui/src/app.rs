@@ -2210,13 +2210,40 @@ impl SlaveApp {
 
                                 if is_bool {
                                     row.col(|ui| {
-                                        let mut tmp = pending
+                                        let current = pending
                                             .get(&key)
                                             .map(|v| *v != 0)
                                             .unwrap_or(cache_bool);
-                                        let resp = ui.checkbox(&mut tmp, "");
+                                        let (label, fill, fg) = if current {
+                                            (
+                                                "1",
+                                                theme::success(flavor),
+                                                egui::Color32::WHITE,
+                                            )
+                                        } else {
+                                            (
+                                                "0",
+                                                egui::Color32::from_rgb(49, 51, 53),
+                                                egui::Color32::from_rgb(156, 160, 164),
+                                            )
+                                        };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label)
+                                                .color(fg)
+                                                .size(12.5)
+                                                .monospace(),
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(
+                                            1.0,
+                                            egui::Color32::from_rgb(81, 86, 89),
+                                        ))
+                                        .rounding(3.0)
+                                        .min_size(egui::vec2(34.0, 18.0));
+                                        let resp = ui.add(btn);
                                         if resp.clicked() {
-                                            writes.push((addr, if tmp { 1 } else { 0 }));
+                                            let new_val = !current;
+                                            writes.push((addr, if new_val { 1 } else { 0 }));
                                             pending.remove(&key);
                                         }
                                     });
@@ -2377,7 +2404,7 @@ impl SlaveApp {
 
 impl eframe::App for SlaveApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "flavor_v2", &self.flavor);
+        eframe::set_value(storage, "flavor_v3", &self.flavor);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

@@ -794,7 +794,7 @@ impl MasterApp {
 
 impl eframe::App for MasterApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "flavor_v2", &self.flavor);
+        eframe::set_value(storage, "flavor_v3", &self.flavor);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

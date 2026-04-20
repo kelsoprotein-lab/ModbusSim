@@ -80,9 +80,9 @@ pub const VSCODE_DARK: catppuccin_egui::Theme = catppuccin_egui::Theme {
     blue: rgb(106, 135, 175),      // #6a87af — secondary blue
     lavender: rgb(157, 121, 209),
     // Foreground
-    text: rgb(169, 183, 198),      // #a9b7c6 — Darcula default
-    subtext1: rgb(152, 152, 152),
-    subtext0: rgb(128, 128, 128),  // #808080 — comment
+    text: rgb(220, 223, 228),      // #dcdfe4 — brighter than stock Darcula #a9b7c6
+    subtext1: rgb(180, 183, 188),
+    subtext0: rgb(156, 160, 164),  // #9ca0a4 — still muted but ≥4.5:1 on #2b2b2b
     // Borders / strokes (warm gray)
     overlay2: rgb(98, 101, 104),
     overlay1: rgb(81, 86, 89),     // #515659 — separator
@@ -142,7 +142,8 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
             let panel_alt = Color32::from_rgb(60, 63, 65);   // #3c3f41 (tool window)
             let input_bg = Color32::from_rgb(69, 73, 74);    // #45494a
             let stroke = Color32::from_rgb(81, 86, 89);      // #515659
-            let fg = Color32::from_rgb(187, 187, 187);       // #bbbbbb
+            let fg = Color32::from_rgb(220, 223, 228);       // #dcdfe4 — brighter body
+            let strong_fg = Color32::from_rgb(248, 248, 242); // #f8f8f2 — near-white for headers/strong
             let sel_bg = Color32::from_rgb(75, 110, 175);    // #4b6eaf — Darcula selection
             let accent = Color32::from_rgb(204, 120, 50);    // #cc7832 orange
             s.visuals.panel_fill = panel;
@@ -160,10 +161,13 @@ pub fn apply(ctx: &egui::Context, flavor: Flavor) {
             s.visuals.widgets.inactive.fg_stroke.color = fg;
             s.visuals.widgets.hovered.bg_fill = Color32::from_rgb(91, 95, 97);
             s.visuals.widgets.hovered.bg_stroke.color = Color32::from_rgb(112, 116, 119);
-            s.visuals.widgets.hovered.fg_stroke.color = fg;
+            s.visuals.widgets.hovered.fg_stroke.color = strong_fg;
+            // active = pressed state AND egui uses its fg_stroke as strong_text_color()
+            // for table headers. Use near-white so headers pop; orange bg is rarely
+            // clicked on so white-on-orange is fine.
             s.visuals.widgets.active.bg_fill = accent;
             s.visuals.widgets.active.bg_stroke.color = accent;
-            s.visuals.widgets.active.fg_stroke.color = Color32::from_rgb(30, 30, 30);
+            s.visuals.widgets.active.fg_stroke.color = strong_fg;
             s.visuals.widgets.open.bg_fill = input_bg;
             s.visuals.window_stroke.color = stroke;
             s.visuals.selection.bg_fill = sel_bg;

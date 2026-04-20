@@ -145,11 +145,12 @@ fn combine(a: Option<Vec<(u16, u16)>>, b: Option<Vec<(u16, u16)>>) -> Option<Vec
 #[derive(Clone, Default)]
 struct EditBuf {
     text: String,
-    last_source: u128, // hash-ish of (values, addr) to detect stale cache
+    last_source: Option<u128>, // None = never initialized; forces refresh on first frame
 }
 
 fn addr_hash(addr: u16, words: &[u16]) -> u128 {
-    let mut h = (addr as u128) << 80;
+    let mut h: u128 = 0xDEAD_BEEF_CAFE_BABE_1234_5678_ABCD_EF01;
+    h ^= (addr as u128) << 80;
     for (i, w) in words.iter().enumerate() {
         h ^= (*w as u128) << (i * 16);
     }
@@ -179,9 +180,9 @@ fn edit_cell(
     );
 
     let has_focus = resp.has_focus();
-    if !has_focus && buf.last_source != source_hash {
+    if !has_focus && buf.last_source != Some(source_hash) {
         buf.text = display;
-        buf.last_source = source_hash;
+        buf.last_source = Some(source_hash);
     }
 
     let mut result = None;
@@ -191,7 +192,7 @@ fn edit_cell(
     if commit && !buf.text.is_empty() {
         if let Some(writes) = parse_fn(buf.text.trim()) {
             result = Some(writes);
-            buf.last_source = 0; // force refresh from fresh cache next frame
+            buf.last_source = None; // force refresh from fresh cache next frame
         }
     }
 

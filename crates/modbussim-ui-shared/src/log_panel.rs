@@ -81,7 +81,7 @@ pub fn render(
                     ui.label("（选中连接以查看）");
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("✕").on_hover_text("关闭日志面板").clicked() {
+                    if ui.small_button("关闭").on_hover_text("关闭日志面板").clicked() {
                         action = LogPanelAction::Close;
                     }
                     if ui.small_button("导出 CSV").clicked() {
