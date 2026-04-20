@@ -39,13 +39,13 @@
 
 ## 4. Phase 4 · 清理 + CI
 
-- [ ] 4.1 workspace `Cargo.toml` 删 `egui-modal` / `egui-toast` 两条依赖声明
-- [ ] 4.2 `modbussim-ui-shared/Cargo.toml` / `modbussim-egui/Cargo.toml` / `modbusmaster-egui/Cargo.toml` 各自删两条引用
-- [ ] 4.3 删 Phase 2 创建的 `shadcn_preview.rs` 源文件 + bin target + lib.rs 的 `pub mod`（清理 scaffolding）
-- [ ] 4.4 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
-- [ ] 4.5 全 workspace test 绿
-- [ ] 4.6 `openspec-cn validate egui-033-shadcn-migration` 通过
-- [ ] 4.7 `git push origin refactor/egui-skeleton`
-- [ ] 4.8 `gh run list --branch refactor/egui-skeleton --limit 2` 观察 CI 三平台
-- [ ] 4.9 如 CI 失败（ubuntu 缺 skrifa 系统库 / macOS 新依赖），修 `.github/workflows/ci-egui.yml` + 再 push
-- [ ] 4.10 commit: `chore: 删除死依赖 egui-modal / egui-toast + 清理 shadcn_preview scaffolding`
+- [x] 4.1 workspace `Cargo.toml` 删 `egui-modal` / `egui-toast` 两条依赖声明
+- [x] 4.2 `modbussim-ui-shared/Cargo.toml` / `modbussim-egui/Cargo.toml` / `modbusmaster-egui/Cargo.toml` 各自删两条引用
+- [x] 4.3 删 Phase 2 创建的 `shadcn_preview.rs` 源文件 + bin target + lib.rs 的 `pub mod`（清理 scaffolding）
+- [x] 4.4 `cargo build --release -p modbussim-egui -p modbusmaster-egui` 通过
+- [x] 4.5 全 workspace test 绿
+- [x] 4.6 `openspec-cn validate egui-033-shadcn-migration` 通过
+- [x] 4.7 `git push origin refactor/egui-skeleton`
+- [x] 4.8 `gh run list --branch refactor/egui-skeleton --limit 2` 观察 CI 三平台
+- [x] 4.9 如 CI 失败（ubuntu 缺 skrifa 系统库 / macOS 新依赖），修 `.github/workflows/ci-egui.yml` + 再 push
+- [x] 4.10 commit: `chore: 删除死依赖 egui-modal / egui-toast + 清理 shadcn_preview scaffolding`

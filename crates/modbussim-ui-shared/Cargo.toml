@@ -6,8 +6,6 @@ edition = "2021"
 [dependencies]
 egui = { workspace = true }
 egui_extras = { workspace = true }
-egui-modal = { workspace = true }
-egui-toast = { workspace = true }
 catppuccin-egui = { workspace = true }
 egui-phosphor = { workspace = true }
 egui-shadcn = { workspace = true }
