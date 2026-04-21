@@ -1667,14 +1667,24 @@ impl SlaveApp {
             painter.rect_filled(stripe_rect, 0.0, acc_color);
         };
 
+        // 整行 8% alpha success 染色，仅用于运行中且未选中的 connection row。
+        let paint_running_row = |ui: &egui::Ui, rect: egui::Rect| {
+            let s = theme::success(flavor);
+            ui.painter().rect_filled(
+                rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(s.r(), s.g(), s.b(), 0x14),
+            );
+        };
+
         for snap in &self.conn_snapshot {
             let conn_is_selected =
                 matches!(&self.selection, Selection::Connection(c) if c == &snap.id);
-            let state_tag = match snap.state {
-                ConnectionState::Running => "运行中",
-                ConnectionState::Stopped => "已停止",
+            let (state_text, state_color) = match snap.state {
+                ConnectionState::Running => ("运行中", theme::success(flavor)),
+                ConnectionState::Stopped => ("已停止", theme::text_muted(flavor)),
             };
-            let conn_label = format!("{} [{}]", snap.label, state_tag);
+            let is_running = matches!(snap.state, ConnectionState::Running);
 
             // Connection row
             ui.horizontal(|ui| {
@@ -1686,20 +1696,57 @@ impl SlaveApp {
                     egui::vec2(ui.available_width(), 22.0),
                     egui::Sense::click(),
                 );
+
+                // 优先级：selected > running 染色 > hover；三者互斥
                 if conn_is_selected {
                     paint_active_row(ui, row_resp.rect);
+                } else if is_running {
+                    paint_running_row(ui, row_resp.rect);
                 } else if row_resp.hovered() {
                     ui.painter()
                         .rect_filled(row_resp.rect, 0.0, theme::bg_hover(flavor));
                 }
+
+                // 状态圆点（左侧 8px 偏移、半径 3.5）
+                let dot_center = row_resp.rect.left_center() + egui::vec2(8.0, 0.0);
+                if is_running {
+                    let phase = (ui.input(|i| i.time)
+                        * (2.0 * std::f64::consts::PI / 1.5))
+                        .sin()
+                        * 0.5
+                        + 0.5;
+                    let alpha = (180.0 + 75.0 * phase) as u8;
+                    let s = theme::success(flavor);
+                    let c = egui::Color32::from_rgba_unmultiplied(s.r(), s.g(), s.b(), alpha);
+                    ui.painter().circle_filled(dot_center, 3.5, c);
+                } else {
+                    ui.painter().circle_stroke(
+                        dot_center,
+                        3.5,
+                        egui::Stroke::new(1.0, theme::text_muted(flavor)),
+                    );
+                }
+
+                // label + tag 分两次绘制
                 let label_color = if conn_is_selected { acc_fg } else { text_color };
-                ui.painter().text(
-                    row_resp.rect.left_center() + egui::vec2(4.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    &conn_label,
+                let label_pos = row_resp.rect.left_center() + egui::vec2(20.0, 0.0);
+                let label_galley = ui.painter().layout_no_wrap(
+                    snap.label.clone(),
                     egui::FontId::proportional(12.5),
                     label_color,
                 );
+                let label_w = label_galley.size().x;
+                let galley_top = label_pos - egui::vec2(0.0, label_galley.size().y / 2.0);
+                ui.painter().galley(galley_top, label_galley, label_color);
+                let tag_pos = label_pos + egui::vec2(label_w + 6.0, 0.0);
+                ui.painter().text(
+                    tag_pos,
+                    egui::Align2::LEFT_CENTER,
+                    state_text,
+                    egui::FontId::proportional(11.0),
+                    state_color,
+                );
+
                 if row_resp.clicked() {
                     action = Some(TreeAction::SelectConn(snap.id.clone()));
                 }
