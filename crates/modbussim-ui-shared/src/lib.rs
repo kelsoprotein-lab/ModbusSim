@@ -6,6 +6,7 @@
 
 pub mod fonts;
 pub mod format;
+pub mod hero_anim;
 pub mod log_panel;
 pub mod project;
 pub mod theme;
