@@ -80,7 +80,12 @@ fn perturb_u16(
         // Use the current value (min 1 so drift works on zero-seeded registers).
         let base = (*v as i32).max(1);
         let pct = rng.gen_range(-delta_pct..=delta_pct);
-        let delta = base * pct / 100;
+        let mut delta = base * pct / 100;
+        // 保底：当 base 较小（如 0/1）时整数除法 base*pct/100 会被截断为 0，
+        // 导致零值寄存器永远不动。pct≠0 但 delta=0 时强制给 ±1（符号随 pct）。
+        if delta == 0 && pct != 0 {
+            delta = pct.signum();
+        }
         *v = (*v).wrapping_add(delta as u16);
     }
 }
@@ -211,5 +216,39 @@ mod tests {
         for &v in map.holding_registers.values() {
             assert!((500..=1500).contains(&v));
         }
+    }
+
+    /// 回归测试：之前 perturb_u16 用 `base * pct / 100` 整数除法，零值寄存器
+    /// base=1 时 delta 永远被截断为 0，导致 FC03/FC04 在初值全 0 的常见场景下
+    /// 不动。修复后保底 ±1，确保至少能起步漂移。
+    #[test]
+    fn zero_seeded_holding_registers_actually_drift() {
+        let mut map = RegisterMap::new();
+        for addr in 0..16u16 {
+            map.holding_registers.insert(addr, 0);
+            map.input_registers.insert(addr, 0);
+        }
+        let cfg = JitterConfig {
+            enabled: true,
+            interval_ms: 100,
+            mutation_rate: 100,
+            delta_percent: 10,
+            affect_coils: false,
+            affect_discrete: false,
+            affect_holding: true,
+            affect_input: true,
+        };
+        let mut rng = StdRng::seed_from_u64(7);
+        apply_tick(&mut map, &cfg, &mut rng);
+        let any_holding_moved = map.holding_registers.values().any(|&v| v != 0);
+        let any_input_moved = map.input_registers.values().any(|&v| v != 0);
+        assert!(
+            any_holding_moved,
+            "零值 holding registers 在 100% mutation rate 下应至少有一个动"
+        );
+        assert!(
+            any_input_moved,
+            "零值 input registers 在 100% mutation rate 下应至少有一个动"
+        );
     }
 }
