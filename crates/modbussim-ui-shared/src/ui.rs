@@ -151,6 +151,21 @@ pub fn danger_button(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Re
     )
 }
 
+/// Compact secondary button: shadcn Outline variant + Sm size.
+/// Use for tertiary actions where Md feels visually heavy ("+ 新建" /
+/// "+ 批量添加" / "导出 CSV"), but a borderless `link_action` lacks visual weight.
+pub fn secondary_button_sm(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Outline,
+        egui_shadcn::tokens::ControlSize::Sm,
+        true,
+    )
+}
+
 /// Icon-only button: shadcn Ghost variant + small size.
 pub fn icon_button(ui: &mut Ui, flavor: Flavor, icon: &str) -> Response {
     let theme = shadcn_theme(flavor);

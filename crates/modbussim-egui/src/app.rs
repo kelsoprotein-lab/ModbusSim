@@ -2163,7 +2163,7 @@ impl SlaveApp {
                         ui.add_space(8.0);
                         let flavor = self.flavor;
                         ui.horizontal(|ui| {
-                            if uikit::primary_button(
+                            if uikit::secondary_button_sm(
                                 ui,
                                 flavor,
                                 format!("{}  批量添加", icons::PLUS_CIRCLE),
@@ -2396,7 +2396,7 @@ impl SlaveApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if uikit::primary_button(
+                                    if uikit::secondary_button_sm(
                                         ui,
                                         flavor,
                                         format!("{}  批量添加", icons::PLUS_CIRCLE),
@@ -3327,7 +3327,7 @@ impl eframe::App for SlaveApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if uikit::link_action(ui, self.flavor, "+ 新建", false)
+                                            if uikit::secondary_button_sm(ui, self.flavor, "+ 新建")
                                                 .clicked()
                                             {
                                                 self.show_new_tcp_dialog =
