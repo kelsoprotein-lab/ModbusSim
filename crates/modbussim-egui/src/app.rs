@@ -3509,8 +3509,16 @@ impl eframe::App for SlaveApp {
         let mut clear_error = false;
         let mut clear_status = false;
         let conn_count = self.conn_snapshot.len();
+        let any_running = self
+            .conn_snapshot
+            .iter()
+            .any(|s| matches!(s.state, ConnectionState::Running));
+        let zero_conns = conn_count == 0;
         let slave_count: usize = self.conn_snapshot.iter().map(|c| c.devices.len()).sum();
         let flavor = self.flavor;
+        if any_running {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         egui::TopBottomPanel::bottom("status_bar")
             .resizable(false)
             .exact_height(22.0)
@@ -3551,12 +3559,46 @@ impl eframe::App for SlaveApp {
                             clear_status = true;
                         }
                     } else {
+                        let (dot_color, dot_alpha, status_text, text_color) = if zero_conns {
+                            (
+                                theme::text_muted(flavor),
+                                255u8,
+                                "未连接",
+                                theme::text_muted(flavor),
+                            )
+                        } else if any_running {
+                            let phase = (ui.input(|i| i.time)
+                                * (2.0 * std::f64::consts::PI / 1.5))
+                                .sin()
+                                * 0.5
+                                + 0.5;
+                            let alpha = (180.0 + 75.0 * phase) as u8;
+                            (theme::success(flavor), alpha, "运行中", theme::success(flavor))
+                        } else {
+                            (
+                                theme::text_muted(flavor),
+                                255u8,
+                                "已停止",
+                                theme::text_muted(flavor),
+                            )
+                        };
+                        let dot = if zero_conns || !any_running { "○" } else { "●" };
+                        let dot_color_with_alpha = egui::Color32::from_rgba_unmultiplied(
+                            dot_color.r(),
+                            dot_color.g(),
+                            dot_color.b(),
+                            dot_alpha,
+                        );
                         ui.add(egui::Label::new(
-                            egui::RichText::new("●")
-                                .color(theme::success(flavor))
+                            egui::RichText::new(dot)
+                                .color(dot_color_with_alpha)
                                 .size(11.0),
                         ));
-                        theme::text::crumb(ui, flavor, "就绪");
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(status_text)
+                                .color(text_color)
+                                .size(11.0),
+                        ));
                     }
                     ui.add_space(14.0);
                     theme::text::crumb(
