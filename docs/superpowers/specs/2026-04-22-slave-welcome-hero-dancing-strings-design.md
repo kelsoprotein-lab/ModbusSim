@@ -1,136 +1,252 @@
 # Slave 端空状态 Hero · 三色 Dancing Strings 动画
 
 > 规划日期：2026-04-22 · 分支：`feat/slave-tls-ui-2026-04`
+> 2026-04-22 修订：按代码事实校准（搬迁而非新建、LogCollector 在 core、LogEntry 无错误级）。
 
 ## Context
 
-ModbusSim Slave 端 UI (`crates/modbussim-egui`) 目前 `Selection::None` 空状态只有一行大标题 + 一段提示文案（`app.rs:2250-2259`）。当用户还没建任何连接、或临时切走选中项时，CentralPanel 大片留白显得单薄。项目已经有脉动状态灯（`app.rs:3660-3688`，commit `37769f8`）作为生命体征的"微动"，但占屏非常小。
+ModbusSim Slave 端 UI (`crates/modbussim-egui`) 的 `Selection::None` 空状态已经有一版 Hero 动画：`app.rs:2260` 调用本地私有函数 `paint_dancing_strings`（定义在 `app.rs:3814-3856`）——三色 accent/success/warn × mode∈{2,3,5} × 120 点，直接照搬 egui demo，**振幅固定、无节流、无数据驱动**。
 
-参考 egui 官方 demo 的 [`dancing_strings.rs`](https://github.com/emilk/egui/blob/main/crates/egui_demo_lib/src/demo/dancing_strings.rs)，可以在空状态加一块 Hero 画布，既让首屏更有"活着"的质感，又能把 Slave 运行时的 TX/RX 节奏直观视觉化——"没在忙"时轻轻起伏，"在忙"时琴弦跃动，出错瞬间三条变红。目标是纯视觉强化，不引入新的业务数据通道、不动现有 theme/log_panel。
+本轮改造目标：
+1. **搬迁**：把 `paint_dancing_strings` 从 `app.rs` 私有函数提取到 `modbussim-ui-shared`，以便未来 Master 端 (`modbusmaster-egui`) 复用。
+2. **接入节流**：当前 `ctx.request_repaint()` 全速重绘吃 CPU，改为按活跃度自适应 16ms/50ms/100ms。
+3. **心跳驱动振幅**：聚合所有 connection 的 `LogCollector` 最近 1s TX/RX 总数 → 归一化振幅乘子，让空闲时弦轻起伏、通信繁忙时弦大幅跃动。
+4. **预留错误红化钩子**：`HeroPulseFeed.has_error` 字段定义但本轮恒 false（`LogEntry` 当前无错误级字段，Modbus exception 响应 fc|0x80 也不在枚举里 —— 没有干净信号源，不做启发式）。
+
+目标是视觉强化 + 性能修正，不引入新业务通道、不动 `theme.rs`、不接 Master。
 
 ## 最终方案
 
 ### 1. 模块边界
 
-新增 `crates/modbussim-ui-shared/src/hero_anim.rs`，对外：
+新建 `crates/modbussim-ui-shared/src/hero_anim.rs`，对外暴露：
 
 ```rust
 pub struct HeroPulseFeed {
-    pub amp: f32,            // 0.0..=1.0
+    /// 振幅乘子，0.0..=1.0；调用方归一化后传入
+    pub amp: f32,
+    /// 预留错误态（本轮恒 false），true 时三弦会 lerp 到 danger
     pub has_error: bool,
-    pub disabled: bool,      // 预留开关，当前恒 false
+    /// true 时直接渲染纯文本欢迎屏，跳过画布
+    pub disabled: bool,
 }
 
-pub fn show_welcome_hero(ui: &mut egui::Ui, feed: HeroPulseFeed);
+pub fn show_welcome_hero(
+    ui: &mut egui::Ui,
+    flavor: crate::theme::Flavor,
+    icon_prefix: &str,       // 例如 icons::CPU
+    title: &str,             // 例如 "ModbusSlave"
+    caption: &str,           // 例如 "从左侧创建或选中一个连接 / 设备 / 寄存器组。"
+    feed: HeroPulseFeed,
+);
 ```
 
-- 模块不持有业务状态，只负责渲染 + 调用 `ctx.request_repaint_after`。
-- 放在 `ui-shared` 而非 `modbussim-egui` 本地：未来 Master 端 (`modbusmaster-egui`) 可直接复用。
-- `app.rs` `Selection::None` 分支（L2250-2259）整段替换为 `show_welcome_hero(ui, self.hero_pulse.feed())`。
+- 模块不持有业务状态；`HeroPulseFeed` 由调用方每帧算好传入。
+- 内部负责：heading / caption / canvas / 节流 `request_repaint_after` 决策。
+- 调用点：`app.rs:2250-2261` 整段 `vertical_centered { heading + caption + paint_dancing_strings }` 替换为单次 `show_welcome_hero(ui, self.flavor, icons::CPU, "ModbusSlave", "...", self.hero_pulse.feed())`。
+- 老的 `fn paint_dancing_strings` 删除。
 
 ### 2. 心跳采样
 
-在 `SlaveApp` 加字段 `hero_pulse: HeroPulseState`：
+**2.1 `LogCollector` 扩展**（`crates/modbussim-core/src/log_collector.rs`）
+
+现有 `LogCollector` 是 `Arc<RwLock<Vec<LogEntry>>>`，无稳定 id。增加一个非阻塞按时间窗口计数方法：
 
 ```rust
-struct HeroPulseState {
-    ring:     [u32; 10],   // 1s 窗口 × 10 × 100ms bucket
-    err_ring: [u32; 10],
-    cursor: usize,
-    last_tick: std::time::Instant,
-    last_seen_log_id: u64,
+/// Non-blocking count of entries whose timestamp >= `since`.
+/// Returns None if the lock is held by a writer.
+pub fn try_count_since(&self, since: chrono::DateTime<chrono::Utc>) -> Option<usize> {
+    self.entries
+        .try_read()
+        .ok()
+        .map(|g| g.iter().rev().take_while(|e| e.timestamp >= since).count())
 }
 ```
 
-- 每帧 `update()` 开头调用 `hero_pulse.tick(&log_collector)`：
-  1. `Instant::now() - last_tick >= 100ms` 时游标前推、旧 bucket 清零。
-  2. 从 `LogCollector` 拉取 `last_seen_log_id` 之后的**原始入账**条目（不受 UI 过滤影响）——需在 `LogCollector` 加一个 `total_ingested_since(id: u64) -> impl Iterator<Item = &LogEntry>` 访问器（3-5 行）。
-  3. 每条记录累加到当前 bucket；`level == Error` 同步计入 `err_ring`。
-- `feed()` 返回：
-  - `amp = (sum(ring) as f32 / SATURATION_RATE).clamp(0.0, 1.0)`，`SATURATION_RATE` 取 40（约每 100ms 4 条消息即满振）。
-  - `has_error = sum(err_ring) > 0`。
+利用"entries 按写入时间天然有序"的性质，从尾部 `rev()` 扫到第一条早于 `since` 为止——O(k) 其中 k = 窗口内条数，上限 10000 里通常只扫几十条。
 
-不引入新 channel、不改 `UiEvent`、不计时响应延迟。
+**2.2 `SlaveApp.hero_pulse` 字段**（`crates/modbussim-egui/src/app.rs`）
+
+```rust
+struct HeroPulseState {
+    /// 每帧从所有 conn.log_collector 累加出的最近 1s 条数
+    recent_count: u32,
+    last_sample: Option<Instant>,
+}
+
+impl HeroPulseState {
+    /// 每帧调用；至少每 100ms 采样一次，中间用缓存值
+    fn sample(&mut self, conns: &[ConnSnapshotWithCollector]) -> f32 {
+        const WINDOW_MS: i64 = 1000;
+        const SAMPLE_EVERY_MS: u128 = 100;
+        const SATURATION: u32 = 40;
+        if self.last_sample.map_or(true, |t| t.elapsed().as_millis() >= SAMPLE_EVERY_MS) {
+            let since = chrono::Utc::now() - chrono::Duration::milliseconds(WINDOW_MS);
+            let total: usize = conns
+                .iter()
+                .filter_map(|c| c.log_collector.try_count_since(since))
+                .sum();
+            self.recent_count = total.min(u32::MAX as usize) as u32;
+            self.last_sample = Some(Instant::now());
+        }
+        (self.recent_count as f32 / SATURATION as f32).clamp(0.0, 1.0)
+    }
+
+    fn feed(&mut self, conns: &[_]) -> HeroPulseFeed {
+        HeroPulseFeed { amp: self.sample(conns), has_error: false, disabled: false }
+    }
+}
+```
+
+- **多连接聚合**：每个 connection 各持 `Arc<LogCollector>`，遍历累加。
+- **SATURATION = 40**：即 ~40 条/秒满振（100ms bucket 里 4 条）。经验值，可后续调。
+- **采样节流**：100ms 采一次，之间复用 `recent_count` 缓存，避免每帧扫 10000 × N 次。
+- **不做**：不按 id 增量采样（Vec remove(0) 偏移不可靠）；不开单独线程（try_read 够轻）。
+
+`SlaveApp` 的 `connections: Arc<RwLock<Vec<ConnectionEntry>>>` 已有，`sample` 时临时 try_read 拿快照即可。
 
 ### 3. 绘制与布局
 
 `show_welcome_hero` 内部：
 
-```
-vertical_centered {
-  heading("ModbusSim · Slave")
-  add_space(12)
-  Frame::canvas {
-    allocate_exact_size(vec2(avail_w.min(640), 180))
-    draw 3 strings: mode ∈ {2, 3, 5}
-  }
-  add_space(8)
-  muted_label("从左侧创建或选中一个连接 · 或按 ⌘N 新建")
+```rust
+pub fn show_welcome_hero(
+    ui: &mut egui::Ui,
+    flavor: crate::theme::Flavor,
+    icon_prefix: &str,
+    title: &str,
+    caption: &str,
+    feed: HeroPulseFeed,
+) {
+    use egui::epaint::PathStroke;
+    use egui::{emath, epaint, pos2, vec2, Rect};
+
+    ui.vertical_centered(|ui| {
+        ui.add_space(40.0);
+        ui.heading(format!("{}  {}", icon_prefix, title));
+        crate::ui::caption(ui, flavor, caption);
+        ui.add_space(28.0);
+
+        if feed.disabled {
+            return;
+        }
+
+        let max_w = ui.available_width().min(560.0);
+        egui::Frame::canvas(ui.style()).show(ui, |ui| {
+            ui.set_min_width(max_w);
+            let time = ui.input(|i| i.time);
+            let desired = vec2(max_w, max_w * 0.22);
+            let (_id, rect) = ui.allocate_space(desired);
+            let to_screen = emath::RectTransform::from_to(
+                Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0),
+                rect,
+            );
+
+            let gain = 0.15 + 0.85 * feed.amp;   // 底噪 15%，满载 100%
+            let modes = [
+                (2u32, crate::theme::accent(flavor)),
+                (3u32, crate::theme::success(flavor)),
+                (5u32, crate::theme::warn(flavor)),
+            ];
+            let mut shapes = Vec::with_capacity(modes.len());
+            for &(mode, color) in &modes {
+                let modef = mode as f64;
+                let n = 120;
+                let speed = 1.5_f64;
+                let points: Vec<egui::Pos2> = (0..=n)
+                    .map(|i| {
+                        let t = i as f64 / n as f64;
+                        let base = (time * speed * modef).sin() / modef;
+                        let y = gain as f64 * base * (t * std::f64::consts::TAU / 2.0 * modef).sin();
+                        to_screen * pos2(t as f32, y as f32)
+                    })
+                    .collect();
+                let thickness = 8.0 / mode as f32;
+                let final_color = if feed.has_error {
+                    lerp_color(color, crate::theme::danger(flavor), 0.6)
+                } else {
+                    color
+                };
+                shapes.push(epaint::Shape::line(points, PathStroke::new(thickness, final_color)));
+            }
+            ui.painter().extend(shapes);
+        });
+
+        // 节流重绘
+        let interval = std::time::Duration::from_millis(
+            if !ui.ctx().input(|i| i.focused) { 100 }
+            else if feed.amp >= 0.3 { 16 }
+            else { 50 },
+        );
+        ui.ctx().request_repaint_after(interval);
+    });
 }
+
+fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 { /* 逐通道 lerp */ }
 ```
 
-- 坐标变换：`RectTransform::from_to(Rect{x:0..=1, y:-1..=1}, canvas_rect)`（沿用 demo）。
-- 琴弦公式（在 demo 基础上乘入 `gain`）：
-
-  ```rust
-  let gain = 0.15 + 0.85 * feed.amp;              // 底噪 15%，满载 100%
-  let base = (time * SPEED * mode).sin() / mode;
-  let y    = gain * base * (t * TAU/2.0 * mode).sin();
-  ```
-
-  `SPEED = 1.5`，`n = 120` 采样点，`thickness = 10.0 / mode`。
-- 颜色：默认 `[Theme::accent(), Theme::success(), Theme::warn()]`；`feed.has_error` 时三条各自 `lerp(color, Theme::danger(), 0.6)`。
-- **不用** Window（demo 用的是 Window，这里内联 CentralPanel）；**不用** `PathStroke::new_uv` 的渐变（与语义三色冲突）。
+- **尺寸**：沿用现有 `max_w = min(avail, 560) × 0.22` 比例（现有代码已这么做）。
+- **颜色**：保持三色，`lerp_color` 辅助函数留着但本轮 `has_error = false` 走不到。
+- **heading/caption** 进入模块内；调用方只传文案。
 
 ### 4. 重绘节流
 
-- `feed.amp >= 0.3` → `request_repaint_after(16ms)`（~60fps）
-- `feed.amp <  0.3` → `request_repaint_after(50ms)`（~20fps，与状态栏脉动节奏对齐）
-- `ui.ctx().input(|i| !i.focused)` → `request_repaint_after(100ms)`
-- `feed.disabled == true` → 直接 `return`，画纯文本欢迎屏
+- 窗口失焦 → 100ms（约 10fps）
+- `feed.amp >= 0.3` → 16ms（~60fps，有人在忙，画流畅）
+- `feed.amp < 0.3` → 50ms（~20fps，底噪期足够）
+- `feed.disabled == true` → 不调画布也不 `request_repaint_after`
+
+移除现有的无条件 `ui.ctx().request_repaint()`。
 
 ### 5. 需修改/新增文件
 
 | 文件 | 改动 |
 |---|---|
-| `crates/modbussim-ui-shared/src/hero_anim.rs` | 新建 |
-| `crates/modbussim-ui-shared/src/lib.rs` | `pub mod hero_anim;` |
-| `crates/modbussim-ui-shared/src/log_panel.rs` | `LogCollector::total_ingested_since()` + `next_log_id()` |
-| `crates/modbussim-egui/src/app.rs` | `SlaveApp` 加 `hero_pulse`；`update()` 前置 tick；`Selection::None` 分支改调 `show_welcome_hero` |
+| `crates/modbussim-core/src/log_collector.rs` | 新增 `try_count_since(DateTime<Utc>) -> Option<usize>` + 单测 |
+| `crates/modbussim-ui-shared/src/hero_anim.rs` | 新建：`HeroPulseFeed`、`show_welcome_hero`、`lerp_color` |
+| `crates/modbussim-ui-shared/src/lib.rs` | 加 `pub mod hero_anim;` |
+| `crates/modbussim-egui/src/app.rs` | 删 `paint_dancing_strings`；`SlaveApp` 加 `hero_pulse: HeroPulseState`；`render_main` 的 `Selection::None` 分支改调 `show_welcome_hero` |
 
-**不改**：`theme.rs`、`value_panel.rs`、任何 Master 端 crate。
+**不改**：`theme.rs`、`log_panel.rs`（UI 层）、`value_panel.rs`、任何 Master 端 crate。
 
 ### 6. 测试 · 验证
 
-1. **单测**（`hero_pulse_state`，不依赖 egui）：
-   - 注入 10 条日志 → `amp ≈ 1.0`
-   - 静置 1.1s → `amp == 0.0`
-   - 注入 Error 级日志 → `has_error == true`；1s 后清零
-   - 游标轮转正确性（bucket 越界）
-2. **手动视觉验证**：
-   - `cargo run -p modbussim-egui` → `Selection::None` 可见三色动画
-   - 建连接开始 TX/RX → 振幅明显上拉
-   - 人为触发解析错误 → 三弦短暂转红
-   - 窗口失焦 → CPU 降档（用 Activity Monitor 观察）
-3. **回归**：`cargo fmt --all`、`cargo clippy --workspace -- -D warnings`、`cargo test --workspace`。
+**单测**：
+
+1. `LogCollector::try_count_since`（core crate）：
+   - 空 collector → `Some(0)`
+   - 3 条最近 + 2 条远于窗口 → `Some(3)`
+   - 全部早于窗口 → `Some(0)`
+2. `HeroPulseState::sample`：可以用 `mock` 的 `Vec<&LogCollector>` 注入已预填充的 collector，验证满振/静默的返回值。
+
+**手动视觉验证**（`cargo run -p modbussim-egui`）：
+
+- 启动后 `Selection::None`：三弦轻起伏（gain ≈ 0.15），肉眼 CPU 应比之前明显降低（Activity Monitor 比较）
+- 连接一台 Master，往里打 FC03 高频查询 → 弦振幅明显上拉（gain → 1.0）
+- 停止 Master，~1s 后振幅回落
+- 窗口失焦 → 重绘降到 10fps（观察 CPU 曲线）
+
+**回归**：`cargo fmt --all && cargo clippy --workspace -- -D warnings && cargo test --workspace`。
 
 ### 7. 风险 / 不做清单
 
 已识别：
-- **CPU**：三条 120 点 path/frame，60fps，egui 可轻松承受；节流已覆盖。
-- **色盲友好度**：蓝/绿/橙 + 错误红在三色色盲下辨识度一般。本次不加开关，后续可做 `accessibility::color_blind_mode`。
-- **数据源范围**：只统计 `LogCollector` 入账条目（所有 TX/RX + Log）；不引入独立计数器以免重复维护。
+- **SATURATION=40 过高/过低**：经验初值，按视觉反馈再调。用常量暴露以便调整。
+- **try_read 争用**：`LogCollector` 写锁持有时 `try_count_since` 返回 `None`，那一帧沿用上次 `recent_count` 缓存——已被节流逻辑覆盖。
+- **chrono 已是依赖**：`modbussim-core` 的 `Cargo.toml` 已经因 `LogEntry.timestamp` 引入 chrono，本次无需新增依赖。
 
 YAGNI（明确不做）：
-- 动画开关偏好 UI
-- 声音效果
-- Master 端接入（API 预留，本次不调）
-- 寄存器值→振幅的逐寄存器映射
+- Error 级启发式（要么等引入 Level 字段再做，要么别做）
+- 动画偏好 UI 开关
+- Master 端接入（API 已预留但不调）
+- 寄存器值 → 振幅映射
 
 ### 8. 关键文件路径（索引）
 
-- `crates/modbussim-egui/src/app.rs:2250-2259` — `Selection::None` 当前空状态
-- `crates/modbussim-egui/src/app.rs:3660-3688` — 既有脉动状态灯（风格参照）
-- `crates/modbussim-ui-shared/src/log_panel.rs` — `LogCollector` 持有者
-- `crates/modbussim-ui-shared/src/theme.rs:66-385` — `accent/success/warn/danger` 色板
+- `crates/modbussim-egui/src/app.rs:2250-2261` — `Selection::None` 当前空状态（待替换）
+- `crates/modbussim-egui/src/app.rs:3814-3856` — 现有 `paint_dancing_strings`（待删除）
+- `crates/modbussim-egui/src/app.rs:575` / `:593` — `entry.log_collector.try_get_all() / .clear()` 参考用法
+- `crates/modbussim-core/src/log_collector.rs` — 待扩展 `try_count_since`
+- `crates/modbussim-ui-shared/src/theme.rs` — `accent/success/warn/danger(flavor)` 签名参考
+- `crates/modbussim-ui-shared/src/ui.rs` — `caption(ui, flavor, text)` 参考
 - 参考：egui `crates/egui_demo_lib/src/demo/dancing_strings.rs`
