@@ -281,6 +281,10 @@ pub struct SlaveApp {
     new_host: String,
     new_port: String,
     show_new_tcp_dialog: bool,
+    /// 删除连接二次确认状态：(conn_id, 首次点击时刻)。
+    /// 3 秒内同一连接再次点删除按钮 → 真删；否则按钮 label 自动恢复。
+    #[allow(dead_code)]
+    pending_delete: Option<(String, std::time::Instant)>,
     last_error: Option<String>,
 
     // Event-driven snapshot (never read from Arc<RwLock<...>> on the UI thread).
@@ -490,6 +494,7 @@ impl SlaveApp {
             new_host: "0.0.0.0".to_string(),
             new_port: "5502".to_string(),
             show_new_tcp_dialog: false,
+            pending_delete: None,
             last_error: None,
             conn_snapshot: Vec::new(),
             next_conn_seq: Arc::new(AtomicU64::new(1)),

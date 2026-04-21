@@ -166,6 +166,21 @@ pub fn secondary_button_sm(ui: &mut Ui, flavor: Flavor, text: impl Into<String>)
     )
 }
 
+/// Compact destructive button: shadcn Destructive variant + Sm size.
+/// Use for low-frequency, dangerous actions like "删除连接" where you
+/// want red prominence but Md size feels visually overweight.
+pub fn danger_button_sm(ui: &mut Ui, flavor: Flavor, text: impl Into<String>) -> Response {
+    let theme = shadcn_theme(flavor);
+    egui_shadcn::button(
+        ui,
+        &theme,
+        text.into(),
+        egui_shadcn::tokens::ControlVariant::Destructive,
+        egui_shadcn::tokens::ControlSize::Sm,
+        true,
+    )
+}
+
 /// Icon-only button: shadcn Ghost variant + small size.
 pub fn icon_button(ui: &mut Ui, flavor: Flavor, icon: &str) -> Response {
     let theme = shadcn_theme(flavor);
