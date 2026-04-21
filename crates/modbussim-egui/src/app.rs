@@ -2256,6 +2256,8 @@ impl SlaveApp {
                         self.flavor,
                         "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
                     );
+                    ui.add_space(28.0);
+                    paint_dancing_strings(ui, self.flavor);
                 });
             }
             Selection::Connection(id) => {
@@ -3805,4 +3807,50 @@ impl eframe::App for SlaveApp {
             ));
         }
     }
+}
+
+/// 空状态装饰：致敬 egui demo `dancing_strings`，三条驻波叠在一起。
+/// 颜色取主题 accent / success / warn，宽度自适应、高度固定。
+fn paint_dancing_strings(ui: &mut egui::Ui, flavor: Flavor) {
+    use egui::epaint::PathStroke;
+    use egui::{emath, epaint, pos2, vec2, Rect};
+
+    let max_w = ui.available_width().min(560.0);
+    egui::Frame::canvas(ui.style()).show(ui, |ui| {
+        ui.set_min_width(max_w);
+        ui.ctx().request_repaint();
+        let time = ui.input(|i| i.time);
+
+        let desired_size = vec2(max_w, max_w * 0.22);
+        let (_id, rect) = ui.allocate_space(desired_size);
+
+        let to_screen =
+            emath::RectTransform::from_to(Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0), rect);
+
+        let modes_colors = [
+            (2u32, theme::accent(flavor)),
+            (3u32, theme::success(flavor)),
+            (5u32, theme::warn(flavor)),
+        ];
+        let mut shapes = Vec::with_capacity(modes_colors.len());
+        for &(mode, color) in &modes_colors {
+            let modef = mode as f64;
+            let n = 120;
+            let speed = 1.5;
+            let points: Vec<egui::Pos2> = (0..=n)
+                .map(|i| {
+                    let t = i as f64 / n as f64;
+                    let amp = (time * speed * modef).sin() / modef;
+                    let y = amp * (t * std::f64::consts::TAU / 2.0 * modef).sin();
+                    to_screen * pos2(t as f32, y as f32)
+                })
+                .collect();
+            let thickness = 8.0 / mode as f32;
+            shapes.push(epaint::Shape::line(
+                points,
+                PathStroke::new(thickness, color),
+            ));
+        }
+        ui.painter().extend(shapes);
+    });
 }
