@@ -1,7 +1,9 @@
 /// Full integration test: slave WITH log collector + master, multi-threaded runtime
 /// This reproduces the exact Tauri app scenario that was causing Broken pipe.
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
+use modbussim_core::master::{
+    MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup,
+};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use std::collections::HashMap;
@@ -46,7 +48,8 @@ async fn main() {
             host: config.target_address.clone(),
             port: config.port,
         };
-        let conn = MasterConnection::new(config, master_transport).with_log_collector(master_log.clone());
+        let conn =
+            MasterConnection::new(config, master_transport).with_log_collector(master_log.clone());
         state.write().await.insert("m1".to_string(), conn);
     }
     println!("    OK\n");
@@ -147,7 +150,11 @@ async fn main() {
     // 8) Check logs
     let slave_logs = slave_log.get_all().await;
     let master_logs = master_log.get_all().await;
-    println!("[8] Logs: slave={} entries, master={} entries", slave_logs.len(), master_logs.len());
+    println!(
+        "[8] Logs: slave={} entries, master={} entries",
+        slave_logs.len(),
+        master_logs.len()
+    );
     println!();
 
     // Cleanup

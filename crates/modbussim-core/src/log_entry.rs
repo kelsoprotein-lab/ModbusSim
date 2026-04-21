@@ -81,7 +81,11 @@ pub struct LogEntry {
 
 impl LogEntry {
     /// Create a new log entry with the current timestamp.
-    pub fn new(direction: Direction, function_code: FunctionCode, detail: impl Into<String>) -> Self {
+    pub fn new(
+        direction: Direction,
+        function_code: FunctionCode,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             timestamp: Utc::now(),
             direction,
@@ -112,10 +116,20 @@ impl LogEntry {
         let timestamp = self.timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
         let direction = self.direction.to_string();
         let fc = self.function_code.name();
-        let raw = self.raw_bytes.as_ref()
-            .map(|b| b.iter().map(|v| format!("{:02X}", v)).collect::<Vec<_>>().join(" "))
+        let raw = self
+            .raw_bytes
+            .as_ref()
+            .map(|b| {
+                b.iter()
+                    .map(|v| format!("{:02X}", v))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
             .unwrap_or_default();
-        format!("\"{}\",{},{},\"{}\",\"{}\"", timestamp, direction, fc, self.detail, raw)
+        format!(
+            "\"{}\",{},{},\"{}\",\"{}\"",
+            timestamp, direction, fc, self.detail, raw
+        )
     }
 
     /// CSV header row.
@@ -152,8 +166,14 @@ mod tests {
     #[test]
     fn test_function_code_from_u8() {
         assert_eq!(FunctionCode::from_u8(0x01), Some(FunctionCode::ReadCoils));
-        assert_eq!(FunctionCode::from_u8(0x03), Some(FunctionCode::ReadHoldingRegisters));
-        assert_eq!(FunctionCode::from_u8(0x10), Some(FunctionCode::WriteMultipleRegisters));
+        assert_eq!(
+            FunctionCode::from_u8(0x03),
+            Some(FunctionCode::ReadHoldingRegisters)
+        );
+        assert_eq!(
+            FunctionCode::from_u8(0x10),
+            Some(FunctionCode::WriteMultipleRegisters)
+        );
         assert_eq!(FunctionCode::from_u8(0xFF), None);
     }
 

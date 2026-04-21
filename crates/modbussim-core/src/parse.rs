@@ -1,5 +1,5 @@
-use crate::register::{RegisterType, DataType, Endian};
 use crate::master::ReadFunction;
+use crate::register::{DataType, Endian, RegisterType};
 
 pub fn parse_register_type(s: &str) -> Result<RegisterType, String> {
     match s {
@@ -59,9 +59,18 @@ mod tests {
     #[test]
     fn test_parse_register_type_valid() {
         assert_eq!(parse_register_type("coil").unwrap(), RegisterType::Coil);
-        assert_eq!(parse_register_type("discrete_input").unwrap(), RegisterType::DiscreteInput);
-        assert_eq!(parse_register_type("input_register").unwrap(), RegisterType::InputRegister);
-        assert_eq!(parse_register_type("holding_register").unwrap(), RegisterType::HoldingRegister);
+        assert_eq!(
+            parse_register_type("discrete_input").unwrap(),
+            RegisterType::DiscreteInput
+        );
+        assert_eq!(
+            parse_register_type("input_register").unwrap(),
+            RegisterType::InputRegister
+        );
+        assert_eq!(
+            parse_register_type("holding_register").unwrap(),
+            RegisterType::HoldingRegister
+        );
     }
 
     #[test]
@@ -111,10 +120,22 @@ mod tests {
 
     #[test]
     fn test_parse_read_function_valid() {
-        assert_eq!(parse_read_function("read_coils").unwrap(), ReadFunction::ReadCoils);
-        assert_eq!(parse_read_function("read_discrete_inputs").unwrap(), ReadFunction::ReadDiscreteInputs);
-        assert_eq!(parse_read_function("read_holding_registers").unwrap(), ReadFunction::ReadHoldingRegisters);
-        assert_eq!(parse_read_function("read_input_registers").unwrap(), ReadFunction::ReadInputRegisters);
+        assert_eq!(
+            parse_read_function("read_coils").unwrap(),
+            ReadFunction::ReadCoils
+        );
+        assert_eq!(
+            parse_read_function("read_discrete_inputs").unwrap(),
+            ReadFunction::ReadDiscreteInputs
+        );
+        assert_eq!(
+            parse_read_function("read_holding_registers").unwrap(),
+            ReadFunction::ReadHoldingRegisters
+        );
+        assert_eq!(
+            parse_read_function("read_input_registers").unwrap(),
+            ReadFunction::ReadInputRegisters
+        );
     }
 
     #[test]
@@ -128,10 +149,22 @@ mod tests {
 
     #[test]
     fn test_read_function_to_string_all_variants() {
-        assert_eq!(read_function_to_string(ReadFunction::ReadCoils), "read_coils");
-        assert_eq!(read_function_to_string(ReadFunction::ReadDiscreteInputs), "read_discrete_inputs");
-        assert_eq!(read_function_to_string(ReadFunction::ReadHoldingRegisters), "read_holding_registers");
-        assert_eq!(read_function_to_string(ReadFunction::ReadInputRegisters), "read_input_registers");
+        assert_eq!(
+            read_function_to_string(ReadFunction::ReadCoils),
+            "read_coils"
+        );
+        assert_eq!(
+            read_function_to_string(ReadFunction::ReadDiscreteInputs),
+            "read_discrete_inputs"
+        );
+        assert_eq!(
+            read_function_to_string(ReadFunction::ReadHoldingRegisters),
+            "read_holding_registers"
+        );
+        assert_eq!(
+            read_function_to_string(ReadFunction::ReadInputRegisters),
+            "read_input_registers"
+        );
     }
 
     #[test]

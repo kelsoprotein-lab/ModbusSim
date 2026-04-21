@@ -14,7 +14,10 @@ pub enum ProjectType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportConfig {
-    Tcp { host: String, port: u16 },
+    Tcp {
+        host: String,
+        port: u16,
+    },
     Rtu {
         port: String,
         baud_rate: u32,
@@ -29,7 +32,10 @@ pub enum TransportConfig {
         stop_bits: u8,
         parity: String,
     },
-    RtuOverTcp { host: String, port: u16 },
+    RtuOverTcp {
+        host: String,
+        port: u16,
+    },
 }
 
 /// A register block definition in a project file.
@@ -122,14 +128,13 @@ impl ProjectFile {
 pub fn save_project(project: &ProjectFile, path: &Path) -> Result<(), String> {
     let json = serde_json::to_string_pretty(project)
         .map_err(|e| format!("failed to serialize project: {}", e))?;
-    std::fs::write(path, json)
-        .map_err(|e| format!("failed to write project file: {}", e))
+    std::fs::write(path, json).map_err(|e| format!("failed to write project file: {}", e))
 }
 
 /// Load a project file from the given path.
 pub fn load_project(path: &Path) -> Result<ProjectFile, String> {
-    let data = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read project file: {}", e))?;
+    let data =
+        std::fs::read_to_string(path).map_err(|e| format!("failed to read project file: {}", e))?;
     migrate_project(&data)
 }
 
@@ -145,8 +150,9 @@ pub fn migrate_project(data: &str) -> Result<ProjectFile, String> {
         .ok_or("missing or invalid version field")?;
 
     match version {
-        1 => serde_json::from_value(value)
-            .map_err(|e| format!("failed to parse project v1: {}", e)),
+        1 => {
+            serde_json::from_value(value).map_err(|e| format!("failed to parse project v1: {}", e))
+        }
         v => Err(format!("unsupported project version: {}", v)),
     }
 }
@@ -363,7 +369,9 @@ mod tests {
         assert!(json.contains("ttyUSB0"));
         let loaded: ProjectFile = serde_json::from_str(&json).unwrap();
         match &loaded.connections[0].transport {
-            TransportConfig::Rtu { port, baud_rate, .. } => {
+            TransportConfig::Rtu {
+                port, baud_rate, ..
+            } => {
                 assert_eq!(port, "/dev/ttyUSB0");
                 assert_eq!(*baud_rate, 9600);
             }
@@ -373,7 +381,10 @@ mod tests {
 
     #[test]
     fn test_transport_rtu_over_tcp_serde() {
-        let config = TransportConfig::RtuOverTcp { host: "10.0.0.1".to_string(), port: 502 };
+        let config = TransportConfig::RtuOverTcp {
+            host: "10.0.0.1".to_string(),
+            port: 502,
+        };
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"type\":\"rtu_over_tcp\""));
         let loaded: TransportConfig = serde_json::from_str(&json).unwrap();

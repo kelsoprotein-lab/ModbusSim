@@ -10,11 +10,11 @@ use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::log_helpers;
 use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
-use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::project::{self, ProjectFile};
+use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
-use modbussim_core::transport::{self, Transport, SerialConfig, Parity, SlaveTlsConfig};
 use modbussim_core::tools;
+use modbussim_core::transport::{self, Parity, SerialConfig, SlaveTlsConfig, Transport};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -48,11 +48,30 @@ pub struct RegisterValueEvent {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportRequest {
-    Tcp { port: u16 },
-    TcpTls { port: u16 },
-    Rtu { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
-    Ascii { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
-    RtuOverTcp { host: String, port: u16 },
+    Tcp {
+        port: u16,
+    },
+    TcpTls {
+        port: u16,
+    },
+    Rtu {
+        serial_port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    Ascii {
+        serial_port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    RtuOverTcp {
+        host: String,
+        port: u16,
+    },
 }
 
 fn parse_parity(s: &str) -> Parity {
@@ -65,29 +84,44 @@ fn parse_parity(s: &str) -> Parity {
 
 fn to_transport(req: &TransportRequest) -> Transport {
     match req {
-        TransportRequest::Tcp { port } => Transport::Tcp { host: "0.0.0.0".into(), port: *port },
-        TransportRequest::TcpTls { port } => Transport::TcpTls { host: "0.0.0.0".into(), port: *port },
-        TransportRequest::Rtu { serial_port, baud_rate, data_bits, stop_bits, parity } => {
-            Transport::Rtu(SerialConfig {
-                port: serial_port.clone(),
-                baud_rate: *baud_rate,
-                data_bits: *data_bits,
-                stop_bits: *stop_bits,
-                parity: parse_parity(parity),
-            })
-        }
-        TransportRequest::Ascii { serial_port, baud_rate, data_bits, stop_bits, parity } => {
-            Transport::Ascii(SerialConfig {
-                port: serial_port.clone(),
-                baud_rate: *baud_rate,
-                data_bits: *data_bits,
-                stop_bits: *stop_bits,
-                parity: parse_parity(parity),
-            })
-        }
-        TransportRequest::RtuOverTcp { host, port } => {
-            Transport::RtuOverTcp { host: host.clone(), port: *port }
-        }
+        TransportRequest::Tcp { port } => Transport::Tcp {
+            host: "0.0.0.0".into(),
+            port: *port,
+        },
+        TransportRequest::TcpTls { port } => Transport::TcpTls {
+            host: "0.0.0.0".into(),
+            port: *port,
+        },
+        TransportRequest::Rtu {
+            serial_port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
+        } => Transport::Rtu(SerialConfig {
+            port: serial_port.clone(),
+            baud_rate: *baud_rate,
+            data_bits: *data_bits,
+            stop_bits: *stop_bits,
+            parity: parse_parity(parity),
+        }),
+        TransportRequest::Ascii {
+            serial_port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
+        } => Transport::Ascii(SerialConfig {
+            port: serial_port.clone(),
+            baud_rate: *baud_rate,
+            data_bits: *data_bits,
+            stop_bits: *stop_bits,
+            parity: parse_parity(parity),
+        }),
+        TransportRequest::RtuOverTcp { host, port } => Transport::RtuOverTcp {
+            host: host.clone(),
+            port: *port,
+        },
     }
 }
 
@@ -201,7 +235,9 @@ pub async fn start_slave_connection(
         id: id.clone(),
         state: state_str,
     };
-    app_handle.emit("slave-connection-state", event).map_err(|e| e.to_string())?;
+    app_handle
+        .emit("slave-connection-state", event)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -230,16 +266,15 @@ pub async fn stop_slave_connection(
         id: id.clone(),
         state: state_str,
     };
-    app_handle.emit("slave-connection-state", event).map_err(|e| e.to_string())?;
+    app_handle
+        .emit("slave-connection-state", event)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_slave_connection(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_slave_connection(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut connections = state.slave_connections.write().await;
     connections
         .remove(&id)
@@ -385,7 +420,6 @@ pub struct WriteRegisterRequest {
     pub value: u16,
 }
 
-
 #[tauri::command]
 pub async fn add_register(
     state: State<'_, AppState>,
@@ -442,7 +476,9 @@ pub async fn remove_register(
         .get_mut(&slave_id)
         .ok_or_else(|| format!("slave {} not found", slave_id))?;
 
-    device.register_defs.retain(|d| !(d.address == address && d.register_type == reg_type));
+    device
+        .register_defs
+        .retain(|d| !(d.address == address && d.register_type == reg_type));
     Ok(())
 }
 
@@ -467,10 +503,30 @@ pub async fn read_register(
         .ok_or_else(|| format!("slave {} not found", slave_id))?;
 
     let value = match reg_type {
-        RegisterType::Coil => device.register_map.coils.get(&address).copied().unwrap_or(false) as u16,
-        RegisterType::DiscreteInput => device.register_map.discrete_inputs.get(&address).copied().unwrap_or(false) as u16,
-        RegisterType::HoldingRegister => device.register_map.holding_registers.get(&address).copied().unwrap_or(0),
-        RegisterType::InputRegister => device.register_map.input_registers.get(&address).copied().unwrap_or(0),
+        RegisterType::Coil => device
+            .register_map
+            .coils
+            .get(&address)
+            .copied()
+            .unwrap_or(false) as u16,
+        RegisterType::DiscreteInput => device
+            .register_map
+            .discrete_inputs
+            .get(&address)
+            .copied()
+            .unwrap_or(false) as u16,
+        RegisterType::HoldingRegister => device
+            .register_map
+            .holding_registers
+            .get(&address)
+            .copied()
+            .unwrap_or(0),
+        RegisterType::InputRegister => device
+            .register_map
+            .input_registers
+            .get(&address)
+            .copied()
+            .unwrap_or(0),
     };
 
     Ok(RegisterValueInfo { address, value })
@@ -495,10 +551,24 @@ pub async fn write_register(
         .ok_or_else(|| format!("slave {} not found", request.slave_id))?;
 
     match reg_type {
-        RegisterType::Coil => device.register_map.write_coil(request.address, request.value != 0),
-        RegisterType::DiscreteInput => { device.register_map.discrete_inputs.insert(request.address, request.value != 0); },
-        RegisterType::HoldingRegister => device.register_map.write_holding_register(request.address, request.value),
-        RegisterType::InputRegister => { device.register_map.input_registers.insert(request.address, request.value); },
+        RegisterType::Coil => device
+            .register_map
+            .write_coil(request.address, request.value != 0),
+        RegisterType::DiscreteInput => {
+            device
+                .register_map
+                .discrete_inputs
+                .insert(request.address, request.value != 0);
+        }
+        RegisterType::HoldingRegister => device
+            .register_map
+            .write_holding_register(request.address, request.value),
+        RegisterType::InputRegister => {
+            device
+                .register_map
+                .input_registers
+                .insert(request.address, request.value);
+        }
     }
 
     let event = RegisterValueEvent {
@@ -508,7 +578,9 @@ pub async fn write_register(
         address: request.address,
         value: request.value,
     };
-    app_handle.emit("register-value-changed", event).map_err(|e| e.to_string())?;
+    app_handle
+        .emit("register-value-changed", event)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -645,9 +717,10 @@ pub struct AddressConversionResult {
 }
 
 #[tauri::command]
-pub fn convert_plc_to_modbus(request: AddressConversionRequest) -> Result<AddressConversionResult, String> {
-    let addr = tools::plc_to_modbus_address(request.address)
-        .map_err(|e| format!("{}", e))?;
+pub fn convert_plc_to_modbus(
+    request: AddressConversionRequest,
+) -> Result<AddressConversionResult, String> {
+    let addr = tools::plc_to_modbus_address(request.address).map_err(|e| format!("{}", e))?;
 
     Ok(AddressConversionResult {
         plc_address: request.address,
@@ -671,24 +744,21 @@ pub fn convert_modbus_to_plc(address: u16, register_type: String) -> Result<u32,
 
 #[tauri::command]
 pub fn calculate_crc16(data: String) -> Result<String, String> {
-    let bytes = tools::parse_hex_string(&data)
-        .map_err(|e| format!("{}", e))?;
+    let bytes = tools::parse_hex_string(&data).map_err(|e| format!("{}", e))?;
     let crc = tools::crc16(&bytes);
     Ok(format!("{:04X}", crc))
 }
 
 #[tauri::command]
 pub fn calculate_lrc(data: String) -> Result<String, String> {
-    let bytes = tools::parse_hex_string(&data)
-        .map_err(|e| format!("{}", e))?;
+    let bytes = tools::parse_hex_string(&data).map_err(|e| format!("{}", e))?;
     let lrc = tools::lrc(&bytes);
     Ok(format!("{:02X}", lrc))
 }
 
 #[tauri::command]
 pub fn parse_hex(data: String) -> Result<Vec<u8>, String> {
-    tools::parse_hex_string(&data)
-        .map_err(|e| format!("{}", e))
+    tools::parse_hex_string(&data).map_err(|e| format!("{}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -719,9 +789,7 @@ pub struct PersistedAppState {
 }
 
 #[tauri::command]
-pub async fn export_app_state(
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn export_app_state(state: State<'_, AppState>) -> Result<String, String> {
     let connections = state.slave_connections.read().await;
 
     let mut persisted_connections = Vec::new();
@@ -756,8 +824,7 @@ pub async fn export_app_state(
         slave_connections: persisted_connections,
     };
 
-    serde_json::to_string_pretty(&app_state)
-        .map_err(|e| format!("failed to serialize: {}", e))
+    serde_json::to_string_pretty(&app_state).map_err(|e| format!("failed to serialize: {}", e))
 }
 
 #[derive(Debug, Deserialize)]
@@ -822,9 +889,7 @@ pub async fn import_app_state(
 }
 
 #[tauri::command]
-pub async fn clear_app_state(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn clear_app_state(state: State<'_, AppState>) -> Result<(), String> {
     state.slave_connections.write().await.clear();
     *state.next_slave_id.write().await = 0;
     Ok(())
@@ -858,11 +923,15 @@ pub async fn random_mutate_registers(
 
     for rt_str in &request.register_types {
         let reg_type = parse_register_type(rt_str)?;
-        let addrs: Vec<u16> = device.register_defs.iter()
+        let addrs: Vec<u16> = device
+            .register_defs
+            .iter()
             .filter(|d| d.register_type == reg_type)
             .map(|d| d.address)
             .collect();
-        if addrs.is_empty() { continue; }
+        if addrs.is_empty() {
+            continue;
+        }
 
         // Mutate ~30% of registers of this type, at least 3
         let count = (addrs.len() * 30 / 100).max(3).min(addrs.len());
@@ -875,21 +944,41 @@ pub async fn random_mutate_registers(
         for &addr in &pick[..count] {
             match reg_type {
                 RegisterType::Coil => {
-                    let cur = device.register_map.coils.get(&addr).copied().unwrap_or(false);
+                    let cur = device
+                        .register_map
+                        .coils
+                        .get(&addr)
+                        .copied()
+                        .unwrap_or(false);
                     device.register_map.write_coil(addr, !cur);
                 }
                 RegisterType::DiscreteInput => {
-                    let cur = device.register_map.discrete_inputs.get(&addr).copied().unwrap_or(false);
+                    let cur = device
+                        .register_map
+                        .discrete_inputs
+                        .get(&addr)
+                        .copied()
+                        .unwrap_or(false);
                     device.register_map.discrete_inputs.insert(addr, !cur);
                 }
                 RegisterType::HoldingRegister => {
-                    let cur = device.register_map.holding_registers.get(&addr).copied().unwrap_or(0);
+                    let cur = device
+                        .register_map
+                        .holding_registers
+                        .get(&addr)
+                        .copied()
+                        .unwrap_or(0);
                     let delta: i32 = rng.random_range(-100..=100);
                     let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
                     device.register_map.write_holding_register(addr, new_val);
                 }
                 RegisterType::InputRegister => {
-                    let cur = device.register_map.input_registers.get(&addr).copied().unwrap_or(0);
+                    let cur = device
+                        .register_map
+                        .input_registers
+                        .get(&addr)
+                        .copied()
+                        .unwrap_or(0);
                     let delta: i32 = rng.random_range(-100..=100);
                     let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
                     device.register_map.input_registers.insert(addr, new_val);
@@ -907,10 +996,7 @@ pub async fn random_mutate_registers(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn save_project_file(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
+pub async fn save_project_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let connections = state.slave_connections.read().await;
     let mut proj = ProjectFile::new_slave();
 
@@ -963,7 +1049,7 @@ pub async fn save_project_file(
             id: id.clone(),
             name,
             transport: proj_transport,
-            devices: vec![],  // Simplified for Phase 1 - register serialization will be added later
+            devices: vec![], // Simplified for Phase 1 - register serialization will be added later
             scan_groups: vec![],
         };
         proj.connections.push(conn_config);
@@ -1026,7 +1112,10 @@ pub async fn remove_data_source(
     register_type: String,
     address: u16,
 ) -> Result<(), String> {
-    let key = format!("{}:{}:{}:{}", connection_id, slave_id, register_type, address);
+    let key = format!(
+        "{}:{}:{}:{}",
+        connection_id, slave_id, register_type, address
+    );
     let mut data_sources = state.data_sources.write().await;
     data_sources.remove(&key);
     Ok(())
@@ -1047,9 +1136,7 @@ pub async fn list_data_sources(
 }
 
 #[tauri::command]
-pub async fn start_data_source_runner(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn start_data_source_runner(state: State<'_, AppState>) -> Result<(), String> {
     let data_sources = state.data_sources.clone();
     let connections = state.slave_connections.clone();
 
@@ -1089,7 +1176,10 @@ pub async fn start_data_source_runner(
                             }
                             "coil" => {
                                 device.register_map.coils.insert(address, value != 0);
-                                device.register_map.discrete_inputs.insert(address, value != 0);
+                                device
+                                    .register_map
+                                    .discrete_inputs
+                                    .insert(address, value != 0);
                             }
                             "input_register" => {
                                 device.register_map.input_registers.insert(address, value);

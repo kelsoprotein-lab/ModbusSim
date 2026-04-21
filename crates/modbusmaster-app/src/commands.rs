@@ -16,7 +16,7 @@ use modbussim_core::master::{
 };
 use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
-use modbussim_core::transport::{self, Transport, SerialConfig, Parity, TlsConfig};
+use modbussim_core::transport::{self, Parity, SerialConfig, TlsConfig, Transport};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,11 +117,32 @@ fn chrono_like_now() -> String {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportRequest {
-    Tcp { host: String, port: u16 },
-    TcpTls { host: String, port: u16 },
-    Rtu { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
-    Ascii { serial_port: String, baud_rate: u32, data_bits: u8, stop_bits: u8, parity: String },
-    RtuOverTcp { host: String, port: u16 },
+    Tcp {
+        host: String,
+        port: u16,
+    },
+    TcpTls {
+        host: String,
+        port: u16,
+    },
+    Rtu {
+        serial_port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    Ascii {
+        serial_port: String,
+        baud_rate: u32,
+        data_bits: u8,
+        stop_bits: u8,
+        parity: String,
+    },
+    RtuOverTcp {
+        host: String,
+        port: u16,
+    },
 }
 
 fn parse_parity(s: &str) -> Parity {
@@ -134,29 +155,44 @@ fn parse_parity(s: &str) -> Parity {
 
 fn to_transport(req: &TransportRequest) -> Transport {
     match req {
-        TransportRequest::Tcp { host, port } => Transport::Tcp { host: host.clone(), port: *port },
-        TransportRequest::TcpTls { host, port } => Transport::TcpTls { host: host.clone(), port: *port },
-        TransportRequest::Rtu { serial_port, baud_rate, data_bits, stop_bits, parity } => {
-            Transport::Rtu(SerialConfig {
-                port: serial_port.clone(),
-                baud_rate: *baud_rate,
-                data_bits: *data_bits,
-                stop_bits: *stop_bits,
-                parity: parse_parity(parity),
-            })
-        }
-        TransportRequest::Ascii { serial_port, baud_rate, data_bits, stop_bits, parity } => {
-            Transport::Ascii(SerialConfig {
-                port: serial_port.clone(),
-                baud_rate: *baud_rate,
-                data_bits: *data_bits,
-                stop_bits: *stop_bits,
-                parity: parse_parity(parity),
-            })
-        }
-        TransportRequest::RtuOverTcp { host, port } => {
-            Transport::RtuOverTcp { host: host.clone(), port: *port }
-        }
+        TransportRequest::Tcp { host, port } => Transport::Tcp {
+            host: host.clone(),
+            port: *port,
+        },
+        TransportRequest::TcpTls { host, port } => Transport::TcpTls {
+            host: host.clone(),
+            port: *port,
+        },
+        TransportRequest::Rtu {
+            serial_port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
+        } => Transport::Rtu(SerialConfig {
+            port: serial_port.clone(),
+            baud_rate: *baud_rate,
+            data_bits: *data_bits,
+            stop_bits: *stop_bits,
+            parity: parse_parity(parity),
+        }),
+        TransportRequest::Ascii {
+            serial_port,
+            baud_rate,
+            data_bits,
+            stop_bits,
+            parity,
+        } => Transport::Ascii(SerialConfig {
+            port: serial_port.clone(),
+            baud_rate: *baud_rate,
+            data_bits: *data_bits,
+            stop_bits: *stop_bits,
+            parity: parse_parity(parity),
+        }),
+        TransportRequest::RtuOverTcp { host, port } => Transport::RtuOverTcp {
+            host: host.clone(),
+            port: *port,
+        },
     }
 }
 
@@ -217,7 +253,8 @@ pub async fn create_master_connection(
     };
 
     let log_collector = Arc::new(LogCollector::new());
-    let connection = MasterConnection::new(config.clone(), transport).with_log_collector(log_collector.clone());
+    let connection =
+        MasterConnection::new(config.clone(), transport).with_log_collector(log_collector.clone());
 
     let info = MasterConnectionInfo {
         id: id.clone(),
@@ -507,7 +544,9 @@ pub async fn list_scan_groups(
 /// Internal helper: start polling for a single group and spawn bridge task.
 async fn start_polling_inner(
     app: &AppHandle,
-    master_conns: &std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, MasterConnectionState>>>,
+    master_conns: &std::sync::Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, MasterConnectionState>>,
+    >,
     connection_id: &str,
     group_id: &str,
 ) -> Result<(), String> {
@@ -885,8 +924,7 @@ pub struct PlcToModbusResult {
 
 #[tauri::command]
 pub fn convert_plc_to_modbus(request: PlcToModbusRequest) -> Result<PlcToModbusResult, String> {
-    let result =
-        tools::plc_to_modbus_address(request.plc_address).map_err(|e| format!("{}", e))?;
+    let result = tools::plc_to_modbus_address(request.plc_address).map_err(|e| format!("{}", e))?;
     Ok(PlcToModbusResult {
         register_type: format!("{:?}", result.address_type),
         modbus_address: result.address,
@@ -959,7 +997,11 @@ pub async fn start_slave_id_scan(
     // Create cancel channel
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let scan_key = format!("{}:slave_scan", connection_id);
-    state.active_scans.write().await.insert(scan_key.clone(), cancel_tx);
+    state
+        .active_scans
+        .write()
+        .await
+        .insert(scan_key.clone(), cancel_tx);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(32);
     let conn_id = connection_id.clone();
@@ -1005,7 +1047,6 @@ pub async fn start_slave_id_scan(
     Ok(())
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct RegisterScanRequest {
     pub function: String,
@@ -1038,7 +1079,11 @@ pub async fn start_register_scan(
     // Create cancel channel
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let scan_key = format!("{}:register_scan", connection_id);
-    state.active_scans.write().await.insert(scan_key.clone(), cancel_tx);
+    state
+        .active_scans
+        .write()
+        .await
+        .insert(scan_key.clone(), cancel_tx);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(32);
     let conn_id = connection_id.clone();
@@ -1126,10 +1171,7 @@ fn read_function_to_fc(function: ReadFunction) -> u8 {
 }
 
 #[tauri::command]
-pub async fn save_project_file(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
+pub async fn save_project_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let conns = state.master_connections.read().await;
     let mut proj = ProjectFile::new_master();
 
@@ -1183,16 +1225,18 @@ pub async fn save_project_file(
             name,
             transport: proj_transport,
             devices: vec![],
-            scan_groups: conn_state.scan_groups.iter().map(|sg| {
-                project::ScanGroupConfig {
+            scan_groups: conn_state
+                .scan_groups
+                .iter()
+                .map(|sg| project::ScanGroupConfig {
                     name: sg.name.clone(),
                     slave_id: sg.slave_id.unwrap_or(config.slave_id),
                     function_code: read_function_to_fc(sg.function),
                     start_address: sg.start_address,
                     count: sg.quantity,
                     interval_ms: sg.interval_ms,
-                }
-            }).collect(),
+                })
+                .collect(),
         };
         proj.connections.push(conn_config);
     }

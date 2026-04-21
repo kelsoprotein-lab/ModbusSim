@@ -5,13 +5,38 @@ use std::time::Instant;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DataSource {
-    Fixed { value: u16 },
-    Random { min: u16, max: u16 },
-    Sine { amplitude: f64, frequency: f64, offset: f64, phase: f64 },
-    Sawtooth { min: u16, max: u16, period_ms: u64 },
-    Triangle { min: u16, max: u16, period_ms: u64 },
-    Counter { start: u16, step: i16, wrap: bool },
-    CsvPlayback { values: Vec<u16>, loop_playback: bool },
+    Fixed {
+        value: u16,
+    },
+    Random {
+        min: u16,
+        max: u16,
+    },
+    Sine {
+        amplitude: f64,
+        frequency: f64,
+        offset: f64,
+        phase: f64,
+    },
+    Sawtooth {
+        min: u16,
+        max: u16,
+        period_ms: u64,
+    },
+    Triangle {
+        min: u16,
+        max: u16,
+        period_ms: u64,
+    },
+    Counter {
+        start: u16,
+        step: i16,
+        wrap: bool,
+    },
+    CsvPlayback {
+        values: Vec<u16>,
+        loop_playback: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,17 +75,25 @@ impl DataSourceState {
         match &self.config.source.clone() {
             DataSource::Fixed { value } => *value,
 
-            DataSource::Random { min, max } => {
-                rand::thread_rng().gen_range(*min..=*max)
-            }
+            DataSource::Random { min, max } => rand::thread_rng().gen_range(*min..=*max),
 
-            DataSource::Sine { amplitude, frequency, offset, phase } => {
+            DataSource::Sine {
+                amplitude,
+                frequency,
+                offset,
+                phase,
+            } => {
                 let t = self.start_time.elapsed().as_secs_f64();
-                let v = offset + amplitude * (2.0 * std::f64::consts::PI * frequency * t + phase).sin();
+                let v =
+                    offset + amplitude * (2.0 * std::f64::consts::PI * frequency * t + phase).sin();
                 v.clamp(0.0, 65535.0) as u16
             }
 
-            DataSource::Sawtooth { min, max, period_ms } => {
+            DataSource::Sawtooth {
+                min,
+                max,
+                period_ms,
+            } => {
                 if *period_ms == 0 {
                     return *min;
                 }
@@ -71,7 +104,11 @@ impl DataSourceState {
                 (*min as f64 + frac * range) as u16
             }
 
-            DataSource::Triangle { min, max, period_ms } => {
+            DataSource::Triangle {
+                min,
+                max,
+                period_ms,
+            } => {
                 if *period_ms == 0 {
                     return *min;
                 }
@@ -99,7 +136,10 @@ impl DataSourceState {
                 current
             }
 
-            DataSource::CsvPlayback { values, loop_playback } => {
+            DataSource::CsvPlayback {
+                values,
+                loop_playback,
+            } => {
                 if values.is_empty() {
                     return 0;
                 }
@@ -146,7 +186,11 @@ mod tests {
 
     #[test]
     fn test_counter_increment() {
-        let mut s = make_state(DataSource::Counter { start: 0, step: 1, wrap: false });
+        let mut s = make_state(DataSource::Counter {
+            start: 0,
+            step: 1,
+            wrap: false,
+        });
         assert_eq!(s.next_value(), 0);
         assert_eq!(s.next_value(), 1);
         assert_eq!(s.next_value(), 2);
@@ -155,14 +199,22 @@ mod tests {
     #[test]
     fn test_counter_wrap() {
         // start at 65534, step 2, wrap=true => 65534, 65536%65536=0
-        let mut s = make_state(DataSource::Counter { start: 65534, step: 2, wrap: true });
+        let mut s = make_state(DataSource::Counter {
+            start: 65534,
+            step: 2,
+            wrap: true,
+        });
         assert_eq!(s.next_value(), 65534);
         assert_eq!(s.next_value(), 0);
     }
 
     #[test]
     fn test_counter_no_wrap_clamp() {
-        let mut s = make_state(DataSource::Counter { start: 65535, step: 1, wrap: false });
+        let mut s = make_state(DataSource::Counter {
+            start: 65535,
+            step: 1,
+            wrap: false,
+        });
         assert_eq!(s.next_value(), 65535);
         assert_eq!(s.next_value(), 65535);
     }
@@ -214,7 +266,12 @@ mod tests {
         let json = serde_json::to_string(&cfg).unwrap();
         let cfg2: DataSourceConfig = serde_json::from_str(&json).unwrap();
         match cfg2.source {
-            DataSource::Sine { amplitude, frequency, offset, phase } => {
+            DataSource::Sine {
+                amplitude,
+                frequency,
+                offset,
+                phase,
+            } => {
                 assert_eq!(amplitude, 100.0);
                 assert_eq!(frequency, 1.0);
                 assert_eq!(offset, 32768.0);
@@ -227,7 +284,11 @@ mod tests {
 
     #[test]
     fn test_sawtooth_zero_period() {
-        let mut s = make_state(DataSource::Sawtooth { min: 5, max: 100, period_ms: 0 });
+        let mut s = make_state(DataSource::Sawtooth {
+            min: 5,
+            max: 100,
+            period_ms: 0,
+        });
         assert_eq!(s.next_value(), 5);
     }
 }

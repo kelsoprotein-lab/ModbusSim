@@ -166,8 +166,12 @@ impl RegisterMap {
         (start..start + count).all(|a| self.input_registers.contains_key(&a))
     }
 
-    pub fn has_coil(&self, addr: u16) -> bool { self.coils.contains_key(&addr) }
-    pub fn has_holding_register(&self, addr: u16) -> bool { self.holding_registers.contains_key(&addr) }
+    pub fn has_coil(&self, addr: u16) -> bool {
+        self.coils.contains_key(&addr)
+    }
+    pub fn has_holding_register(&self, addr: u16) -> bool {
+        self.holding_registers.contains_key(&addr)
+    }
 
     /// Ensure map entries exist for every address covered by `def`.
     /// Uses default values (0 / false) only for addresses that are absent,
@@ -180,12 +184,22 @@ impl RegisterMap {
             }
         };
         for i in 0..count {
-            let Some(addr) = def.address.checked_add(i) else { break; };
+            let Some(addr) = def.address.checked_add(i) else {
+                break;
+            };
             match def.register_type {
-                RegisterType::Coil => { self.coils.entry(addr).or_insert(false); }
-                RegisterType::DiscreteInput => { self.discrete_inputs.entry(addr).or_insert(false); }
-                RegisterType::HoldingRegister => { self.holding_registers.entry(addr).or_insert(0); }
-                RegisterType::InputRegister => { self.input_registers.entry(addr).or_insert(0); }
+                RegisterType::Coil => {
+                    self.coils.entry(addr).or_insert(false);
+                }
+                RegisterType::DiscreteInput => {
+                    self.discrete_inputs.entry(addr).or_insert(false);
+                }
+                RegisterType::HoldingRegister => {
+                    self.holding_registers.entry(addr).or_insert(0);
+                }
+                RegisterType::InputRegister => {
+                    self.input_registers.entry(addr).or_insert(0);
+                }
             }
         }
     }
@@ -194,18 +208,16 @@ impl RegisterMap {
 // --- Data type encoding/decoding with endian support ---
 
 /// Encode a typed value into one or two raw u16 registers
-pub fn encode_value(value: f64, data_type: DataType, endian: Endian) -> Result<Vec<u16>, RegisterError> {
+pub fn encode_value(
+    value: f64,
+    data_type: DataType,
+    endian: Endian,
+) -> Result<Vec<u16>, RegisterError> {
     validate_range(value, data_type)?;
     match data_type {
-        DataType::Bool => {
-            Ok(vec![if value != 0.0 { 1 } else { 0 }])
-        }
-        DataType::UInt16 => {
-            Ok(vec![value as u16])
-        }
-        DataType::Int16 => {
-            Ok(vec![(value as i16) as u16])
-        }
+        DataType::Bool => Ok(vec![if value != 0.0 { 1 } else { 0 }]),
+        DataType::UInt16 => Ok(vec![value as u16]),
+        DataType::Int16 => Ok(vec![(value as i16) as u16]),
         DataType::UInt32 => {
             let raw = (value as u32).to_be_bytes();
             Ok(apply_endian_encode(raw, endian))
@@ -222,7 +234,11 @@ pub fn encode_value(value: f64, data_type: DataType, endian: Endian) -> Result<V
 }
 
 /// Decode one or two raw u16 registers into a typed value
-pub fn decode_value(registers: &[u16], data_type: DataType, endian: Endian) -> Result<f64, RegisterError> {
+pub fn decode_value(
+    registers: &[u16],
+    data_type: DataType,
+    endian: Endian,
+) -> Result<f64, RegisterError> {
     match data_type {
         DataType::Bool => {
             let v = registers.first().ok_or(RegisterError::InvalidData)?;
@@ -265,9 +281,13 @@ pub fn validate_range(value: f64, data_type: DataType) -> Result<(), RegisterErr
     let valid = match data_type {
         DataType::Bool => value == 0.0 || value == 1.0,
         DataType::UInt16 => value >= 0.0 && value <= u16::MAX as f64 && value.fract() == 0.0,
-        DataType::Int16 => value >= i16::MIN as f64 && value <= i16::MAX as f64 && value.fract() == 0.0,
+        DataType::Int16 => {
+            value >= i16::MIN as f64 && value <= i16::MAX as f64 && value.fract() == 0.0
+        }
         DataType::UInt32 => value >= 0.0 && value <= u32::MAX as f64 && value.fract() == 0.0,
-        DataType::Int32 => value >= i32::MIN as f64 && value <= i32::MAX as f64 && value.fract() == 0.0,
+        DataType::Int32 => {
+            value >= i32::MIN as f64 && value <= i32::MAX as f64 && value.fract() == 0.0
+        }
         DataType::Float32 => true, // any f64 that can be cast to f32
     };
     if valid {

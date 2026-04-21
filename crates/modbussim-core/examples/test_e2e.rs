@@ -7,7 +7,9 @@
 /// 6. Verify data is received
 /// 7. Write a value and verify it's updated on next poll
 use modbussim_core::log_collector::LogCollector;
-use modbussim_core::master::{MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup};
+use modbussim_core::master::{
+    MasterConfig, MasterConnection, PollEvent, ReadFunction, ReadResult, ScanGroup,
+};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
 use modbussim_core::transport::Transport;
 use std::sync::Arc;
@@ -46,7 +48,8 @@ async fn main() {
         port: config.port,
     };
     let log_collector = Arc::new(LogCollector::new());
-    let mut master = MasterConnection::new(config, master_transport).with_log_collector(log_collector.clone());
+    let mut master =
+        MasterConnection::new(config, master_transport).with_log_collector(log_collector.clone());
     println!("       State: {:?}\n", master.state());
 
     // Step 3: Connect (simulates connect_master command)
@@ -71,7 +74,10 @@ async fn main() {
     // Step 5: Start polling (simulates start_polling command)
     println!("[5/7] Starting polling...");
     let mut rx = master.start_scan_group(&scan_group).await.unwrap();
-    println!("       Polling active: {}\n", master.is_scan_active("sg-test-1"));
+    println!(
+        "       Polling active: {}\n",
+        master.is_scan_active("sg-test-1")
+    );
 
     // Step 6: Receive poll data (simulates the bridge task + frontend display)
     println!("[6/7] Receiving poll data (3 cycles)...");
@@ -118,9 +124,17 @@ async fn main() {
     let logs = log_collector.get_all().await;
     println!("\n  Communication logs: {} entries", logs.len());
     for log in logs.iter().take(5) {
-        println!("    [{}] {} {} {}", log.timestamp.format("%H:%M:%S%.3f"),
-                 if log.direction == modbussim_core::log_entry::Direction::Tx { "TX" } else { "RX" },
-                 log.function_code.name(), log.detail);
+        println!(
+            "    [{}] {} {} {}",
+            log.timestamp.format("%H:%M:%S%.3f"),
+            if log.direction == modbussim_core::log_entry::Direction::Tx {
+                "TX"
+            } else {
+                "RX"
+            },
+            log.function_code.name(),
+            log.detail
+        );
     }
     if logs.len() > 5 {
         println!("    ... and {} more", logs.len() - 5);

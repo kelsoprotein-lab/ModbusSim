@@ -128,7 +128,10 @@ impl SlaveDevice {
                 name: String::new(),
                 comment: String::new(),
             });
-            device.register_map.discrete_inputs.insert(addr, rng.gen::<bool>());
+            device
+                .register_map
+                .discrete_inputs
+                .insert(addr, rng.gen::<bool>());
 
             // FC3 Holding Register
             defs.push(RegisterDef {
@@ -139,7 +142,9 @@ impl SlaveDevice {
                 name: String::new(),
                 comment: String::new(),
             });
-            device.register_map.write_holding_register(addr, rng.gen::<u16>());
+            device
+                .register_map
+                .write_holding_register(addr, rng.gen::<u16>());
 
             // FC4 Input Register
             defs.push(RegisterDef {
@@ -150,7 +155,10 @@ impl SlaveDevice {
                 name: String::new(),
                 comment: String::new(),
             });
-            device.register_map.input_registers.insert(addr, rng.gen::<u16>());
+            device
+                .register_map
+                .input_registers
+                .insert(addr, rng.gen::<u16>());
         }
 
         device.register_defs = defs;
@@ -292,14 +300,13 @@ impl SlaveConnection {
             Transport::Ascii(serial_config) => {
                 let config = serial_config.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::ascii_slave::run_ascii_slave(
-                            config,
-                            devices,
-                            log_collector,
-                            shutdown_rx,
-                        )
-                        .await
+                    if let Err(e) = crate::ascii_slave::run_ascii_slave(
+                        config,
+                        devices,
+                        log_collector,
+                        shutdown_rx,
+                    )
+                    .await
                     {
                         log::error!("ASCII slave error: {}", e);
                     }
@@ -309,15 +316,14 @@ impl SlaveConnection {
                 let host = host.clone();
                 let port = *port;
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::rtu_tcp_slave::run_rtu_tcp_slave(
-                            host,
-                            port,
-                            devices,
-                            log_collector,
-                            shutdown_rx,
-                        )
-                        .await
+                    if let Err(e) = crate::rtu_tcp_slave::run_rtu_tcp_slave(
+                        host,
+                        port,
+                        devices,
+                        log_collector,
+                        shutdown_rx,
+                    )
+                    .await
                     {
                         log::error!("RTU-over-TCP slave error: {}", e);
                     }
@@ -330,7 +336,11 @@ impl SlaveConnection {
                 let tls_config = self.tls_config.clone();
                 tokio::spawn(async move {
                     if let Err(e) = crate::tls_slave::run_tls_slave(
-                        addr, tls_config, devices, log_collector, shutdown_rx,
+                        addr,
+                        tls_config,
+                        devices,
+                        log_collector,
+                        shutdown_rx,
                     )
                     .await
                     {
@@ -372,7 +382,10 @@ struct SlaveService {
 
 impl SlaveService {
     fn new(devices: SharedDevices, log_collector: SharedLogCollector) -> Self {
-        Self { devices, log_collector }
+        Self {
+            devices,
+            log_collector,
+        }
     }
 
     fn get_function_code(request: &Request<'_>) -> Option<FunctionCode> {
@@ -697,9 +710,11 @@ mod tests {
     fn test_handle_write_single_register() {
         let mut map = RegisterMap::new();
         map.holding_registers.insert(10, 0);
-        let response =
-            handle_write(&mut map, Request::WriteSingleRegister(10, 0xABCD)).unwrap();
-        assert!(matches!(response, Response::WriteSingleRegister(10, 0xABCD)));
+        let response = handle_write(&mut map, Request::WriteSingleRegister(10, 0xABCD)).unwrap();
+        assert!(matches!(
+            response,
+            Response::WriteSingleRegister(10, 0xABCD)
+        ));
         assert_eq!(map.read_holding_registers(10, 1), vec![0xABCD]);
     }
 
@@ -826,9 +841,16 @@ mod tests {
 
         // At least some values should be non-zero/true (statistically near-certain with 101 entries)
         let has_true_coil = (0..=100u16).any(|addr| *device.register_map.coils.get(&addr).unwrap());
-        let has_nonzero_hr = (0..=100u16).any(|addr| *device.register_map.holding_registers.get(&addr).unwrap() != 0);
-        assert!(has_true_coil, "expected at least one true coil with random init");
-        assert!(has_nonzero_hr, "expected at least one non-zero holding register with random init");
+        let has_nonzero_hr = (0..=100u16)
+            .any(|addr| *device.register_map.holding_registers.get(&addr).unwrap() != 0);
+        assert!(
+            has_true_coil,
+            "expected at least one true coil with random init"
+        );
+        assert!(
+            has_nonzero_hr,
+            "expected at least one non-zero holding register with random init"
+        );
     }
 
     #[test]

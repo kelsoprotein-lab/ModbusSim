@@ -121,7 +121,11 @@ pub fn parse_request_pdu(pdu: &[u8]) -> Result<ModbusRequest, String> {
                 return Err(format!("FC10: byte_count mismatch"));
             }
             if byte_count != quantity * 2 {
-                return Err(format!("FC10: byte_count {} != quantity*2 {}", byte_count, quantity * 2));
+                return Err(format!(
+                    "FC10: byte_count {} != quantity*2 {}",
+                    byte_count,
+                    quantity * 2
+                ));
             }
             let reg_bytes = &data[5..5 + byte_count];
             let mut values = Vec::with_capacity(quantity);
@@ -162,7 +166,13 @@ pub fn build_response_pdu(fc: u8, data: &ResponseData) -> Vec<u8> {
         }
         ResponseData::WriteSingleCoil { address, value } => {
             let val_hi = if *value { 0xFF } else { 0x00 };
-            vec![fc, (address >> 8) as u8, (address & 0xFF) as u8, val_hi, 0x00]
+            vec![
+                fc,
+                (address >> 8) as u8,
+                (address & 0xFF) as u8,
+                val_hi,
+                0x00,
+            ]
         }
         ResponseData::WriteSingleRegister { address, value } => {
             vec![
@@ -283,14 +293,20 @@ mod tests {
 
     #[test]
     fn test_build_response_write_single_coil() {
-        let data = ResponseData::WriteSingleCoil { address: 10, value: true };
+        let data = ResponseData::WriteSingleCoil {
+            address: 10,
+            value: true,
+        };
         let pdu = build_response_pdu(0x05, &data);
         assert_eq!(pdu, vec![0x05, 0x00, 0x0A, 0xFF, 0x00]);
     }
 
     #[test]
     fn test_build_response_write_multiple() {
-        let data = ResponseData::WriteMultiple { address: 1, quantity: 10 };
+        let data = ResponseData::WriteMultiple {
+            address: 1,
+            quantity: 10,
+        };
         let pdu = build_response_pdu(0x10, &data);
         assert_eq!(pdu, vec![0x10, 0x00, 0x01, 0x00, 0x0A]);
     }

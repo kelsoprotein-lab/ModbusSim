@@ -49,8 +49,7 @@ impl ReconnectPolicy {
     ///
     /// delay = initial_delay_ms * backoff_factor^attempt, clamped to max_delay_ms.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let delay_ms =
-            self.initial_delay_ms as f64 * self.backoff_factor.powi(attempt as i32);
+        let delay_ms = self.initial_delay_ms as f64 * self.backoff_factor.powi(attempt as i32);
         let clamped = delay_ms.min(self.max_delay_ms as f64) as u64;
         Duration::from_millis(clamped)
     }

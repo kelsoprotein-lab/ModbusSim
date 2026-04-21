@@ -97,8 +97,9 @@ pub fn plc_to_modbus_address(plc_address: u32) -> Result<ModbusAddress, ToolsErr
     let prefix = plc_address / 10000;
     let address_within_range = plc_address % 10000;
 
-    let address_type = ModbusAddressType::from_plc_prefix(prefix)
-        .ok_or_else(|| ToolsError::InvalidAddress(format!("unknown PLC address prefix: {}", prefix)))?;
+    let address_type = ModbusAddressType::from_plc_prefix(prefix).ok_or_else(|| {
+        ToolsError::InvalidAddress(format!("unknown PLC address prefix: {}", prefix))
+    })?;
 
     if address_within_range > 9999 {
         return Err(ToolsError::InvalidAddress(format!(
@@ -110,7 +111,10 @@ pub fn plc_to_modbus_address(plc_address: u32) -> Result<ModbusAddress, ToolsErr
     // PLC address directly maps to protocol address
     let address = address_within_range as u16;
 
-    Ok(ModbusAddress { address, address_type })
+    Ok(ModbusAddress {
+        address,
+        address_type,
+    })
 }
 
 /// Convert a Modbus address to a PLC address.
@@ -512,9 +516,18 @@ mod tests {
     #[test]
     fn test_validate_modbus_address() {
         // All valid Modbus addresses are within 0-65535 (u16 range)
-        assert!(validate_modbus_address(0, ModbusAddressType::HoldingRegister));
-        assert!(validate_modbus_address(0xFFFF, ModbusAddressType::HoldingRegister));
+        assert!(validate_modbus_address(
+            0,
+            ModbusAddressType::HoldingRegister
+        ));
+        assert!(validate_modbus_address(
+            0xFFFF,
+            ModbusAddressType::HoldingRegister
+        ));
         assert!(validate_modbus_address(32768, ModbusAddressType::Coil));
-        assert!(validate_modbus_address(65535, ModbusAddressType::DiscreteInput));
+        assert!(validate_modbus_address(
+            65535,
+            ModbusAddressType::DiscreteInput
+        ));
     }
 }

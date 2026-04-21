@@ -132,7 +132,10 @@ impl LogCollector {
             };
             output.push_str(&format!(
                 "[{}] {} {} - {}\n",
-                timestamp, dir, entry.function_code.name(), entry.detail
+                timestamp,
+                dir,
+                entry.function_code.name(),
+                entry.detail
             ));
         }
         output
@@ -150,7 +153,10 @@ impl LogCollector {
             };
             output.push_str(&format!(
                 "[{}] {} {} - {}\n",
-                timestamp, dir, entry.function_code.name(), entry.detail
+                timestamp,
+                dir,
+                entry.function_code.name(),
+                entry.detail
             ));
         }
         output
@@ -234,7 +240,11 @@ mod tests {
     #[tokio::test]
     async fn test_export_text() {
         let collector = LogCollector::new();
-        let entry = LogEntry::new(Direction::Tx, FunctionCode::WriteSingleRegister, "W 10 = 42");
+        let entry = LogEntry::new(
+            Direction::Tx,
+            FunctionCode::WriteSingleRegister,
+            "W 10 = 42",
+        );
         collector.add(entry).await;
 
         let text = collector.export_text().await;

@@ -62,7 +62,11 @@ impl RegisterValues {
         Self {
             coils: map.coils.iter().map(|(&k, &v)| (k, v)).collect(),
             discrete_inputs: map.discrete_inputs.iter().map(|(&k, &v)| (k, v)).collect(),
-            holding_registers: map.holding_registers.iter().map(|(&k, &v)| (k, v)).collect(),
+            holding_registers: map
+                .holding_registers
+                .iter()
+                .map(|(&k, &v)| (k, v))
+                .collect(),
             input_registers: map.input_registers.iter().map(|(&k, &v)| (k, v)).collect(),
         }
     }
@@ -248,9 +252,16 @@ impl DeviceConfig {
 /// Helper to get current register value.
 fn get_register_value(map: &RegisterMap, def: &RegisterDef) -> Option<u16> {
     match def.register_type {
-        RegisterType::Coil => map.coils.get(&def.address).copied().map(|v| if v { 1 } else { 0 }),
+        RegisterType::Coil => map
+            .coils
+            .get(&def.address)
+            .copied()
+            .map(|v| if v { 1 } else { 0 }),
         RegisterType::DiscreteInput => {
-            map.discrete_inputs.get(&def.address).copied().map(|v| if v { 1 } else { 0 })
+            map.discrete_inputs
+                .get(&def.address)
+                .copied()
+                .map(|v| if v { 1 } else { 0 })
         }
         RegisterType::HoldingRegister => map.holding_registers.get(&def.address).copied(),
         RegisterType::InputRegister => map.input_registers.get(&def.address).copied(),
@@ -290,7 +301,9 @@ impl ConnectionConfig {
             _ => None,
         };
         if tcp_port == Some(0) {
-            return Err(ConfigError::InvalidConfig("port must be non-zero".to_string()));
+            return Err(ConfigError::InvalidConfig(
+                "port must be non-zero".to_string(),
+            ));
         }
 
         // Validate each device
@@ -532,17 +545,15 @@ mod tests {
         let config = DeviceConfig {
             slave_id: 1,
             name: "Test Device".to_string(),
-            registers: vec![
-                RegisterDefEntry {
-                    address: 0,
-                    register_type: RegisterType::HoldingRegister,
-                    data_type: DataType::UInt16,
-                    endian: Endian::Big,
-                    name: "HR0".to_string(),
-                    comment: "".to_string(),
-                    value: Some(1234),
-                },
-            ],
+            registers: vec![RegisterDefEntry {
+                address: 0,
+                register_type: RegisterType::HoldingRegister,
+                data_type: DataType::UInt16,
+                endian: Endian::Big,
+                name: "HR0".to_string(),
+                comment: "".to_string(),
+                value: Some(1234),
+            }],
         };
 
         let device = config.to_slave_device().unwrap();
@@ -600,7 +611,10 @@ mod tests {
             Transport::Tcp { host, port } if host == "0.0.0.0" && *port == 502
         ));
         assert_eq!(config.connections[0].devices[0].slave_id, 1);
-        assert_eq!(config.connections[0].devices[0].registers[0].value, Some(1234));
+        assert_eq!(
+            config.connections[0].devices[0].registers[0].value,
+            Some(1234)
+        );
 
         // Re-export and verify roundtrip produces equivalent JSON
         let exported = config.to_json().unwrap();
