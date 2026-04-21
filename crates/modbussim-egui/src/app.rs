@@ -1709,9 +1709,7 @@ impl SlaveApp {
                 // 状态圆点（左侧 8px 偏移、半径 3.5）
                 let dot_center = row_resp.rect.left_center() + egui::vec2(8.0, 0.0);
                 if is_running {
-                    let phase = (ui.input(|i| i.time)
-                        * (2.0 * std::f64::consts::PI / 1.5))
-                        .sin()
+                    let phase = (ui.input(|i| i.time) * (2.0 * std::f64::consts::PI / 1.5)).sin()
                         * 0.5
                         + 0.5;
                     let alpha = (180.0 + 75.0 * phase) as u8;
@@ -1757,12 +1755,14 @@ impl SlaveApp {
                 let (icon, label_text, color, act): (&str, &str, egui::Color32, TreeAction) =
                     match snap.state {
                         ConnectionState::Stopped => (
-                            "▶", "启动",
+                            "▶",
+                            "启动",
                             theme::success(flavor),
                             TreeAction::StartConn(snap.id.clone()),
                         ),
                         ConnectionState::Running => (
-                            "■", "停止",
+                            "■",
+                            "停止",
                             theme::warn(flavor),
                             TreeAction::StopConn(snap.id.clone()),
                         ),
@@ -3491,8 +3491,7 @@ impl eframe::App for SlaveApp {
                                                         Some(TreeAction::RemoveConn(conn_id));
                                                     self.pending_delete = None;
                                                 } else {
-                                                    self.pending_delete =
-                                                        Some((conn_id, now));
+                                                    self.pending_delete = Some((conn_id, now));
                                                     ctx.request_repaint_after(
                                                         std::time::Duration::from_millis(3100),
                                                     );
@@ -3567,13 +3566,17 @@ impl eframe::App for SlaveApp {
                                 theme::text_muted(flavor),
                             )
                         } else if any_running {
-                            let phase = (ui.input(|i| i.time)
-                                * (2.0 * std::f64::consts::PI / 1.5))
+                            let phase = (ui.input(|i| i.time) * (2.0 * std::f64::consts::PI / 1.5))
                                 .sin()
                                 * 0.5
                                 + 0.5;
                             let alpha = (180.0 + 75.0 * phase) as u8;
-                            (theme::success(flavor), alpha, "运行中", theme::success(flavor))
+                            (
+                                theme::success(flavor),
+                                alpha,
+                                "运行中",
+                                theme::success(flavor),
+                            )
                         } else {
                             (
                                 theme::text_muted(flavor),
@@ -3582,7 +3585,11 @@ impl eframe::App for SlaveApp {
                                 theme::text_muted(flavor),
                             )
                         };
-                        let dot = if zero_conns || !any_running { "○" } else { "●" };
+                        let dot = if zero_conns || !any_running {
+                            "○"
+                        } else {
+                            "●"
+                        };
                         let dot_color_with_alpha = egui::Color32::from_rgba_unmultiplied(
                             dot_color.r(),
                             dot_color.g(),
