@@ -1752,23 +1752,25 @@ impl SlaveApp {
                 }
             });
 
-            // Per-connection start/stop/delete buttons
+            // Per-connection: 单个状态相关按钮（启动/停止），删除挪到 footer
             ui.horizontal(|ui| {
                 ui.add_space(18.0);
-                match snap.state {
-                    ConnectionState::Stopped => {
-                        if ui.small_button("启动").clicked() {
-                            action = Some(TreeAction::StartConn(snap.id.clone()));
-                        }
-                    }
-                    ConnectionState::Running => {
-                        if ui.small_button("停止").clicked() {
-                            action = Some(TreeAction::StopConn(snap.id.clone()));
-                        }
-                    }
-                }
-                if ui.small_button("删除").clicked() {
-                    action = Some(TreeAction::RemoveConn(snap.id.clone()));
+                let (icon, label_text, color, act): (&str, &str, egui::Color32, TreeAction) =
+                    match snap.state {
+                        ConnectionState::Stopped => (
+                            "▶", "启动",
+                            theme::success(flavor),
+                            TreeAction::StartConn(snap.id.clone()),
+                        ),
+                        ConnectionState::Running => (
+                            "■", "停止",
+                            theme::warn(flavor),
+                            TreeAction::StopConn(snap.id.clone()),
+                        ),
+                    };
+                ui.label(egui::RichText::new(icon).color(color).size(12.0));
+                if uikit::secondary_button_sm(ui, flavor, label_text).clicked() {
+                    action = Some(act);
                 }
             });
 
