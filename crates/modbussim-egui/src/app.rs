@@ -283,7 +283,6 @@ pub struct SlaveApp {
     show_new_tcp_dialog: bool,
     /// 删除连接二次确认状态：(conn_id, 首次点击时刻)。
     /// 3 秒内同一连接再次点删除按钮 → 真删；否则按钮 label 自动恢复。
-    #[allow(dead_code)]
     pending_delete: Option<(String, std::time::Instant)>,
     last_error: Option<String>,
 
@@ -3468,29 +3467,36 @@ impl eframe::App for SlaveApp {
                                         });
                                     if let Some(snap) = active_conn {
                                         let conn_id = snap.id.clone();
-                                        let is_running = snap.state == ConnectionState::Running;
+                                        let conn_label_short = snap.label.clone();
+                                        let now = std::time::Instant::now();
+                                        let confirming = self
+                                            .pending_delete
+                                            .as_ref()
+                                            .filter(|(id, t)| {
+                                                id == &conn_id
+                                                    && now.duration_since(*t).as_secs_f32() < 3.0
+                                            })
+                                            .is_some();
+                                        let label: String = if confirming {
+                                            "× 再点一次确认".to_string()
+                                        } else {
+                                            format!("× 删除连接 {}", conn_label_short)
+                                        };
                                         ui.horizontal(|ui| {
-                                            let stop_label =
-                                                if is_running { "停止" } else { "启动" };
-                                            if uikit::link_action(
-                                                ui,
-                                                self.flavor,
-                                                stop_label,
-                                                false,
-                                            )
-                                            .clicked()
-                                            {
-                                                tree_action = Some(if is_running {
-                                                    TreeAction::StopConn(conn_id.clone())
-                                                } else {
-                                                    TreeAction::StartConn(conn_id.clone())
-                                                });
-                                            }
-                                            ui.add_space(14.0);
-                                            if uikit::link_action(ui, self.flavor, "删除连接", true)
+                                            if uikit::danger_button_sm(ui, self.flavor, label)
                                                 .clicked()
                                             {
-                                                tree_action = Some(TreeAction::RemoveConn(conn_id));
+                                                if confirming {
+                                                    tree_action =
+                                                        Some(TreeAction::RemoveConn(conn_id));
+                                                    self.pending_delete = None;
+                                                } else {
+                                                    self.pending_delete =
+                                                        Some((conn_id, now));
+                                                    ctx.request_repaint_after(
+                                                        std::time::Duration::from_millis(3100),
+                                                    );
+                                                }
                                             }
                                         });
                                     }
