@@ -428,7 +428,13 @@ impl SlaveApp {
                                 RegisterType::InputRegister => {
                                     dev.register_map.input_registers.insert(addr, v);
                                 }
-                                _ => {}
+                                RegisterType::Coil => {
+                                    // u16 → bool：非零视为 true，零为 false。
+                                    dev.register_map.coils.insert(addr, v != 0);
+                                }
+                                RegisterType::DiscreteInput => {
+                                    dev.register_map.discrete_inputs.insert(addr, v != 0);
+                                }
                             }
                         }
                     }
