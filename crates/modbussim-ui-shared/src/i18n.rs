@@ -1,0 +1,365 @@
+//! 极简 i18n：Lang 枚举 + key→&'static str 查表。
+//!
+//! 不引入外部库。未知 key 返回 key 本身，便于开发期直接定位缺翻译项。
+//! 带参数的文案使用 `tr` 返回包含 `{}` 的模板，由调用方自行 `format!`。
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Lang {
+    #[default]
+    Zh,
+    En,
+}
+
+impl Lang {
+    pub fn toggled(self) -> Self {
+        match self {
+            Lang::Zh => Lang::En,
+            Lang::En => Lang::Zh,
+        }
+    }
+
+    /// 用于语言菜单自身的标签（始终展示母语名）。
+    pub fn native_label(self) -> &'static str {
+        match self {
+            Lang::Zh => "中文",
+            Lang::En => "English",
+        }
+    }
+}
+
+/// 未命中时返回 key 本身，dev 期可直接在 UI 看到缺失的键名。
+pub fn tr(lang: Lang, key: &'static str) -> &'static str {
+    match lang {
+        Lang::Zh => tr_zh(key).unwrap_or(key),
+        Lang::En => tr_en(key).unwrap_or(key),
+    }
+}
+
+fn tr_zh(key: &'static str) -> Option<&'static str> {
+    Some(match key {
+        // menu bar
+        "menu.file" => "文件",
+        "menu.view" => "视图",
+        "menu.help" => "帮助",
+        "menu.language" => "语言 / Language",
+        "menu.file.save" => "保存工程…",
+        "menu.file.load" => "加载工程…",
+        "menu.view.show_value_panel" => "显示值解析 (V)",
+        "menu.view.show_log_panel" => "显示通信日志",
+        "menu.view.toggle_theme" => "浅色 / 深色切换",
+        "menu.view.theme_label" => "主题 (Catppuccin)",
+        "menu.view.zoom_in" => "放大",
+        "menu.view.zoom_out" => "缩小",
+        "menu.view.zoom_reset" => "重置缩放",
+        "menu.help.about" => "ModbusSlave (egui) · 开发预览",
+
+        // data source kind
+        "ds.kind.counter" => "计数器 (+1)",
+        "ds.kind.sine" => "正弦波",
+        "ds.kind.sawtooth" => "锯齿波",
+        "ds.kind.triangle" => "三角波",
+        "ds.kind.random" => "随机 U16",
+        "ds.kind.fixed" => "固定值",
+        "ds.kind.csv" => "CSV 序列",
+
+        // register types
+        "reg.fc01" => "FC01 线圈",
+        "reg.fc02" => "FC02 离散输入",
+        "reg.fc03" => "FC03 保持寄存器",
+        "reg.fc04" => "FC04 输入寄存器",
+
+        // connection state
+        "conn.state.running" => "运行中",
+        "conn.state.stopped" => "已停止",
+        "conn.state.disconnected" => "未连接",
+        "conn.start" => "启动",
+        "conn.stop" => "停止",
+
+        // sidebar / toolbar
+        "sidebar.connections" => "连接",
+        "sidebar.new" => "+ 新建",
+        "sidebar.enable_tls" => "启用 TLS",
+        "sidebar.pkcs12_password" => "PKCS#12 密码",
+        "sidebar.ca_optional" => "CA (可选)",
+        "sidebar.require_client_cert" => "要求客户端证书 (mTLS)",
+        "sidebar.tls_hint" => "PEM (cert+key) 与 PKCS#12 二选一；两者都填则 PKCS#12 优先",
+        "sidebar.create" => "创建",
+        "sidebar.cancel" => "取消",
+        "sidebar.confirm_delete" => "× 再点一次确认",
+        "sidebar.clear" => "清除",
+
+        // hero / empty state
+        "hero.empty_main" => "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
+        "hero.loading" => "正在加载…（或未选中有效组）",
+        "hero.refreshing" => "正在刷新…",
+        "hero.conn_missing" => "连接已不存在。",
+        "hero.device_missing" => "设备不存在。",
+
+        // register table
+        "regtable.address" => "地址",
+        "regtable.value" => "值",
+        "regtable.name" => "名称",
+        "regtable.note" => "注释",
+        "regtable.binary" => "二进制",
+        "regtable.format" => "格式",
+        "regtable.no_match" => "无匹配寄存器",
+        "regtable.clear_selected" => "清零选中",
+        "regtable.batch_add" => "批量添加",
+        "regtable.delete_slave" => "删除从站",
+        "regtable.new_slave" => "新增从站",
+        "regtable.search_hint" => "地址 / 名称…",
+        "regtable.collapse_value_panel" => "◧ 收起解析",
+        "regtable.expand_value_panel" => "◧ 值解析 (V)",
+        "regtable.multi_readonly" => "多字格式 · 只读显示；要编辑请切回 U16",
+
+        // log panel
+        "log.title" => "通信日志",
+        "log.no_conn" => "· 选中连接以查看",
+        "log.close" => "关闭",
+        "log.export_csv" => "导出 CSV",
+        "log.clear" => "清空",
+        "log.filter_hint" => "过滤…",
+        "log.col.time" => "时间",
+        "log.col.direction" => "向",
+        "log.col.fc" => "FC",
+        "log.col.detail" => "详情",
+
+        // value panel
+        "vp.title" => "值解析",
+        "vp.pick_rows" => "选中 1–4 行寄存器以查看/编辑多格式",
+        "vp.byte_order" => "字节序",
+        "vp.double64" => "Double (64-bit)",
+
+        // data source panel
+        "ds.panel" => "数据源",
+        "ds.none" => "（无）",
+        "ds.col.type" => "类型区",
+        "ds.col.address" => "地址",
+        "ds.col.source" => "源",
+        "ds.col.interval_ms" => "间隔 (ms)",
+        "ds.col.enabled" => "启用",
+        "ds.delete" => "删除",
+        "ds.address_prefix" => "地址 ",
+        "ds.add_to_fc03" => "添加到 FC03",
+
+        // jitter
+        "jitter.title" => "寄存器抖动（压测）",
+        "jitter.enabled" => "启用",
+        "jitter.period" => "周期",
+        "jitter.change_rate" => "变位率",
+        "jitter.drift" => "漂移幅度",
+        "jitter.scope" => "影响范围",
+        "jitter.coils" => "线圈",
+        "jitter.discrete" => "离散",
+        "jitter.holding" => "保持",
+        "jitter.input" => "输入",
+
+        // add-device dialog
+        "dlg.add_slave.title" => "新增从站",
+        "dlg.add_slave.connection" => "连接",
+        "dlg.add_slave.slave_id" => "从站 ID (1-247)",
+        "dlg.add_slave.name" => "名称",
+        "dlg.add_slave.init_mode" => "初始化模式",
+        "dlg.add_slave.init.empty" => "空",
+        "dlg.add_slave.init.default" => "默认值（全 0）",
+        "dlg.add_slave.init.random" => "随机",
+        "dlg.add_slave.max_addr" => "最大地址",
+        "dlg.ok" => "确认",
+        "dlg.cancel" => "取消",
+
+        // batch dialog
+        "dlg.batch.title" => "批量添加寄存器",
+        "dlg.batch.conn_slave" => "连接 / 从站",
+        "dlg.batch.start" => "起始地址",
+        "dlg.batch.end" => "结束地址",
+        "dlg.batch.reg_type" => "寄存器类型",
+        "dlg.batch.data_type" => "数据类型",
+        "dlg.batch.endian" => "字节序",
+        "dlg.batch.name_prefix" => "名称前缀（可选）",
+        "dlg.batch.invalid_range" => "范围无效",
+        "dlg.batch.confirm" => "确认添加",
+
+        // 带参数
+        "device.count_fmt" => "设备数: {}",
+        "conn.summary_fmt" => "{} 连接 · {} 从站",
+        "regtable.total_fmt" => "共 {} 行",
+        "regtable.selected_fmt" => " · 已选 {} 行",
+        "slave.with_id_name_fmt" => "从站 {} · {}",
+        "sidebar.delete_conn_fmt" => "× 删除连接 {}",
+        "conn.label_fmt" => "{} · 从站 {}",
+        "log.count_suffix_fmt" => "· {} · {} 条",
+        "vp.addr_single_fmt" => "地址 {} · 1 word",
+        "vp.addr_double_fmt" => "地址 {}..{} · 2 words",
+        "vp.addr_triple_fmt" => "地址 {}..{} · 选 2 或 4 行组合",
+        "vp.addr_quad_fmt" => "地址 {}..{} · 4 words",
+
+        _ => return None,
+    })
+}
+
+fn tr_en(key: &'static str) -> Option<&'static str> {
+    Some(match key {
+        "menu.file" => "File",
+        "menu.view" => "View",
+        "menu.help" => "Help",
+        "menu.language" => "Language / 语言",
+        "menu.file.save" => "Save Project…",
+        "menu.file.load" => "Load Project…",
+        "menu.view.show_value_panel" => "Show Value Panel (V)",
+        "menu.view.show_log_panel" => "Show Communication Log",
+        "menu.view.toggle_theme" => "Toggle Light / Dark",
+        "menu.view.theme_label" => "Theme (Catppuccin)",
+        "menu.view.zoom_in" => "Zoom In",
+        "menu.view.zoom_out" => "Zoom Out",
+        "menu.view.zoom_reset" => "Reset Zoom",
+        "menu.help.about" => "ModbusSlave (egui) · Preview",
+
+        "ds.kind.counter" => "Counter (+1)",
+        "ds.kind.sine" => "Sine",
+        "ds.kind.sawtooth" => "Sawtooth",
+        "ds.kind.triangle" => "Triangle",
+        "ds.kind.random" => "Random U16",
+        "ds.kind.fixed" => "Fixed",
+        "ds.kind.csv" => "CSV Playback",
+
+        "reg.fc01" => "FC01 Coils",
+        "reg.fc02" => "FC02 Discrete Inputs",
+        "reg.fc03" => "FC03 Holding Registers",
+        "reg.fc04" => "FC04 Input Registers",
+
+        "conn.state.running" => "Running",
+        "conn.state.stopped" => "Stopped",
+        "conn.state.disconnected" => "Disconnected",
+        "conn.start" => "Start",
+        "conn.stop" => "Stop",
+
+        "sidebar.connections" => "Connections",
+        "sidebar.new" => "+ New",
+        "sidebar.enable_tls" => "Enable TLS",
+        "sidebar.pkcs12_password" => "PKCS#12 password",
+        "sidebar.ca_optional" => "CA (optional)",
+        "sidebar.require_client_cert" => "Require client cert (mTLS)",
+        "sidebar.tls_hint" => "Use PEM (cert+key) OR PKCS#12; if both filled, PKCS#12 wins",
+        "sidebar.create" => "Create",
+        "sidebar.cancel" => "Cancel",
+        "sidebar.confirm_delete" => "× Click again to confirm",
+        "sidebar.clear" => "Clear",
+
+        "hero.empty_main" => "Create or select a connection / device / register group on the left.",
+        "hero.loading" => "Loading… (or no valid group selected)",
+        "hero.refreshing" => "Refreshing…",
+        "hero.conn_missing" => "Connection no longer exists.",
+        "hero.device_missing" => "Device not found.",
+
+        "regtable.address" => "Address",
+        "regtable.value" => "Value",
+        "regtable.name" => "Name",
+        "regtable.note" => "Note",
+        "regtable.binary" => "Binary",
+        "regtable.format" => "Format",
+        "regtable.no_match" => "No matching register",
+        "regtable.clear_selected" => "Zero selected",
+        "regtable.batch_add" => "Batch Add",
+        "regtable.delete_slave" => "Delete Slave",
+        "regtable.new_slave" => "New Slave",
+        "regtable.search_hint" => "Address / name…",
+        "regtable.collapse_value_panel" => "◧ Collapse Value",
+        "regtable.expand_value_panel" => "◧ Value Panel (V)",
+        "regtable.multi_readonly" => "Multi-word format · read-only; switch back to U16 to edit",
+
+        "log.title" => "Communication Log",
+        "log.no_conn" => "· Select a connection",
+        "log.close" => "Close",
+        "log.export_csv" => "Export CSV",
+        "log.clear" => "Clear",
+        "log.filter_hint" => "Filter…",
+        "log.col.time" => "Time",
+        "log.col.direction" => "Dir",
+        "log.col.fc" => "FC",
+        "log.col.detail" => "Detail",
+
+        "vp.title" => "Value Decoder",
+        "vp.pick_rows" => "Select 1–4 register rows to view/edit all formats",
+        "vp.byte_order" => "Byte Order",
+        "vp.double64" => "Double (64-bit)",
+
+        "ds.panel" => "Data Sources",
+        "ds.none" => "(none)",
+        "ds.col.type" => "Region",
+        "ds.col.address" => "Address",
+        "ds.col.source" => "Source",
+        "ds.col.interval_ms" => "Interval (ms)",
+        "ds.col.enabled" => "Enabled",
+        "ds.delete" => "Delete",
+        "ds.address_prefix" => "Addr ",
+        "ds.add_to_fc03" => "Add to FC03",
+
+        "jitter.title" => "Register Jitter (stress)",
+        "jitter.enabled" => "Enabled",
+        "jitter.period" => "Period",
+        "jitter.change_rate" => "Change rate",
+        "jitter.drift" => "Drift",
+        "jitter.scope" => "Scope",
+        "jitter.coils" => "Coils",
+        "jitter.discrete" => "Discrete",
+        "jitter.holding" => "Holding",
+        "jitter.input" => "Input",
+
+        "dlg.add_slave.title" => "New Slave",
+        "dlg.add_slave.connection" => "Connection",
+        "dlg.add_slave.slave_id" => "Slave ID (1-247)",
+        "dlg.add_slave.name" => "Name",
+        "dlg.add_slave.init_mode" => "Init mode",
+        "dlg.add_slave.init.empty" => "Empty",
+        "dlg.add_slave.init.default" => "Default (all 0)",
+        "dlg.add_slave.init.random" => "Random",
+        "dlg.add_slave.max_addr" => "Max address",
+        "dlg.ok" => "OK",
+        "dlg.cancel" => "Cancel",
+
+        "dlg.batch.title" => "Batch Add Registers",
+        "dlg.batch.conn_slave" => "Connection / Slave",
+        "dlg.batch.start" => "Start address",
+        "dlg.batch.end" => "End address",
+        "dlg.batch.reg_type" => "Register type",
+        "dlg.batch.data_type" => "Data type",
+        "dlg.batch.endian" => "Byte order",
+        "dlg.batch.name_prefix" => "Name prefix (optional)",
+        "dlg.batch.invalid_range" => "Invalid range",
+        "dlg.batch.confirm" => "Confirm",
+
+        "device.count_fmt" => "Devices: {}",
+        "conn.summary_fmt" => "{} connections · {} slaves",
+        "regtable.total_fmt" => "{} rows",
+        "regtable.selected_fmt" => " · {} selected",
+        "slave.with_id_name_fmt" => "Slave {} · {}",
+        "sidebar.delete_conn_fmt" => "× Delete connection {}",
+        "conn.label_fmt" => "{} · Slave {}",
+        "log.count_suffix_fmt" => "· {} · {} entries",
+        "vp.addr_single_fmt" => "Addr {} · 1 word",
+        "vp.addr_double_fmt" => "Addr {}..{} · 2 words",
+        "vp.addr_triple_fmt" => "Addr {}..{} · pick 2 or 4 rows",
+        "vp.addr_quad_fmt" => "Addr {}..{} · 4 words",
+
+        _ => return None,
+    })
+}
+
+/// 带一个 Display 参数的便捷格式化：以文案中的 `{}` 为插入点。
+pub fn tr1(lang: Lang, key: &'static str, arg: impl std::fmt::Display) -> String {
+    tr(lang, key).replacen("{}", &arg.to_string(), 1)
+}
+
+/// 双参数便捷：按顺序替换两个 `{}`。
+pub fn tr2(
+    lang: Lang,
+    key: &'static str,
+    a: impl std::fmt::Display,
+    b: impl std::fmt::Display,
+) -> String {
+    let s = tr(lang, key).replacen("{}", &a.to_string(), 1);
+    s.replacen("{}", &b.to_string(), 1)
+}

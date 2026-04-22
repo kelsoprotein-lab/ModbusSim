@@ -5,6 +5,8 @@ use egui::RichText;
 use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_entry::{Direction, LogEntry};
 
+use crate::i18n::{tr, tr2, Lang};
+
 pub struct LogPanelState {
     pub open: bool,
     pub collapsed: bool,
@@ -58,6 +60,7 @@ fn accepts(state: &LogPanelState, e: &LogEntry) -> bool {
 pub fn render(
     ctx: &egui::Context,
     flavor: crate::theme::Flavor,
+    lang: Lang,
     state: &mut LogPanelState,
     cache: &[LogEntry],
     conn_label: Option<&str>,
@@ -96,7 +99,7 @@ pub fn render(
                     state.collapsed = !state.collapsed;
                 }
                 ui.label(
-                    RichText::new("通信日志")
+                    RichText::new(tr(lang, "log.title"))
                         .strong()
                         .size(12.5)
                         .color(crate::theme::text_primary(flavor)),
@@ -105,24 +108,26 @@ pub fn render(
                     crate::theme::text::crumb(
                         ui,
                         flavor,
-                        &format!("· {} · {} 条", label, cache.len()),
+                        &tr2(lang, "log.count_suffix_fmt", label, cache.len()),
                     );
                 } else {
-                    crate::theme::text::crumb(ui, flavor, "· 选中连接以查看");
+                    crate::theme::text::crumb(ui, flavor, tr(lang, "log.no_conn"));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::link_action(ui, flavor, "关闭", false).clicked() {
+                    if crate::ui::link_action(ui, flavor, tr(lang, "log.close"), false).clicked() {
                         action = LogPanelAction::Close;
                     }
-                    if crate::ui::link_action(ui, flavor, "导出 CSV", false).clicked() {
+                    if crate::ui::link_action(ui, flavor, tr(lang, "log.export_csv"), false)
+                        .clicked()
+                    {
                         action = LogPanelAction::Export;
                     }
-                    if crate::ui::link_action(ui, flavor, "清空", false).clicked() {
+                    if crate::ui::link_action(ui, flavor, tr(lang, "log.clear"), false).clicked() {
                         action = LogPanelAction::Clear;
                     }
                     ui.add(
                         egui::TextEdit::singleline(&mut state.filter_text)
-                            .hint_text("过滤…")
+                            .hint_text(tr(lang, "log.filter_hint"))
                             .desired_width(160.0),
                     );
                     ui.checkbox(&mut state.show_tx, "TX");
@@ -147,10 +152,12 @@ pub fn render(
                 .column(Column::exact(60.0))
                 .column(Column::remainder())
                 .header(22.0, |mut h| {
-                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "时间"));
-                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "向"));
-                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "FC"));
-                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, "详情"));
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.time")));
+                    h.col(|ui| {
+                        crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.direction"))
+                    });
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.fc")));
+                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.detail")));
                 })
                 .body(|body| {
                     body.rows(18.0, entries.len(), |mut row| {

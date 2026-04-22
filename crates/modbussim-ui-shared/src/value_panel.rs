@@ -14,6 +14,7 @@
 use egui::{Id, Key, RichText};
 use modbussim_core::register::{decode_value, DataType, Endian};
 
+use crate::i18n::{tr, tr1, tr2, Lang};
 use crate::theme::Flavor;
 
 const ENDIANS: [(Endian, &str); 4] = [
@@ -81,42 +82,38 @@ pub fn encode_f64(value: f64, order: F64Order) -> [u16; 4] {
 pub fn render(
     ui: &mut egui::Ui,
     flavor: Flavor,
+    lang: Lang,
     values: &[u16],
     base_addr: Option<u16>,
 ) -> Option<Vec<(u16, u16)>> {
-    ui.label(RichText::new("值解析").strong().size(13.5));
+    ui.label(RichText::new(tr(lang, "vp.title")).strong().size(13.5));
     match values.len() {
         0 => {
-            crate::ui::caption(ui, flavor, "选中 1–4 行寄存器以查看/编辑多格式");
+            crate::ui::caption(ui, flavor, tr(lang, "vp.pick_rows"));
             None
         }
         1 => {
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(ui, flavor, format!("地址 {} · 1 word", base));
-            render_single(ui, base, values[0])
+            crate::ui::caption(ui, flavor, tr1(lang, "vp.addr_single_fmt", base));
+            render_single(ui, lang, base, values[0])
         }
         2 => {
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(ui, flavor, format!("地址 {}..{} · 2 words", base, base + 1));
-            render_double(ui, base, [values[0], values[1]])
+            crate::ui::caption(ui, flavor, tr2(lang, "vp.addr_double_fmt", base, base + 1));
+            render_double(ui, lang, base, [values[0], values[1]])
         }
         3 => {
-            // Not a standard width — fall back to single on the first row.
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(
-                ui,
-                flavor,
-                format!("地址 {}..{} · 选 2 或 4 行组合", base, base + 2),
-            );
-            render_single(ui, base, values[0])
+            crate::ui::caption(ui, flavor, tr2(lang, "vp.addr_triple_fmt", base, base + 2));
+            render_single(ui, lang, base, values[0])
         }
         _ => {
             let base = base_addr.unwrap_or(0);
-            crate::ui::caption(ui, flavor, format!("地址 {}..{} · 4 words", base, base + 3));
-            let w1 = render_double(ui, base, [values[0], values[1]]);
+            crate::ui::caption(ui, flavor, tr2(lang, "vp.addr_quad_fmt", base, base + 3));
+            let w1 = render_double(ui, lang, base, [values[0], values[1]]);
             ui.add_space(4.0);
             ui.separator();
-            let w2 = render_quad(ui, base, [values[0], values[1], values[2], values[3]]);
+            let w2 = render_quad(ui, lang, base, [values[0], values[1], values[2], values[3]]);
             combine(w1, w2)
         }
     }
@@ -196,7 +193,7 @@ fn edit_cell(
 
 // --- Single-word formats ---
 
-fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>> {
+fn render_single(ui: &mut egui::Ui, _lang: Lang, addr: u16, v: u16) -> Option<Vec<(u16, u16)>> {
     let h = addr_hash(addr, &[v]);
     let mut out: Option<Vec<(u16, u16)>> = None;
     egui::Grid::new("vp_single")
@@ -270,7 +267,12 @@ fn render_single(ui: &mut egui::Ui, addr: u16, v: u16) -> Option<Vec<(u16, u16)>
 
 // --- Double-word formats (U32 / I32 / F32 × 4 endians) ---
 
-fn render_double(ui: &mut egui::Ui, base: u16, words: [u16; 2]) -> Option<Vec<(u16, u16)>> {
+fn render_double(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    base: u16,
+    words: [u16; 2],
+) -> Option<Vec<(u16, u16)>> {
     let h = addr_hash(base, &words);
     let mut out: Option<Vec<(u16, u16)>> = None;
     egui::Grid::new("vp_double")
@@ -278,7 +280,7 @@ fn render_double(ui: &mut egui::Ui, base: u16, words: [u16; 2]) -> Option<Vec<(u
         .spacing([10.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
-            ui.label(RichText::new("字节序").strong());
+            ui.label(RichText::new(tr(lang, "vp.byte_order")).strong());
             ui.label(RichText::new("UInt32").strong());
             ui.label(RichText::new("Int32").strong());
             ui.label(RichText::new("Float32").strong());
@@ -345,10 +347,15 @@ fn render_double(ui: &mut egui::Ui, base: u16, words: [u16; 2]) -> Option<Vec<(u
 
 // --- Quad-word (Float64) ---
 
-fn render_quad(ui: &mut egui::Ui, base: u16, words: [u16; 4]) -> Option<Vec<(u16, u16)>> {
+fn render_quad(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    base: u16,
+    words: [u16; 4],
+) -> Option<Vec<(u16, u16)>> {
     let h = addr_hash(base, &words);
     let mut out: Option<Vec<(u16, u16)>> = None;
-    ui.label(RichText::new("Double (64-bit)").strong());
+    ui.label(RichText::new(tr(lang, "vp.double64")).strong());
     egui::Grid::new("vp_quad")
         .num_columns(2)
         .spacing([12.0, 4.0])

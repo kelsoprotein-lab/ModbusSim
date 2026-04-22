@@ -13,6 +13,7 @@ use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::{SlaveTlsConfig, Transport};
 use modbussim_ui_shared::format::{format_u16, U16Format};
 use modbussim_ui_shared::hero_anim::{show_welcome_hero, HeroPulseFeed};
+use modbussim_ui_shared::i18n::{tr, tr1, tr2, Lang};
 use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
@@ -67,16 +68,19 @@ pub enum DsKind {
 }
 
 impl DsKind {
-    pub fn label(&self) -> &'static str {
-        match self {
-            DsKind::Counter => "计数器 (+1)",
-            DsKind::Sine => "正弦波",
-            DsKind::Sawtooth => "锯齿波",
-            DsKind::Triangle => "三角波",
-            DsKind::Random => "随机 U16",
-            DsKind::Fixed => "固定值",
-            DsKind::CsvPlayback => "CSV 序列",
-        }
+    pub fn label(&self, lang: Lang) -> &'static str {
+        tr(
+            lang,
+            match self {
+                DsKind::Counter => "ds.kind.counter",
+                DsKind::Sine => "ds.kind.sine",
+                DsKind::Sawtooth => "ds.kind.sawtooth",
+                DsKind::Triangle => "ds.kind.triangle",
+                DsKind::Random => "ds.kind.random",
+                DsKind::Fixed => "ds.kind.fixed",
+                DsKind::CsvPlayback => "ds.kind.csv",
+            },
+        )
     }
 
     pub fn default_source(&self) -> DataSource {
@@ -394,6 +398,7 @@ pub struct SlaveApp {
     ds_add_interval_ms: u64,
 
     pub flavor: Flavor,
+    pub lang: Lang,
 
     // Register table display mode
     reg_display_mode: ValueDisplayMode,
@@ -441,7 +446,7 @@ pub struct AddDeviceModalState {
 }
 
 impl SlaveApp {
-    pub fn new(rt: Arc<Runtime>, flavor: Flavor) -> Self {
+    pub fn new(rt: Arc<Runtime>, flavor: Flavor, lang: Lang) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         let connections: SharedConnections = Arc::new(RwLock::new(Vec::new()));
         let data_sources: SharedSources = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -596,6 +601,7 @@ impl SlaveApp {
             ds_add_kind: DsKind::Counter,
             ds_add_interval_ms: 1000,
             flavor,
+            lang,
             reg_display_mode: ValueDisplayMode::U16,
             log_state: LogPanelState::new(),
             log_cache: Vec::new(),
@@ -1684,11 +1690,20 @@ enum TreeAction {
 }
 
 const REG_GROUPS: &[(RegisterType, &str)] = &[
-    (RegisterType::Coil, "FC01 线圈"),
-    (RegisterType::DiscreteInput, "FC02 离散输入"),
-    (RegisterType::InputRegister, "FC04 输入寄存器"),
-    (RegisterType::HoldingRegister, "FC03 保持寄存器"),
+    (RegisterType::Coil, "reg.fc01"),
+    (RegisterType::DiscreteInput, "reg.fc02"),
+    (RegisterType::InputRegister, "reg.fc04"),
+    (RegisterType::HoldingRegister, "reg.fc03"),
 ];
+
+fn reg_group_label(rt: RegisterType, lang: Lang) -> &'static str {
+    let key = REG_GROUPS
+        .iter()
+        .find(|(r, _)| *r == rt)
+        .map(|(_, k)| *k)
+        .unwrap_or("?");
+    tr(lang, key)
+}
 
 /// Which interpretation to apply when rendering u16 register values.
 /// U16/I16 are single-word; F32/U32/I32 consume 2 words; F64 consumes 4 words.
@@ -1782,12 +1797,8 @@ fn selection_conn_id(s: &Selection) -> Option<&str> {
     }
 }
 
-fn reg_type_label(rt: RegisterType) -> &'static str {
-    REG_GROUPS
-        .iter()
-        .find(|(r, _)| *r == rt)
-        .map(|(_, l)| *l)
-        .unwrap_or("?")
+fn reg_type_label(rt: RegisterType, lang: Lang) -> &'static str {
+    reg_group_label(rt, lang)
 }
 
 fn data_type_label(dt: DataType) -> &'static str {
@@ -1843,8 +1854,13 @@ impl SlaveApp {
             let conn_is_selected =
                 matches!(&self.selection, Selection::Connection(c) if c == &snap.id);
             let (state_text, state_color) = match snap.state {
-                ConnectionState::Running => ("运行中", theme::success(flavor)),
-                ConnectionState::Stopped => ("已停止", theme::text_muted(flavor)),
+                ConnectionState::Running => {
+                    (tr(self.lang, "conn.state.running"), theme::success(flavor))
+                }
+                ConnectionState::Stopped => (
+                    tr(self.lang, "conn.state.stopped"),
+                    theme::text_muted(flavor),
+                ),
             };
             let is_running = matches!(snap.state, ConnectionState::Running);
 
@@ -1919,13 +1935,13 @@ impl SlaveApp {
                     match snap.state {
                         ConnectionState::Stopped => (
                             "▶",
-                            "启动",
+                            tr(self.lang, "conn.start"),
                             theme::success(flavor),
                             TreeAction::StartConn(snap.id.clone()),
                         ),
                         ConnectionState::Running => (
                             "■",
-                            "停止",
+                            tr(self.lang, "conn.stop"),
                             theme::warn(flavor),
                             TreeAction::StopConn(snap.id.clone()),
                         ),
@@ -1941,7 +1957,7 @@ impl SlaveApp {
                     let dev_is_selected = matches!(&self.selection,
                         Selection::Device { conn_id, slave_id }
                             if conn_id == &snap.id && *slave_id == dev.slave_id);
-                    let dev_label = format!("从站 {} · {}", dev.slave_id, dev.name);
+                    let dev_label = tr2(self.lang, "slave.with_id_name_fmt", dev.slave_id, &dev.name);
 
                     // Device row
                     ui.horizontal(|ui| {
@@ -1980,12 +1996,12 @@ impl SlaveApp {
                     });
 
                     if dev.expanded {
-                        for (reg_type, label) in REG_GROUPS {
+                        for (reg_type, key) in REG_GROUPS {
                             let grp_is_selected = matches!(&self.selection,
                                 Selection::RegisterGroup { conn_id, slave_id, reg_type: rt }
                                     if conn_id == &snap.id && *slave_id == dev.slave_id && rt == reg_type);
                             let count = dev.counts.count_for(*reg_type);
-                            let grp_label = format!("{} ({})", label, count);
+                            let grp_label = format!("{} ({})", tr(self.lang, *key), count);
 
                             // Register group row
                             ui.horizontal(|ui| {
@@ -2089,7 +2105,8 @@ impl SlaveApp {
         let mut act: Option<Act> = None;
         let mut is_open = true;
 
-        egui::Window::new("新增从站")
+        let lang = self.lang;
+        egui::Window::new(tr(lang, "dlg.add_slave.title"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -2102,44 +2119,51 @@ impl SlaveApp {
                     .num_columns(2)
                     .spacing([12.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label("连接");
+                        ui.label(tr(lang, "dlg.add_slave.connection"));
                         ui.label(&st.conn_id);
                         ui.end_row();
 
-                        ui.label("从站 ID (1-247)");
+                        ui.label(tr(lang, "dlg.add_slave.slave_id"));
                         let mut sid = st.slave_id as u32;
                         ui.add(egui::DragValue::new(&mut sid).range(1..=247));
                         st.slave_id = sid as u8;
                         ui.end_row();
 
-                        ui.label("名称");
+                        ui.label(tr(lang, "dlg.add_slave.name"));
                         ui.text_edit_singleline(&mut st.name);
                         ui.end_row();
 
-                        ui.label("初始化模式");
+                        ui.label(tr(lang, "dlg.add_slave.init_mode"));
                         egui::ComboBox::from_id_salt("add_device_init")
-                            .selected_text(match st.init_mode {
-                                DeviceInitMode::Empty => "空",
-                                DeviceInitMode::Default => "默认值（全 0）",
-                                DeviceInitMode::Random => "随机",
-                            })
+                            .selected_text(tr(
+                                lang,
+                                match st.init_mode {
+                                    DeviceInitMode::Empty => "dlg.add_slave.init.empty",
+                                    DeviceInitMode::Default => "dlg.add_slave.init.default",
+                                    DeviceInitMode::Random => "dlg.add_slave.init.random",
+                                },
+                            ))
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut st.init_mode, DeviceInitMode::Empty, "空");
+                                ui.selectable_value(
+                                    &mut st.init_mode,
+                                    DeviceInitMode::Empty,
+                                    tr(lang, "dlg.add_slave.init.empty"),
+                                );
                                 ui.selectable_value(
                                     &mut st.init_mode,
                                     DeviceInitMode::Default,
-                                    "默认值（全 0）",
+                                    tr(lang, "dlg.add_slave.init.default"),
                                 );
                                 ui.selectable_value(
                                     &mut st.init_mode,
                                     DeviceInitMode::Random,
-                                    "随机",
+                                    tr(lang, "dlg.add_slave.init.random"),
                                 );
                             });
                         ui.end_row();
 
                         if !matches!(st.init_mode, DeviceInitMode::Empty) {
-                            ui.label("最大地址");
+                            ui.label(tr(lang, "dlg.add_slave.max_addr"));
                             ui.add(egui::DragValue::new(&mut st.max_address).range(0..=65535));
                             ui.end_row();
                         }
@@ -2148,12 +2172,12 @@ impl SlaveApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!st.busy, egui::Button::new("确认"))
+                        .add_enabled(!st.busy, egui::Button::new(tr(lang, "dlg.ok")))
                         .clicked()
                     {
                         act = Some(Act::Submit);
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(tr(lang, "dlg.cancel")).clicked() {
                         act = Some(Act::Close);
                     }
                     if st.busy {
@@ -2186,7 +2210,8 @@ impl SlaveApp {
         let mut action: Option<ModalAction> = None;
         let mut is_open = true;
 
-        egui::Window::new("批量添加寄存器")
+        let lang = self.lang;
+        egui::Window::new(tr(lang, "dlg.batch.title"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -2199,29 +2224,29 @@ impl SlaveApp {
                     .num_columns(2)
                     .spacing([12.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label("连接 / 从站");
-                        ui.label(format!("{} · 从站 {}", state.conn_id, state.slave_id));
+                        ui.label(tr(lang, "dlg.batch.conn_slave"));
+                        ui.label(tr2(lang, "conn.label_fmt", &state.conn_id, state.slave_id));
                         ui.end_row();
 
-                        ui.label("起始地址");
+                        ui.label(tr(lang, "dlg.batch.start"));
                         ui.add(egui::DragValue::new(&mut state.start_addr).range(0..=65535));
                         ui.end_row();
 
-                        ui.label("结束地址");
+                        ui.label(tr(lang, "dlg.batch.end"));
                         ui.add(egui::DragValue::new(&mut state.end_addr).range(0..=65535));
                         ui.end_row();
 
-                        ui.label("寄存器类型");
+                        ui.label(tr(self.lang, "dlg.batch.reg_type"));
                         egui::ComboBox::from_id_salt("batch_reg_type")
-                            .selected_text(reg_type_label(state.reg_type))
+                            .selected_text(reg_type_label(state.reg_type, self.lang))
                             .show_ui(ui, |ui| {
-                                for (rt, label) in REG_GROUPS {
-                                    ui.selectable_value(&mut state.reg_type, *rt, *label);
+                                for (rt, key) in REG_GROUPS {
+                                    ui.selectable_value(&mut state.reg_type, *rt, tr(self.lang, *key));
                                 }
                             });
                         ui.end_row();
 
-                        ui.label("数据类型");
+                        ui.label(tr(lang, "dlg.batch.data_type"));
                         egui::ComboBox::from_id_salt("batch_data_type")
                             .selected_text(data_type_label(state.data_type))
                             .show_ui(ui, |ui| {
@@ -2235,7 +2260,7 @@ impl SlaveApp {
                             });
                         ui.end_row();
 
-                        ui.label("字节序");
+                        ui.label(tr(lang, "dlg.batch.endian"));
                         egui::ComboBox::from_id_salt("batch_endian")
                             .selected_text(endian_label(state.endian))
                             .show_ui(ui, |ui| {
@@ -2245,7 +2270,7 @@ impl SlaveApp {
                             });
                         ui.end_row();
 
-                        ui.label("名称前缀（可选）");
+                        ui.label(tr(lang, "dlg.batch.name_prefix"));
                         ui.text_edit_singleline(&mut state.name_prefix);
                         ui.end_row();
                     });
@@ -2259,7 +2284,10 @@ impl SlaveApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if raw_count == 0 {
-                        ui.colored_label(egui::Color32::RED, "范围无效");
+                        ui.colored_label(
+                            egui::Color32::RED,
+                            tr(lang, "dlg.batch.invalid_range"),
+                        );
                     } else if raw_count > 50_000 {
                         ui.colored_label(
                             egui::Color32::RED,
@@ -2273,13 +2301,13 @@ impl SlaveApp {
                     if ui
                         .add_enabled(
                             !state.busy && raw_count > 0 && raw_count <= 50_000,
-                            egui::Button::new("确认添加"),
+                            egui::Button::new(tr(lang, "dlg.batch.confirm")),
                         )
                         .clicked()
                     {
                         action = Some(ModalAction::Submit);
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(tr(lang, "dlg.cancel")).clicked() {
                         action = Some(ModalAction::Close);
                     }
                     if state.busy {
@@ -2314,7 +2342,7 @@ impl SlaveApp {
                     self.flavor,
                     icons::CPU,
                     "ModbusSlave",
-                    "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
+                    tr(self.lang, "hero.empty_main"),
                     feed,
                 );
             }
@@ -2329,60 +2357,70 @@ impl SlaveApp {
                         ui.heading(format!("{}  {}", icons::BROADCAST, label));
                         let (txt, color) = match state {
                             ConnectionState::Running => (
-                                format!("{}  运行中", icons::CIRCLE),
+                                format!("{}  {}", icons::CIRCLE, tr(self.lang, "conn.state.running")),
                                 theme::success(self.flavor),
                             ),
                             ConnectionState::Stopped => (
-                                format!("{}  已停止", icons::PAUSE),
+                                format!("{}  {}", icons::PAUSE, tr(self.lang, "conn.state.stopped")),
                                 theme::subtext(self.flavor),
                             ),
                         };
                         uikit::status_pill(ui, txt, color);
                     });
-                    uikit::caption(ui, self.flavor, format!("设备数: {}", dev_count));
+                    uikit::caption(ui, self.flavor, tr1(self.lang, "device.count_fmt", dev_count));
                     ui.add_space(8.0);
                     if uikit::primary_button(
                         ui,
                         self.flavor,
-                        format!("{}  新增从站", icons::PLUS_CIRCLE),
+                        format!("{}  {}", icons::PLUS_CIRCLE, tr(self.lang, "regtable.new_slave")),
                     )
                     .clicked()
                     {
                         self.open_add_device_modal(id.clone());
                     }
                 } else {
-                    ui.label("连接已不存在。");
+                    ui.label(tr(self.lang, "hero.conn_missing"));
                 }
             }
             Selection::Device { conn_id, slave_id } => {
                 let conn = self.conn_snapshot.iter().find(|s| &s.id == conn_id);
                 match conn.and_then(|c| c.devices.iter().find(|d| d.slave_id == *slave_id)) {
                     Some(d) => {
-                        ui.heading(format!("从站 {} · {}", d.slave_id, d.name));
+                        ui.heading(tr2(
+                            self.lang,
+                            "slave.with_id_name_fmt",
+                            d.slave_id,
+                            &d.name,
+                        ));
                         egui::Grid::new("dev_summary")
                             .num_columns(2)
                             .spacing([16.0, 4.0])
                             .show(ui, |ui| {
-                                ui.label("FC01 线圈");
+                                ui.label(tr(self.lang, "reg.fc01"));
                                 ui.label(d.counts.coils.to_string());
                                 ui.end_row();
-                                ui.label("FC02 离散输入");
+                                ui.label(tr(self.lang, "reg.fc02"));
                                 ui.label(d.counts.discrete_inputs.to_string());
                                 ui.end_row();
-                                ui.label("FC04 输入寄存器");
+                                ui.label(tr(self.lang, "reg.fc04"));
                                 ui.label(d.counts.input_registers.to_string());
                                 ui.end_row();
-                                ui.label("FC03 保持寄存器");
+                                ui.label(tr(self.lang, "reg.fc03"));
                                 ui.label(d.counts.holding_registers.to_string());
                                 ui.end_row();
                             });
                         ui.add_space(8.0);
                         let flavor = self.flavor;
+                        let lang = self.lang;
                         ui.horizontal(|ui| {
                             if uikit::secondary_button_sm(
                                 ui,
                                 flavor,
-                                format!("{}  批量添加", icons::PLUS_CIRCLE),
+                                format!(
+                                    "{}  {}",
+                                    icons::PLUS_CIRCLE,
+                                    tr(lang, "regtable.batch_add")
+                                ),
                             )
                             .clicked()
                             {
@@ -2395,7 +2433,11 @@ impl SlaveApp {
                             if uikit::danger_button(
                                 ui,
                                 flavor,
-                                format!("{}  删除从站", icons::TRASH),
+                                format!(
+                                    "{}  {}",
+                                    icons::TRASH,
+                                    tr(lang, "regtable.delete_slave")
+                                ),
                             )
                             .clicked()
                             {
@@ -2407,7 +2449,7 @@ impl SlaveApp {
                         ui.separator();
                         // Pass empty icon: phosphor font isn't actually embedded, so any
                         // phosphor glyph renders as a placeholder box (same as "✕" did).
-                        uikit::section_heading(ui, "", "寄存器抖动（压测）");
+                        uikit::section_heading(ui, "", tr(self.lang, "jitter.title"));
 
                         let cur_jitter: modbussim_core::jitter::JitterConfig = {
                             let conns = self.connections.blocking_read();
@@ -2421,7 +2463,7 @@ impl SlaveApp {
                         };
                         let mut new_jitter = cur_jitter.clone();
                         ui.horizontal(|ui| {
-                            ui.checkbox(&mut new_jitter.enabled, "启用");
+                            ui.checkbox(&mut new_jitter.enabled, tr(self.lang, "jitter.enabled"));
                         });
                         let mut interval = new_jitter.interval_ms as i32;
                         let mut rate = new_jitter.mutation_rate as i32;
@@ -2430,13 +2472,13 @@ impl SlaveApp {
                             .num_columns(2)
                             .spacing([12.0, 6.0])
                             .show(ui, |ui| {
-                                ui.label("周期");
+                                ui.label(tr(self.lang, "jitter.period"));
                                 ui.add(egui::Slider::new(&mut interval, 100..=5000).suffix(" ms"));
                                 ui.end_row();
-                                ui.label("变位率");
+                                ui.label(tr(self.lang, "jitter.change_rate"));
                                 ui.add(egui::Slider::new(&mut rate, 0..=100).suffix(" %"));
                                 ui.end_row();
-                                ui.label("漂移幅度");
+                                ui.label(tr(self.lang, "jitter.drift"));
                                 ui.add(egui::Slider::new(&mut delta, 0..=100).suffix(" %"));
                                 ui.end_row();
                             });
@@ -2444,11 +2486,17 @@ impl SlaveApp {
                         new_jitter.mutation_rate = rate as u8;
                         new_jitter.delta_percent = delta as u8;
                         ui.horizontal(|ui| {
-                            ui.label("影响范围");
-                            ui.checkbox(&mut new_jitter.affect_coils, "线圈");
-                            ui.checkbox(&mut new_jitter.affect_discrete, "离散");
-                            ui.checkbox(&mut new_jitter.affect_holding, "保持");
-                            ui.checkbox(&mut new_jitter.affect_input, "输入");
+                            ui.label(tr(self.lang, "jitter.scope"));
+                            ui.checkbox(&mut new_jitter.affect_coils, tr(self.lang, "jitter.coils"));
+                            ui.checkbox(
+                                &mut new_jitter.affect_discrete,
+                                tr(self.lang, "jitter.discrete"),
+                            );
+                            ui.checkbox(
+                                &mut new_jitter.affect_holding,
+                                tr(self.lang, "jitter.holding"),
+                            );
+                            ui.checkbox(&mut new_jitter.affect_input, tr(self.lang, "jitter.input"));
                         });
 
                         if new_jitter != cur_jitter {
@@ -2456,7 +2504,7 @@ impl SlaveApp {
                         }
 
                         ui.separator();
-                        uikit::section_heading(ui, icons::GEAR, "数据源");
+                        uikit::section_heading(ui, icons::GEAR, tr(self.lang, "ds.panel"));
 
                         // Snapshot sources belonging to this device.
                         let snap: Vec<(u64, u16, RegisterType, String, u64, bool)> =
@@ -2481,18 +2529,18 @@ impl SlaveApp {
                         let mut toggle_id: Option<u64> = None;
                         let mut remove_id: Option<u64> = None;
                         if snap.is_empty() {
-                            ui.label("（无）");
+                            ui.label(tr(self.lang, "ds.none"));
                         } else {
                             egui::Grid::new("ds_list")
                                 .num_columns(6)
                                 .spacing([10.0, 4.0])
                                 .striped(true)
                                 .show(ui, |ui| {
-                                    ui.strong("类型区");
-                                    ui.strong("地址");
-                                    ui.strong("源");
-                                    ui.strong("间隔 (ms)");
-                                    ui.strong("启用");
+                                    ui.strong(tr(self.lang, "ds.col.type"));
+                                    ui.strong(tr(self.lang, "ds.col.address"));
+                                    ui.strong(tr(self.lang, "ds.col.source"));
+                                    ui.strong(tr(self.lang, "ds.col.interval_ms"));
+                                    ui.strong(tr(self.lang, "ds.col.enabled"));
                                     ui.strong("");
                                     ui.end_row();
                                     for (sid, addr, rt, desc, ivl, en) in &snap {
@@ -2508,7 +2556,7 @@ impl SlaveApp {
                                         if ui.checkbox(&mut en_mut, "").clicked() {
                                             toggle_id = Some(*sid);
                                         }
-                                        if ui.small_button("删除").clicked() {
+                                        if ui.small_button(tr(self.lang, "ds.delete")).clicked() {
                                             remove_id = Some(*sid);
                                         }
                                         ui.end_row();
@@ -2522,10 +2570,10 @@ impl SlaveApp {
                             ui.add(
                                 egui::DragValue::new(&mut self.ds_add_addr)
                                     .range(0..=65535)
-                                    .prefix("地址 "),
+                                    .prefix(tr(self.lang, "ds.address_prefix")),
                             );
                             egui::ComboBox::from_id_salt("ds_kind")
-                                .selected_text(self.ds_add_kind.label())
+                                .selected_text(self.ds_add_kind.label(self.lang))
                                 .show_ui(ui, |ui| {
                                     for k in [
                                         DsKind::Counter,
@@ -2536,7 +2584,11 @@ impl SlaveApp {
                                         DsKind::Fixed,
                                         DsKind::CsvPlayback,
                                     ] {
-                                        ui.selectable_value(&mut self.ds_add_kind, k, k.label());
+                                        ui.selectable_value(
+                                            &mut self.ds_add_kind,
+                                            k,
+                                            k.label(self.lang),
+                                        );
                                     }
                                 });
                             ui.add(
@@ -2544,7 +2596,7 @@ impl SlaveApp {
                                     .range(50..=60_000)
                                     .suffix(" ms"),
                             );
-                            if ui.button("添加到 FC03").clicked() {
+                            if ui.button(tr(self.lang, "ds.add_to_fc03")).clicked() {
                                 do_add = true;
                             }
                         });
@@ -2567,7 +2619,7 @@ impl SlaveApp {
                         }
                     }
                     None => {
-                        ui.label("设备不存在。");
+                        ui.label(tr(self.lang, "hero.device_missing"));
                     }
                 }
             }
@@ -2576,11 +2628,8 @@ impl SlaveApp {
                 slave_id,
                 reg_type,
             } => {
-                let group_label = REG_GROUPS
-                    .iter()
-                    .find(|(rt, _)| rt == reg_type)
-                    .map(|(_, l)| *l)
-                    .unwrap_or("?");
+                let lang = self.lang;
+                let group_label = reg_group_label(*reg_type, lang);
                 let flavor = self.flavor;
                 let reg_icon = match reg_type {
                     RegisterType::Coil => icons::TOGGLE_LEFT,
@@ -2607,7 +2656,7 @@ impl SlaveApp {
                                 ui,
                                 flavor,
                                 &format!("{}  {}", reg_icon, group_label),
-                                Some(&format!("{} · 从站 {}", conn_id, slave_id)),
+                                Some(&tr2(lang, "conn.label_fmt", conn_id, slave_id)),
                             );
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -2615,7 +2664,11 @@ impl SlaveApp {
                                     if uikit::secondary_button_sm(
                                         ui,
                                         flavor,
-                                        format!("{}  批量添加", icons::PLUS_CIRCLE),
+                                        format!(
+                                            "{}  {}",
+                                            icons::PLUS_CIRCLE,
+                                            tr(lang, "regtable.batch_add")
+                                        ),
                                     )
                                     .clicked()
                                     {
@@ -2623,9 +2676,9 @@ impl SlaveApp {
                                     }
                                     ui.add_space(8.0);
                                     let toggle_label = if self.value_parse_open {
-                                        "◧ 收起解析"
+                                        tr(lang, "regtable.collapse_value_panel")
                                     } else {
-                                        "◧ 值解析 (V)"
+                                        tr(lang, "regtable.expand_value_panel")
                                     };
                                     if uikit::link_action(ui, flavor, toggle_label, false).clicked()
                                     {
@@ -2634,7 +2687,7 @@ impl SlaveApp {
                                     ui.add_space(8.0);
                                     let resp = ui.add(
                                         egui::TextEdit::singleline(&mut search_text)
-                                            .hint_text("地址 / 名称…")
+                                            .hint_text(tr(lang, "regtable.search_hint"))
                                             .desired_width(220.0),
                                     );
                                     if want_focus {
@@ -2670,14 +2723,14 @@ impl SlaveApp {
                 }
 
                 let Some(view) = &self.reg_view else {
-                    ui.label("正在加载…（或未选中有效组）");
+                    ui.label(tr(lang, "hero.loading"));
                     return;
                 };
                 if view.conn_id != *conn_id
                     || view.slave_id != *slave_id
                     || view.reg_type != *reg_type
                 {
-                    ui.label("正在刷新…");
+                    ui.label(tr(lang, "hero.refreshing"));
                     return;
                 }
 
@@ -2693,7 +2746,7 @@ impl SlaveApp {
                 // ── fmt-pill 工具栏 ──────────────────────────────────────────
                 ui.horizontal(|ui| {
                     if !is_bool {
-                        theme::text::tiny_caps(ui, flavor, "格式");
+                        theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.format"));
                         ui.add_space(4.0);
                         egui::Frame::new()
                             .fill(theme::bg_of(flavor, theme::Layer::L2))
@@ -2724,18 +2777,20 @@ impl SlaveApp {
                         ui,
                         flavor,
                         &format!(
-                            "共 {} 行{}",
-                            view.row_count,
+                            "{}{}",
+                            tr1(lang, "regtable.total_fmt", view.row_count),
                             if self.selected_addrs.is_empty() {
                                 String::new()
                             } else {
-                                format!(" · 已选 {} 行", self.selected_addrs.len())
+                                tr1(lang, "regtable.selected_fmt", self.selected_addrs.len())
                             }
                         ),
                     );
                     if !is_bool {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if uikit::link_action(ui, flavor, "清零选中", false).clicked() {
+                            if uikit::link_action(ui, flavor, tr(lang, "regtable.clear_selected"), false)
+                                .clicked()
+                            {
                                 self.selected_addrs.clear();
                                 self.click_anchor = None;
                             }
@@ -2743,7 +2798,7 @@ impl SlaveApp {
                     }
                 });
                 if !is_bool && mode.is_multi_word() {
-                    theme::text::crumb(ui, flavor, "多字格式 · 只读显示；要编辑请切回 U16");
+                    theme::text::crumb(ui, flavor, tr(lang, "regtable.multi_readonly"));
                 }
 
                 let row_h = 20.0;
@@ -2816,7 +2871,11 @@ impl SlaveApp {
                                             .column(Column::remainder())
                                             .header(26.0, |mut h| {
                                                 h.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "地址")
+                                                    theme::text::tiny_caps(
+                                                        ui,
+                                                        flavor,
+                                                        tr(lang, "regtable.address"),
+                                                    )
                                                 });
                                                 h.col(|ui| {
                                                     theme::text::tiny_caps(ui, flavor, mode.label())
@@ -2993,7 +3052,7 @@ impl SlaveApp {
                                         if let Some(list) = &filtered_addrs {
                                             if list.is_empty() {
                                                 ui.add_space(8.0);
-                                                uikit::caption(ui, flavor, "无匹配寄存器");
+                                                uikit::caption(ui, flavor, tr(lang, "regtable.no_match"));
                                                 return;
                                             }
                                         }
@@ -3069,17 +3128,17 @@ impl SlaveApp {
                                         let defs = view.defs.clone();
                                         tb.header(26.0, |mut header| {
                                             header.col(|ui| {
-                                                theme::text::tiny_caps(ui, flavor, "地址")
+                                                theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.address"))
                                             });
                                             if is_bool {
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "值")
+                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.value"))
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "名称")
+                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.name"))
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "注释");
+                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.note"));
                                                     // 表头下方 2px 蓝线（跨整行，画在最后一列底边）
                                                     let r = ui.max_rect();
                                                     let y = r.max.y - 1.0;
@@ -3101,7 +3160,7 @@ impl SlaveApp {
                                                     theme::text::tiny_caps(ui, flavor, "HEX")
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, "二进制")
+                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.binary"))
                                                 });
                                                 header.col(|ui| {
                                                     // 表头下方 2px 蓝线（画在尾列底边，覆盖全行）
@@ -3315,7 +3374,7 @@ impl SlaveApp {
                                         }
                                     }
                                     if let Some(vp_writes) =
-                                        value_panel::render(ui, flavor, &selected_vals, base)
+                                        value_panel::render(ui, flavor, lang, &selected_vals, base)
                                     {
                                         for w in vp_writes {
                                             writes.push(w);
@@ -3379,6 +3438,7 @@ impl SlaveApp {
         let action = log_panel::render(
             ctx,
             self.flavor,
+            self.lang,
             &mut self.log_state,
             &self.log_cache,
             self.log_cache_conn_id.as_deref(),
@@ -3395,6 +3455,7 @@ impl SlaveApp {
 impl eframe::App for SlaveApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "flavor_v3", &self.flavor);
+        eframe::set_value(storage, "lang_v1", &self.lang);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -3449,20 +3510,21 @@ impl eframe::App for SlaveApp {
         let mut do_load = false;
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("文件", |ui| {
-                    if ui.button("保存工程…").clicked() {
+                let lang = self.lang;
+                ui.menu_button(tr(lang, "menu.file"), |ui| {
+                    if ui.button(tr(lang, "menu.file.save")).clicked() {
                         do_save = true;
                         ui.close_kind(egui::UiKind::Menu);
                     }
-                    if ui.button("加载工程…").clicked() {
+                    if ui.button(tr(lang, "menu.file.load")).clicked() {
                         do_load = true;
                         ui.close_kind(egui::UiKind::Menu);
                     }
                 });
-                ui.menu_button("视图", |ui| {
-                    ui.checkbox(&mut self.value_parse_open, "显示值解析 (V)");
+                ui.menu_button(tr(lang, "menu.view"), |ui| {
+                    ui.checkbox(&mut self.value_parse_open, tr(lang, "menu.view.show_value_panel"));
                     if ui
-                        .checkbox(&mut self.log_state.open, "显示通信日志")
+                        .checkbox(&mut self.log_state.open, tr(lang, "menu.view.show_log_panel"))
                         .clicked()
                     {
                         if !self.log_state.open {
@@ -3471,7 +3533,7 @@ impl eframe::App for SlaveApp {
                         ui.close_kind(egui::UiKind::Menu);
                     }
                     ui.separator();
-                    if ui.button("浅色 / 深色切换").clicked() {
+                    if ui.button(tr(lang, "menu.view.toggle_theme")).clicked() {
                         self.flavor = if self.flavor.is_dark() {
                             Flavor::Latte
                         } else {
@@ -3481,7 +3543,7 @@ impl eframe::App for SlaveApp {
                         ui.close_kind(egui::UiKind::Menu);
                     }
                     ui.separator();
-                    ui.label("主题 (Catppuccin)");
+                    ui.label(tr(lang, "menu.view.theme_label"));
                     for f in [
                         Flavor::Mocha,
                         Flavor::Macchiato,
@@ -3495,18 +3557,35 @@ impl eframe::App for SlaveApp {
                     }
                     ui.separator();
                     let zoom = ctx.zoom_factor();
-                    if ui.button(format!("放大  ({:.0}%)", zoom * 100.0)).clicked() {
+                    if ui
+                        .button(format!("{}  ({:.0}%)", tr(lang, "menu.view.zoom_in"), zoom * 100.0))
+                        .clicked()
+                    {
                         ctx.set_zoom_factor((zoom + 0.1).min(3.0));
                     }
-                    if ui.button("缩小").clicked() {
+                    if ui.button(tr(lang, "menu.view.zoom_out")).clicked() {
                         ctx.set_zoom_factor((zoom - 0.1).max(0.5));
                     }
-                    if ui.button("重置缩放").clicked() {
+                    if ui.button(tr(lang, "menu.view.zoom_reset")).clicked() {
                         ctx.set_zoom_factor(1.0);
                     }
                 });
-                ui.menu_button("帮助", |ui| {
-                    ui.label("ModbusSlave (egui) · 开发预览");
+                ui.menu_button(tr(lang, "menu.language"), |ui| {
+                    if ui
+                        .radio_value(&mut self.lang, Lang::Zh, Lang::Zh.native_label())
+                        .clicked()
+                    {
+                        ui.close_kind(egui::UiKind::Menu);
+                    }
+                    if ui
+                        .radio_value(&mut self.lang, Lang::En, Lang::En.native_label())
+                        .clicked()
+                    {
+                        ui.close_kind(egui::UiKind::Menu);
+                    }
+                });
+                ui.menu_button(tr(lang, "menu.help"), |ui| {
+                    ui.label(tr(lang, "menu.help.about"));
                     ui.hyperlink_to("GitHub", "https://github.com/kelsoprotein-lab/ModbusSim");
                 });
             });
@@ -3539,12 +3618,20 @@ impl eframe::App for SlaveApp {
                             })
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    theme::text::tiny_caps(ui, self.flavor, "连接");
+                                    theme::text::tiny_caps(
+                                        ui,
+                                        self.flavor,
+                                        tr(self.lang, "sidebar.connections"),
+                                    );
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if uikit::secondary_button_sm(ui, self.flavor, "+ 新建")
-                                                .clicked()
+                                            if uikit::secondary_button_sm(
+                                                ui,
+                                                self.flavor,
+                                                tr(self.lang, "sidebar.new"),
+                                            )
+                                            .clicked()
                                             {
                                                 self.show_new_tcp_dialog =
                                                     !self.show_new_tcp_dialog;
@@ -3577,7 +3664,10 @@ impl eframe::App for SlaveApp {
                                             ui.end_row();
                                         });
                                     ui.add_space(4.0);
-                                    ui.checkbox(&mut self.new_use_tls, "启用 TLS");
+                                    ui.checkbox(
+                                        &mut self.new_use_tls,
+                                        tr(self.lang, "sidebar.enable_tls"),
+                                    );
                                     if self.new_use_tls {
                                         ui.add_space(2.0);
                                         egui::Grid::new("new_tcp_tls_form")
@@ -3593,7 +3683,7 @@ impl eframe::App for SlaveApp {
                                                 ui.label("PKCS#12");
                                                 ui.text_edit_singleline(&mut self.new_pkcs12_file);
                                                 ui.end_row();
-                                                ui.label("PKCS#12 密码");
+                                                ui.label(tr(self.lang, "sidebar.pkcs12_password"));
                                                 ui.add(
                                                     egui::TextEdit::singleline(
                                                         &mut self.new_pkcs12_password,
@@ -3601,29 +3691,39 @@ impl eframe::App for SlaveApp {
                                                     .password(true),
                                                 );
                                                 ui.end_row();
-                                                ui.label("CA (可选)");
+                                                ui.label(tr(self.lang, "sidebar.ca_optional"));
                                                 ui.text_edit_singleline(&mut self.new_ca_file);
                                                 ui.end_row();
                                             });
                                         ui.checkbox(
                                             &mut self.new_require_client_cert,
-                                            "要求客户端证书 (mTLS)",
+                                            tr(self.lang, "sidebar.require_client_cert"),
                                         );
                                         theme::text::crumb(
                                             ui,
                                             self.flavor,
-                                            "PEM (cert+key) 与 PKCS#12 二选一；两者都填则 PKCS#12 优先",
+                                            tr(self.lang, "sidebar.tls_hint"),
                                         );
                                         ui.add_space(4.0);
                                     }
                                     ui.horizontal(|ui| {
-                                        if uikit::primary_button(ui, self.flavor, "创建").clicked()
+                                        if uikit::primary_button(
+                                            ui,
+                                            self.flavor,
+                                            tr(self.lang, "sidebar.create"),
+                                        )
+                                        .clicked()
                                         {
                                             tree_action = Some(TreeAction::Create);
                                             self.show_new_tcp_dialog = false;
                                         }
-                                        if uikit::link_action(ui, self.flavor, "取消", false)
-                                            .clicked()
+                                        if uikit::link_action(
+                                            ui,
+                                            self.flavor,
+                                            tr(self.lang, "sidebar.cancel"),
+                                            false,
+                                        )
+                                        .clicked()
                                         {
                                             self.show_new_tcp_dialog = false;
                                         }
@@ -3680,9 +3780,13 @@ impl eframe::App for SlaveApp {
                                             })
                                             .is_some();
                                         let label: String = if confirming {
-                                            "× 再点一次确认".to_string()
+                                            tr(self.lang, "sidebar.confirm_delete").to_string()
                                         } else {
-                                            format!("× 删除连接 {}", conn_label_short)
+                                            tr1(
+                                                self.lang,
+                                                "sidebar.delete_conn_fmt",
+                                                &conn_label_short,
+                                            )
                                         };
                                         ui.horizontal(|ui| {
                                             if uikit::danger_button_sm(ui, self.flavor, label)
@@ -3742,7 +3846,9 @@ impl eframe::App for SlaveApp {
                                 .color(theme::danger(flavor))
                                 .size(11.0),
                         ));
-                        if uikit::link_action(ui, flavor, "清除", false).clicked() {
+                        if uikit::link_action(ui, flavor, tr(self.lang, "sidebar.clear"), false)
+                            .clicked()
+                        {
                             clear_error = true;
                         }
                     } else if let Some(msg) = &self.status_msg {
@@ -3756,7 +3862,9 @@ impl eframe::App for SlaveApp {
                                 .color(theme::success(flavor))
                                 .size(11.0),
                         ));
-                        if uikit::link_action(ui, flavor, "清除", false).clicked() {
+                        if uikit::link_action(ui, flavor, tr(self.lang, "sidebar.clear"), false)
+                            .clicked()
+                        {
                             clear_status = true;
                         }
                     } else {
@@ -3764,7 +3872,7 @@ impl eframe::App for SlaveApp {
                             (
                                 theme::text_muted(flavor),
                                 255u8,
-                                "未连接",
+                                tr(self.lang, "conn.state.disconnected"),
                                 theme::text_muted(flavor),
                             )
                         } else if any_running {
@@ -3776,14 +3884,14 @@ impl eframe::App for SlaveApp {
                             (
                                 theme::success(flavor),
                                 alpha,
-                                "运行中",
+                                tr(self.lang, "conn.state.running"),
                                 theme::success(flavor),
                             )
                         } else {
                             (
                                 theme::text_muted(flavor),
                                 255u8,
-                                "已停止",
+                                tr(self.lang, "conn.state.stopped"),
                                 theme::text_muted(flavor),
                             )
                         };
@@ -3813,7 +3921,7 @@ impl eframe::App for SlaveApp {
                     theme::text::crumb(
                         ui,
                         flavor,
-                        &format!("{} 连接 · {} 从站", conn_count, slave_count),
+                        &tr2(self.lang, "conn.summary_fmt", conn_count, slave_count),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         theme::text::crumb(ui, flavor, env!("CARGO_PKG_VERSION"));

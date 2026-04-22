@@ -1418,6 +1418,7 @@ impl MasterApp {
         let action = log_panel::render(
             ctx,
             self.flavor,
+            modbussim_ui_shared::i18n::Lang::default(),
             &mut self.log_state,
             &self.log_cache,
             self.log_cache_conn_id.as_deref(),

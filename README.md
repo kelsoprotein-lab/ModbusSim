@@ -18,6 +18,10 @@ Pre-built Tauri installers are attached to every GitHub Release:
 
 The egui edition is not packaged yet — build locally with `cargo run -p modbussim-egui` / `cargo run -p modbusmaster-egui` (see [Development](#development)).
 
+## Unreleased (main branch)
+
+- **egui i18n — EN / ZH toggle** — `modbussim-egui` now ships a "Language / 语言" menu with instant switching between English and 简体中文. The choice is persisted via eframe storage (`lang_v1`) so the next launch restores it. Translation lives in the new `modbussim-ui-shared::i18n` module (`Lang { Zh, En }` + `tr/tr1/tr2`); missing keys fall back to the key literal itself for easy dev-time diagnosis. Covers the menu bar, welcome hero, sidebar, TLS form, status bar, register-table toolbar + headers, data-source / jitter panels, and the add-slave / batch-add dialogs. Runtime error messages remain in Chinese for now.
+
 ## What's New in v0.12.0
 
 - **egui edition** — new pure-Rust desktop builds for both ModbusSlave and ModbusMaster (`modbussim-egui`, `modbusmaster-egui`), sharing a `modbussim-ui-shared` crate (theme / fonts / log panel / value panel / project I/O).

@@ -18,6 +18,10 @@
 
 egui 版暂未打包 release 产物，本地运行见下方 [开发](#开发) 章节：`cargo run -p modbussim-egui` / `cargo run -p modbusmaster-egui`。
 
+## 开发版更新（main 分支，未发布）
+
+- **egui 中英文切换** — 子站 `modbussim-egui` 菜单栏新增「语言 / Language」，支持中 / 英即时切换；选择写入 eframe storage (`lang_v1`)，下次启动自动恢复。翻译表位于新增的 `modbussim-ui-shared::i18n` 模块（`Lang { Zh, En }` + `tr/tr1/tr2`），未命中键直接回落为 key 本身，便于开发期定位缺译项。已覆盖菜单、欢迎屏、侧边栏、TLS 表单、状态栏、寄存器表工具栏与列头、数据源 / 抖动面板、新增从站 / 批量添加对话框等用户可见字符串；运行时错误消息暂保留中文。
+
 ## v0.12.0 更新要点
 
 - **egui 版** — ModbusSlave / ModbusMaster 新增纯 Rust 原生 egui 桌面版（`modbussim-egui`、`modbusmaster-egui`），共享 `modbussim-ui-shared` crate（主题 / 字体 / 日志面板 / ValuePanel / 项目读写）。
