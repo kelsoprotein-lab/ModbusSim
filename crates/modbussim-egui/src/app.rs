@@ -19,6 +19,7 @@ use modbussim_ui_shared::project::{
     TcpSpec, TlsSpec,
 };
 use modbussim_ui_shared::theme::{self, Flavor};
+use modbussim_ui_shared::hero_anim::{show_welcome_hero, HeroPulseFeed};
 use modbussim_ui_shared::ui as uikit;
 use modbussim_ui_shared::value_panel::{self, F64Order};
 use tokio::runtime::Runtime;
@@ -269,6 +270,61 @@ pub struct RegViewCache {
     pub defs: Arc<std::collections::HashMap<u16, (String, String)>>,
 }
 
+/// 空状态 Hero 动画的心跳采样器。每 100ms 从所有连接的 LogCollector
+/// 读取最近 1s 的 TX/RX 条数，归一化到 0..=1 作为振幅乘子。
+struct HeroPulseState {
+    /// 最近一次采样得到的总条数（所有连接聚合）。
+    recent_count: u32,
+    /// 上次采样时刻；None 表示从未采样。
+    last_sample: Option<std::time::Instant>,
+}
+
+impl HeroPulseState {
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+    const SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+    const SATURATION: u32 = 40;
+
+    fn new() -> Self {
+        Self {
+            recent_count: 0,
+            last_sample: None,
+        }
+    }
+
+    /// 若距上次采样已 >= 100ms，则重新遍历所有 connection 的 log_collector
+    /// 累加最近 1s 的条数，返回归一化后的振幅（未经 gain 混合）。
+    fn sample(&mut self, connections: &SharedConnections) -> f32 {
+        let due = self
+            .last_sample
+            .map_or(true, |t| t.elapsed() >= Self::SAMPLE_EVERY);
+        if due {
+            if let Ok(entries) = connections.try_read() {
+                let total: usize = entries
+                    .iter()
+                    .filter_map(|e| e.log_collector.try_count_within(Self::WINDOW))
+                    .sum();
+                self.recent_count = total.min(u32::MAX as usize) as u32;
+                self.last_sample = Some(std::time::Instant::now());
+            }
+            // 写锁冲突 / 初次读失败：沿用上次 recent_count
+        }
+        amp_from_counts(self.recent_count)
+    }
+
+    fn feed(&mut self, connections: &SharedConnections) -> HeroPulseFeed {
+        HeroPulseFeed {
+            amp: self.sample(connections),
+            has_error: false,
+            disabled: false,
+        }
+    }
+}
+
+/// 把"最近 1s 总条数"归一化到 0..=1。SATURATION=40 即约 40 条/秒满振。
+fn amp_from_counts(total: u32) -> f32 {
+    (total as f32 / HeroPulseState::SATURATION as f32).clamp(0.0, 1.0)
+}
+
 pub struct SlaveApp {
     rt: Arc<Runtime>,
     connections: SharedConnections,
@@ -347,6 +403,9 @@ pub struct SlaveApp {
     log_cache: Vec<LogEntry>,
     log_cache_conn_id: Option<String>,
     log_last_refresh: Option<Instant>,
+
+    // Welcome-screen hero animation pulse sampler.
+    hero_pulse: HeroPulseState,
 
     /// 右侧值解析面板是否显示。默认 true 兼容现有用户预期；可由
     /// `V` 快捷键 / 视图菜单 / 工具栏 toggle 关掉以让表格全宽。
@@ -542,6 +601,7 @@ impl SlaveApp {
             log_cache: Vec::new(),
             log_cache_conn_id: None,
             log_last_refresh: None,
+            hero_pulse: HeroPulseState::new(),
             value_parse_open: true,
         }
     }
@@ -2248,17 +2308,15 @@ impl SlaveApp {
         let selection = self.selection.clone();
         match &selection {
             Selection::None => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.heading(format!("{}  ModbusSlave", icons::CPU));
-                    uikit::caption(
-                        ui,
-                        self.flavor,
-                        "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
-                    );
-                    ui.add_space(28.0);
-                    paint_dancing_strings(ui, self.flavor);
-                });
+                let feed = self.hero_pulse.feed(&self.connections);
+                show_welcome_hero(
+                    ui,
+                    self.flavor,
+                    icons::CPU,
+                    "ModbusSlave",
+                    "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
+                    feed,
+                );
             }
             Selection::Connection(id) => {
                 let exists = self.conn_snapshot.iter().any(|s| &s.id == id);
@@ -3807,50 +3865,4 @@ impl eframe::App for SlaveApp {
             ));
         }
     }
-}
-
-/// 空状态装饰：致敬 egui demo `dancing_strings`，三条驻波叠在一起。
-/// 颜色取主题 accent / success / warn，宽度自适应、高度固定。
-fn paint_dancing_strings(ui: &mut egui::Ui, flavor: Flavor) {
-    use egui::epaint::PathStroke;
-    use egui::{emath, epaint, pos2, vec2, Rect};
-
-    let max_w = ui.available_width().min(560.0);
-    egui::Frame::canvas(ui.style()).show(ui, |ui| {
-        ui.set_min_width(max_w);
-        ui.ctx().request_repaint();
-        let time = ui.input(|i| i.time);
-
-        let desired_size = vec2(max_w, max_w * 0.22);
-        let (_id, rect) = ui.allocate_space(desired_size);
-
-        let to_screen =
-            emath::RectTransform::from_to(Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0), rect);
-
-        let modes_colors = [
-            (2u32, theme::accent(flavor)),
-            (3u32, theme::success(flavor)),
-            (5u32, theme::warn(flavor)),
-        ];
-        let mut shapes = Vec::with_capacity(modes_colors.len());
-        for &(mode, color) in &modes_colors {
-            let modef = mode as f64;
-            let n = 120;
-            let speed = 1.5;
-            let points: Vec<egui::Pos2> = (0..=n)
-                .map(|i| {
-                    let t = i as f64 / n as f64;
-                    let amp = (time * speed * modef).sin() / modef;
-                    let y = amp * (t * std::f64::consts::TAU / 2.0 * modef).sin();
-                    to_screen * pos2(t as f32, y as f32)
-                })
-                .collect();
-            let thickness = 8.0 / mode as f32;
-            shapes.push(epaint::Shape::line(
-                points,
-                PathStroke::new(thickness, color),
-            ));
-        }
-        ui.painter().extend(shapes);
-    });
 }
