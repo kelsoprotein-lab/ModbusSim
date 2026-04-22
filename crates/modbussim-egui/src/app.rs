@@ -12,6 +12,7 @@ use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, Regi
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
 use modbussim_core::transport::{SlaveTlsConfig, Transport};
 use modbussim_ui_shared::format::{format_u16, U16Format};
+use modbussim_ui_shared::hero_anim::{show_welcome_hero, HeroPulseFeed};
 use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
@@ -19,7 +20,6 @@ use modbussim_ui_shared::project::{
     TcpSpec, TlsSpec,
 };
 use modbussim_ui_shared::theme::{self, Flavor};
-use modbussim_ui_shared::hero_anim::{show_welcome_hero, HeroPulseFeed};
 use modbussim_ui_shared::ui as uikit;
 use modbussim_ui_shared::value_panel::{self, F64Order};
 use tokio::runtime::Runtime;

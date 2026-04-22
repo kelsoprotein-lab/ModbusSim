@@ -54,10 +54,8 @@ pub fn show_welcome_hero(
             let time = ui.input(|i| i.time);
             let desired = vec2(max_w, max_w * 0.22);
             let (_id, rect) = ui.allocate_space(desired);
-            let to_screen = emath::RectTransform::from_to(
-                Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0),
-                rect,
-            );
+            let to_screen =
+                emath::RectTransform::from_to(Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0), rect);
 
             let gain = 0.15 + 0.85 * feed.amp; // 底噪 15%，满载 100%
             let modes: [(u32, Color32); 3] = [
@@ -74,9 +72,8 @@ pub fn show_welcome_hero(
                     .map(|i| {
                         let t = i as f64 / n as f64;
                         let base = (time * speed * modef).sin() / modef;
-                        let y = gain as f64
-                            * base
-                            * (t * std::f64::consts::TAU / 2.0 * modef).sin();
+                        let y =
+                            gain as f64 * base * (t * std::f64::consts::TAU / 2.0 * modef).sin();
                         to_screen * pos2(t as f32, y as f32)
                     })
                     .collect();
@@ -128,7 +125,10 @@ mod tests {
     fn lerp_color_endpoints() {
         let a = Color32::from_rgb(10, 20, 30);
         let b = Color32::from_rgb(200, 210, 220);
-        assert_eq!(lerp_color(a, b, 0.0), Color32::from_rgba_unmultiplied(10, 20, 30, 255));
+        assert_eq!(
+            lerp_color(a, b, 0.0),
+            Color32::from_rgba_unmultiplied(10, 20, 30, 255)
+        );
         assert_eq!(
             lerp_color(a, b, 1.0),
             Color32::from_rgba_unmultiplied(200, 210, 220, 255)
