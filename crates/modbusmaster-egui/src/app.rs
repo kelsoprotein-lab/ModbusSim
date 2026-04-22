@@ -612,7 +612,11 @@ impl MasterApp {
 
             proj.connections.push(MasterConnectionSave {
                 label: s.label.clone(),
-                tcp: TcpSpec { host, port },
+                tcp: TcpSpec {
+                    host,
+                    port,
+                    tls: None,
+                },
                 slave_id: s.slave_id,
                 timeout_ms,
                 poll,

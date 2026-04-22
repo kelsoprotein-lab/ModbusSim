@@ -19,6 +19,27 @@ pub enum EguiProjectType {
 pub struct TcpSpec {
     pub host: String,
     pub port: u16,
+    /// 可选 TLS 配置；旧项目文件无此字段时按 None（明文 TCP）解析。
+    #[serde(default)]
+    pub tls: Option<TlsSpec>,
+}
+
+/// 子站 TLS 持久化字段，与 `modbussim_core::transport::SlaveTlsConfig`
+/// 字段一一对应。任何字段缺失视为空字符串/false，便于演进。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TlsSpec {
+    #[serde(default)]
+    pub cert_file: String,
+    #[serde(default)]
+    pub key_file: String,
+    #[serde(default)]
+    pub ca_file: String,
+    #[serde(default)]
+    pub require_client_cert: bool,
+    #[serde(default)]
+    pub pkcs12_file: String,
+    #[serde(default)]
+    pub pkcs12_password: String,
 }
 
 // --- Slave ---
@@ -165,6 +186,7 @@ mod tests {
             tcp: TcpSpec {
                 host: "0.0.0.0".into(),
                 port: 502,
+                tls: None,
             },
             devices: vec![SlaveDeviceSave {
                 slave_id: 1,
@@ -186,6 +208,7 @@ mod tests {
             tcp: TcpSpec {
                 host: "127.0.0.1".into(),
                 port: 5502,
+                tls: None,
             },
             slave_id: 1,
             timeout_ms: 3000,
@@ -199,6 +222,42 @@ mod tests {
         let json = serialize_master(&p).unwrap();
         let q = deserialize_master(&json).unwrap();
         assert_eq!(q.connections[0].poll.as_ref().unwrap().qty, 10);
+    }
+
+    #[test]
+    fn slave_tls_roundtrip_and_legacy_compat() {
+        let mut p = SlaveProject::new();
+        p.connections.push(SlaveConnectionSave {
+            label: "TLS 0.0.0.0:8502".into(),
+            tcp: TcpSpec {
+                host: "0.0.0.0".into(),
+                port: 8502,
+                tls: Some(TlsSpec {
+                    cert_file: "/etc/cert.pem".into(),
+                    key_file: "/etc/key.pem".into(),
+                    ca_file: String::new(),
+                    require_client_cert: false,
+                    pkcs12_file: String::new(),
+                    pkcs12_password: String::new(),
+                }),
+            },
+            devices: Vec::new(),
+        });
+        let json = serialize_slave(&p).unwrap();
+        let q = deserialize_slave(&json).unwrap();
+        let tls = q.connections[0].tcp.tls.clone();
+        assert_eq!(tls.unwrap().cert_file, "/etc/cert.pem");
+
+        // 旧文件（无 tls 字段）应当照常解析、tls=None
+        let legacy = r#"{
+            "schema_version": 2,
+            "type": "slave",
+            "connections": [
+                {"label":"L","tcp":{"host":"0.0.0.0","port":502},"devices":[]}
+            ]
+        }"#;
+        let parsed = deserialize_slave(legacy).unwrap();
+        assert!(parsed.connections[0].tcp.tls.is_none());
     }
 
     #[test]

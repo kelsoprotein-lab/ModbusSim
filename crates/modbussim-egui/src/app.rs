@@ -10,12 +10,14 @@ use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::register::{decode_value, DataType, Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{ConnectionState, SlaveConnection, SlaveDevice};
-use modbussim_core::transport::Transport;
+use modbussim_core::transport::{SlaveTlsConfig, Transport};
 use modbussim_ui_shared::format::{format_u16, U16Format};
+use modbussim_ui_shared::hero_anim::{show_welcome_hero, HeroPulseFeed};
 use modbussim_ui_shared::icons;
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
-    deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject, TcpSpec,
+    deserialize_slave, serialize_slave, SlaveConnectionSave, SlaveDeviceSave, SlaveProject,
+    TcpSpec, TlsSpec,
 };
 use modbussim_ui_shared::theme::{self, Flavor};
 use modbussim_ui_shared::ui as uikit;
@@ -268,6 +270,61 @@ pub struct RegViewCache {
     pub defs: Arc<std::collections::HashMap<u16, (String, String)>>,
 }
 
+/// 空状态 Hero 动画的心跳采样器。每 100ms 从所有连接的 LogCollector
+/// 读取最近 1s 的 TX/RX 条数，归一化到 0..=1 作为振幅乘子。
+struct HeroPulseState {
+    /// 最近一次采样得到的总条数（所有连接聚合）。
+    recent_count: u32,
+    /// 上次采样时刻；None 表示从未采样。
+    last_sample: Option<std::time::Instant>,
+}
+
+impl HeroPulseState {
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+    const SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+    const SATURATION: u32 = 40;
+
+    fn new() -> Self {
+        Self {
+            recent_count: 0,
+            last_sample: None,
+        }
+    }
+
+    /// 若距上次采样已 >= 100ms，则重新遍历所有 connection 的 log_collector
+    /// 累加最近 1s 的条数，返回归一化后的振幅（未经 gain 混合）。
+    fn sample(&mut self, connections: &SharedConnections) -> f32 {
+        let due = self
+            .last_sample
+            .map_or(true, |t| t.elapsed() >= Self::SAMPLE_EVERY);
+        if due {
+            if let Ok(entries) = connections.try_read() {
+                let total: usize = entries
+                    .iter()
+                    .filter_map(|e| e.log_collector.try_count_within(Self::WINDOW))
+                    .sum();
+                self.recent_count = total.min(u32::MAX as usize) as u32;
+                self.last_sample = Some(std::time::Instant::now());
+            }
+            // 写锁冲突 / 初次读失败：沿用上次 recent_count
+        }
+        amp_from_counts(self.recent_count)
+    }
+
+    fn feed(&mut self, connections: &SharedConnections) -> HeroPulseFeed {
+        HeroPulseFeed {
+            amp: self.sample(connections),
+            has_error: false,
+            disabled: false,
+        }
+    }
+}
+
+/// 把"最近 1s 总条数"归一化到 0..=1。SATURATION=40 即约 40 条/秒满振。
+fn amp_from_counts(total: u32) -> f32 {
+    (total as f32 / HeroPulseState::SATURATION as f32).clamp(0.0, 1.0)
+}
+
 pub struct SlaveApp {
     rt: Arc<Runtime>,
     connections: SharedConnections,
@@ -281,6 +338,15 @@ pub struct SlaveApp {
     new_host: String,
     new_port: String,
     show_new_tcp_dialog: bool,
+    // —— 新建连接的 TLS 表单字段 ——
+    new_use_tls: bool,
+    /// PEM cert 路径（与 pkcs12_file 互斥；同时填则 PKCS#12 优先）
+    new_cert_file: String,
+    new_key_file: String,
+    new_ca_file: String,
+    new_require_client_cert: bool,
+    new_pkcs12_file: String,
+    new_pkcs12_password: String,
     /// 删除连接二次确认状态：(conn_id, 首次点击时刻)。
     /// 3 秒内同一连接再次点删除按钮 → 真删；否则按钮 label 自动恢复。
     pending_delete: Option<(String, std::time::Instant)>,
@@ -337,6 +403,9 @@ pub struct SlaveApp {
     log_cache: Vec<LogEntry>,
     log_cache_conn_id: Option<String>,
     log_last_refresh: Option<Instant>,
+
+    // Welcome-screen hero animation pulse sampler.
+    hero_pulse: HeroPulseState,
 
     /// 右侧值解析面板是否显示。默认 true 兼容现有用户预期；可由
     /// `V` 快捷键 / 视图菜单 / 工具栏 toggle 关掉以让表格全宽。
@@ -499,6 +568,13 @@ impl SlaveApp {
             new_host: "0.0.0.0".to_string(),
             new_port: "5502".to_string(),
             show_new_tcp_dialog: false,
+            new_use_tls: false,
+            new_cert_file: String::new(),
+            new_key_file: String::new(),
+            new_ca_file: String::new(),
+            new_require_client_cert: false,
+            new_pkcs12_file: String::new(),
+            new_pkcs12_password: String::new(),
             pending_delete: None,
             last_error: None,
             conn_snapshot: Vec::new(),
@@ -525,6 +601,7 @@ impl SlaveApp {
             log_cache: Vec::new(),
             log_cache_conn_id: None,
             log_last_refresh: None,
+            hero_pulse: HeroPulseState::new(),
             value_parse_open: true,
         }
     }
@@ -1065,17 +1142,38 @@ impl SlaveApp {
     fn allocate_connection(&self) -> (String, String) {
         let n = self.next_conn_seq.fetch_add(1, Ordering::Relaxed);
         let id = format!("slave_{}", n);
-        let label = format!("TCP {}:{}", self.new_host.trim(), self.new_port.trim());
+        let proto = if self.new_use_tls { "TLS" } else { "TCP" };
+        let label = format!(
+            "{} {}:{}",
+            proto,
+            self.new_host.trim(),
+            self.new_port.trim()
+        );
         (id, label)
     }
 
-    fn spawn_create_tcp(&self, id: String, label: String, host: String, port: u16) {
+    fn spawn_create_tcp(
+        &self,
+        id: String,
+        label: String,
+        host: String,
+        port: u16,
+        tls: Option<SlaveTlsConfig>,
+    ) {
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         self.rt.spawn(async move {
             let log_collector = Arc::new(LogCollector::new());
-            let connection = SlaveConnection::new(Transport::Tcp { host, port })
-                .with_log_collector(log_collector.clone());
+            let transport = if tls.is_some() {
+                Transport::TcpTls { host, port }
+            } else {
+                Transport::Tcp { host, port }
+            };
+            let mut connection =
+                SlaveConnection::new(transport).with_log_collector(log_collector.clone());
+            if let Some(cfg) = tls {
+                connection = connection.with_tls_config(cfg);
+            }
             let device = SlaveDevice::with_default_registers(1, "从站 1", 20000);
             let device_snap = DeviceSnapshot {
                 slave_id: device.slave_id,
@@ -1110,8 +1208,29 @@ impl SlaveApp {
                 return;
             }
         };
+        let tls = if self.new_use_tls {
+            let has_pem =
+                !self.new_cert_file.trim().is_empty() && !self.new_key_file.trim().is_empty();
+            let has_pkcs12 = !self.new_pkcs12_file.trim().is_empty();
+            if !has_pem && !has_pkcs12 {
+                self.last_error =
+                    Some("启用 TLS 需要填写 cert+key（PEM）或 pkcs12 文件路径".to_string());
+                return;
+            }
+            Some(SlaveTlsConfig {
+                enabled: true,
+                cert_file: self.new_cert_file.trim().to_string(),
+                key_file: self.new_key_file.trim().to_string(),
+                ca_file: self.new_ca_file.trim().to_string(),
+                require_client_cert: self.new_require_client_cert,
+                pkcs12_file: self.new_pkcs12_file.trim().to_string(),
+                pkcs12_password: self.new_pkcs12_password.clone(),
+            })
+        } else {
+            None
+        };
         let (id, label) = self.allocate_connection();
-        self.spawn_create_tcp(id, label, host, port);
+        self.spawn_create_tcp(id, label, host, port, tls);
         ctx.request_repaint();
     }
 
@@ -1291,19 +1410,38 @@ impl SlaveApp {
     fn build_project(&self) -> SlaveProject {
         let mut proj = SlaveProject::new();
         for snap in &self.conn_snapshot {
-            let (host, port) = self
+            // 同时取出 host/port 与可选 TLS 配置，单次 try_read 完成
+            let (host, port, tls) = self
                 .connections
                 .try_read()
                 .ok()
                 .and_then(|list| {
                     list.iter().find(|e| e.id == snap.id).and_then(|e| {
-                        e.connection.try_read().ok().map(|c| match &c.transport {
-                            Transport::Tcp { host, port } => (host.clone(), *port),
-                            _ => ("0.0.0.0".to_string(), 502),
+                        e.connection.try_read().ok().map(|c| {
+                            let (h, p) = match &c.transport {
+                                Transport::Tcp { host, port }
+                                | Transport::TcpTls { host, port } => (host.clone(), *port),
+                                _ => ("0.0.0.0".to_string(), 502),
+                            };
+                            let tls = if matches!(c.transport, Transport::TcpTls { .. })
+                                && c.tls_config.enabled
+                            {
+                                Some(TlsSpec {
+                                    cert_file: c.tls_config.cert_file.clone(),
+                                    key_file: c.tls_config.key_file.clone(),
+                                    ca_file: c.tls_config.ca_file.clone(),
+                                    require_client_cert: c.tls_config.require_client_cert,
+                                    pkcs12_file: c.tls_config.pkcs12_file.clone(),
+                                    pkcs12_password: c.tls_config.pkcs12_password.clone(),
+                                })
+                            } else {
+                                None
+                            };
+                            (h, p, tls)
                         })
                     })
                 })
-                .unwrap_or_else(|| ("0.0.0.0".to_string(), 502));
+                .unwrap_or_else(|| ("0.0.0.0".to_string(), 502, None));
 
             let devices: Vec<SlaveDeviceSave> = snap
                 .devices
@@ -1321,7 +1459,7 @@ impl SlaveApp {
 
             proj.connections.push(SlaveConnectionSave {
                 label: snap.label.clone(),
-                tcp: TcpSpec { host, port },
+                tcp: TcpSpec { host, port, tls },
                 devices,
             });
         }
@@ -1394,11 +1532,30 @@ impl SlaveApp {
                 let id = format!("slave_{}", next_seq.fetch_add(1, Ordering::Relaxed));
                 let label = c.label.clone();
                 let log_collector = Arc::new(LogCollector::new());
-                let connection = SlaveConnection::new(Transport::Tcp {
-                    host: c.tcp.host.clone(),
-                    port: c.tcp.port,
-                })
-                .with_log_collector(log_collector.clone());
+                let transport = if c.tcp.tls.is_some() {
+                    Transport::TcpTls {
+                        host: c.tcp.host.clone(),
+                        port: c.tcp.port,
+                    }
+                } else {
+                    Transport::Tcp {
+                        host: c.tcp.host.clone(),
+                        port: c.tcp.port,
+                    }
+                };
+                let mut connection =
+                    SlaveConnection::new(transport).with_log_collector(log_collector.clone());
+                if let Some(tls) = c.tcp.tls.as_ref() {
+                    connection = connection.with_tls_config(SlaveTlsConfig {
+                        enabled: true,
+                        cert_file: tls.cert_file.clone(),
+                        key_file: tls.key_file.clone(),
+                        ca_file: tls.ca_file.clone(),
+                        require_client_cert: tls.require_client_cert,
+                        pkcs12_file: tls.pkcs12_file.clone(),
+                        pkcs12_password: tls.pkcs12_password.clone(),
+                    });
+                }
 
                 let mut device_snapshots = Vec::new();
                 for ds in &c.devices {
@@ -2151,15 +2308,15 @@ impl SlaveApp {
         let selection = self.selection.clone();
         match &selection {
             Selection::None => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.heading(format!("{}  ModbusSlave", icons::CPU));
-                    uikit::caption(
-                        ui,
-                        self.flavor,
-                        "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
-                    );
-                });
+                let feed = self.hero_pulse.feed(&self.connections);
+                show_welcome_hero(
+                    ui,
+                    self.flavor,
+                    icons::CPU,
+                    "ModbusSlave",
+                    "从左侧创建或选中一个连接 / 设备 / 寄存器组。",
+                    feed,
+                );
             }
             Selection::Connection(id) => {
                 let exists = self.conn_snapshot.iter().any(|s| &s.id == id);
@@ -3420,6 +3577,45 @@ impl eframe::App for SlaveApp {
                                             ui.end_row();
                                         });
                                     ui.add_space(4.0);
+                                    ui.checkbox(&mut self.new_use_tls, "启用 TLS");
+                                    if self.new_use_tls {
+                                        ui.add_space(2.0);
+                                        egui::Grid::new("new_tcp_tls_form")
+                                            .num_columns(2)
+                                            .spacing([8.0, 4.0])
+                                            .show(ui, |ui| {
+                                                ui.label("Cert (PEM)");
+                                                ui.text_edit_singleline(&mut self.new_cert_file);
+                                                ui.end_row();
+                                                ui.label("Key (PEM)");
+                                                ui.text_edit_singleline(&mut self.new_key_file);
+                                                ui.end_row();
+                                                ui.label("PKCS#12");
+                                                ui.text_edit_singleline(&mut self.new_pkcs12_file);
+                                                ui.end_row();
+                                                ui.label("PKCS#12 密码");
+                                                ui.add(
+                                                    egui::TextEdit::singleline(
+                                                        &mut self.new_pkcs12_password,
+                                                    )
+                                                    .password(true),
+                                                );
+                                                ui.end_row();
+                                                ui.label("CA (可选)");
+                                                ui.text_edit_singleline(&mut self.new_ca_file);
+                                                ui.end_row();
+                                            });
+                                        ui.checkbox(
+                                            &mut self.new_require_client_cert,
+                                            "要求客户端证书 (mTLS)",
+                                        );
+                                        theme::text::crumb(
+                                            ui,
+                                            self.flavor,
+                                            "PEM (cert+key) 与 PKCS#12 二选一；两者都填则 PKCS#12 优先",
+                                        );
+                                        ui.add_space(4.0);
+                                    }
                                     ui.horizontal(|ui| {
                                         if uikit::primary_button(ui, self.flavor, "创建").clicked()
                                         {
@@ -3668,5 +3864,29 @@ impl eframe::App for SlaveApp {
                 self.reg_view_refresh_interval_ms,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod hero_pulse_tests {
+    use super::amp_from_counts;
+
+    #[test]
+    fn amp_zero_when_silent() {
+        assert_eq!(amp_from_counts(0), 0.0);
+    }
+
+    #[test]
+    fn amp_saturates_at_one() {
+        assert_eq!(amp_from_counts(40), 1.0);
+        assert_eq!(amp_from_counts(100), 1.0);
+        assert_eq!(amp_from_counts(u32::MAX), 1.0);
+    }
+
+    #[test]
+    fn amp_linear_in_between() {
+        // 20 条 → 0.5，允许浮点误差
+        let v = amp_from_counts(20);
+        assert!((v - 0.5).abs() < 1e-6, "got {}", v);
     }
 }

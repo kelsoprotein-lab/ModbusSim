@@ -72,6 +72,24 @@ impl LogCollector {
         self.entries.try_read().ok().map(|g| g.clone())
     }
 
+    /// Non-blocking count of entries whose timestamp is within the last `window`.
+    /// Returns `None` if a writer holds the lock.
+    ///
+    /// Uses the fact that entries are pushed in time order: scans from the tail
+    /// and stops at the first entry older than the cutoff. O(k) where k is the
+    /// number of recent entries (typically small even if the buffer is large).
+    pub fn try_count_within(&self, window: std::time::Duration) -> Option<usize> {
+        let chrono_window = chrono::Duration::from_std(window).ok()?;
+        let cutoff = chrono::Utc::now() - chrono_window;
+        self.entries.try_read().ok().map(|guard| {
+            guard
+                .iter()
+                .rev()
+                .take_while(|e| e.timestamp >= cutoff)
+                .count()
+        })
+    }
+
     /// Get all log entries (blocking version).
     pub fn get_all_blocking(&self) -> Vec<LogEntry> {
         self.entries.blocking_read().clone()
@@ -271,5 +289,33 @@ mod tests {
         // Should be the last 3 entries
         assert!(recent[0].detail.contains("R 7 x1"));
         assert!(recent[2].detail.contains("R 9 x1"));
+    }
+
+    #[tokio::test]
+    async fn test_try_count_within_recent_only() {
+        let collector = LogCollector::new();
+        let mut old = LogEntry::new(Direction::Rx, FunctionCode::ReadHoldingRegisters, "old");
+        old.timestamp = chrono::Utc::now() - chrono::Duration::seconds(10);
+        collector.add(old).await;
+        for i in 0..3 {
+            collector
+                .add(LogEntry::new(
+                    Direction::Rx,
+                    FunctionCode::ReadHoldingRegisters,
+                    format!("new {}", i),
+                ))
+                .await;
+        }
+        let count = collector.try_count_within(std::time::Duration::from_secs(1));
+        assert_eq!(count, Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_try_count_within_empty() {
+        let collector = LogCollector::new();
+        assert_eq!(
+            collector.try_count_within(std::time::Duration::from_secs(1)),
+            Some(0),
+        );
     }
 }
