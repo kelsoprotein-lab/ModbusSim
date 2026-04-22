@@ -3866,3 +3866,27 @@ impl eframe::App for SlaveApp {
         }
     }
 }
+
+#[cfg(test)]
+mod hero_pulse_tests {
+    use super::amp_from_counts;
+
+    #[test]
+    fn amp_zero_when_silent() {
+        assert_eq!(amp_from_counts(0), 0.0);
+    }
+
+    #[test]
+    fn amp_saturates_at_one() {
+        assert_eq!(amp_from_counts(40), 1.0);
+        assert_eq!(amp_from_counts(100), 1.0);
+        assert_eq!(amp_from_counts(u32::MAX), 1.0);
+    }
+
+    #[test]
+    fn amp_linear_in_between() {
+        // 20 条 → 0.5，允许浮点误差
+        let v = amp_from_counts(20);
+        assert!((v - 0.5).abs() < 1e-6, "got {}", v);
+    }
+}
