@@ -227,6 +227,16 @@ pub enum UiEvent {
     },
     Info(String),
     Error(String),
+    /// 延迟格式化:drain_events 阶段 tr1(self.lang, key, arg);
+    /// 用于 async 上下文里构造用户可见的运行时错误,不需要在 spawn 里捕获 lang。
+    ErrorKey {
+        key: &'static str,
+        arg: String,
+    },
+    InfoKey {
+        key: &'static str,
+        arg: String,
+    },
 }
 
 /// Immutable view of a connection for UI rendering.
@@ -671,7 +681,10 @@ impl SlaveApp {
         self.rt.spawn(async move {
             let entries = connections.read().await;
             let Some(entry) = entries.iter().find(|e| e.id == id) else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: id.to_string(),
+                });
                 return;
             };
             let csv = entry.log_collector.export_csv().await;
@@ -691,13 +704,16 @@ impl SlaveApp {
             };
             match tokio::fs::write(path.path(), csv).await {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::Info(format!(
-                        "日志已导出：{}",
-                        path.path().display()
-                    )));
+                    let _ = tx.send(UiEvent::InfoKey {
+                        key: "err.log_exported_fmt",
+                        arg: path.path().display().to_string(),
+                    });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.export_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -725,14 +741,20 @@ impl SlaveApp {
                 .find(|e| e.id == conn_id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: conn_id.to_string(),
+                });
                 return;
             };
             let new_counts = {
                 let conn = conn_arc.read().await;
                 let mut devs = conn.devices.write().await;
                 let Some(dev) = devs.get_mut(&slave_id) else {
-                    let _ = tx.send(UiEvent::Error(format!("从站 {slave_id} 未找到")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.slave_not_found_fmt",
+                        arg: slave_id.to_string(),
+                    });
                     return;
                 };
                 match reg_type {
@@ -843,7 +865,7 @@ impl SlaveApp {
         self.add_device_modal = Some(AddDeviceModalState {
             conn_id,
             slave_id: next_slave_id,
-            name: format!("从站 {}", next_slave_id),
+            name: tr1(self.lang, "slave.default_name_fmt", next_slave_id),
             init_mode: DeviceInitMode::Default,
             max_address: 20000,
             busy: false,
@@ -879,7 +901,10 @@ impl SlaveApp {
                 .find(|e| e.id == conn_id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: conn_id.to_string(),
+                });
                 return;
             };
             let device = match init_mode {
@@ -906,7 +931,10 @@ impl SlaveApp {
                     });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("新增从站失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.add_slave_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -925,7 +953,10 @@ impl SlaveApp {
                 .find(|e| e.id == conn_id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: conn_id.to_string(),
+                });
                 return;
             };
             let conn = conn_arc.read().await;
@@ -934,7 +965,10 @@ impl SlaveApp {
                     let _ = tx.send(UiEvent::DeviceRemoved { conn_id, slave_id });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("删除从站失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.remove_slave_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -971,7 +1005,7 @@ impl SlaveApp {
         }
         let count = state.end_addr - state.start_addr + 1;
         if count > 50_000 {
-            self.last_error = Some(format!("范围过大（最多 50000，当前 {count}）"));
+            self.last_error = Some(tr1(self.lang, "err.range_too_large_fmt", count));
             return;
         }
         if state.end_addr > u16::MAX as u32 {
@@ -1000,7 +1034,10 @@ impl SlaveApp {
                 .find(|e| e.id == conn_id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {conn_id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: conn_id.to_string(),
+                });
                 return;
             };
 
@@ -1011,7 +1048,10 @@ impl SlaveApp {
                 let conn = conn_arc.read().await;
                 let mut devs = conn.devices.write().await;
                 let Some(dev) = devs.get_mut(&slave_id) else {
-                    let _ = tx.send(UiEvent::Error(format!("从站 {slave_id} 未找到")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.slave_not_found_fmt",
+                        arg: slave_id.to_string(),
+                    });
                     return;
                 };
                 let mut addr = start as u32;
@@ -1188,7 +1228,10 @@ impl SlaveApp {
                 expanded: true,
             };
             if let Err(e) = connection.add_device(device).await {
-                let _ = tx.send(UiEvent::Error(format!("添加默认设备失败: {e}")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.add_default_device_failed_fmt",
+                    arg: e.to_string(),
+                });
                 return;
             }
             connections.write().await.push(SlaveConnectionEntry {
@@ -1210,7 +1253,7 @@ impl SlaveApp {
         let port: u16 = match self.new_port.trim().parse() {
             Ok(p) => p,
             Err(_) => {
-                self.last_error = Some(format!("无效端口: {}", self.new_port));
+                self.last_error = Some(tr1(self.lang, "err.invalid_port_fmt", &self.new_port));
                 return;
             }
         };
@@ -1292,7 +1335,10 @@ impl SlaveApp {
                 expanded: true,
             };
             if let Err(e) = connection.add_device(device).await {
-                let _ = tx.send(UiEvent::Error(format!("添加默认设备失败: {e}")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.add_default_device_failed_fmt",
+                    arg: e.to_string(),
+                });
                 return;
             }
             let conn_arc = Arc::new(RwLock::new(connection));
@@ -1316,7 +1362,10 @@ impl SlaveApp {
                     let _ = tx.send(UiEvent::ConnectionStarted(id_task));
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("自动启动失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.auto_start_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -1334,7 +1383,10 @@ impl SlaveApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: id.to_string(),
+                });
                 return;
             };
             let result = {
@@ -1346,7 +1398,10 @@ impl SlaveApp {
                     let _ = tx.send(UiEvent::ConnectionStarted(id));
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("启动失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.start_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -1365,7 +1420,10 @@ impl SlaveApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::ErrorKey {
+                    key: "err.conn_not_found_fmt",
+                    arg: id.to_string(),
+                });
                 return;
             };
             let result = {
@@ -1377,7 +1435,10 @@ impl SlaveApp {
                     let _ = tx.send(UiEvent::ConnectionStopped(id));
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("停止失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.stop_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -1491,15 +1552,23 @@ impl SlaveApp {
             match serialize_slave(&proj) {
                 Ok(json) => match tokio::fs::write(path.path(), json).await {
                     Ok(()) => {
-                        let _ =
-                            tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                        let _ = tx.send(UiEvent::InfoKey {
+                            key: "err.saved_fmt",
+                            arg: path.path().display().to_string(),
+                        });
                     }
                     Err(e) => {
-                        let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
+                        let _ = tx.send(UiEvent::ErrorKey {
+                            key: "err.save_failed_fmt",
+                            arg: e.to_string(),
+                        });
                     }
                 },
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("序列化失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.serialize_failed_fmt",
+                        arg: e.to_string(),
+                    });
                 }
             }
         });
@@ -1523,14 +1592,20 @@ impl SlaveApp {
             let text = match tokio::fs::read_to_string(file.path()).await {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("读取失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.read_file_failed_fmt",
+                        arg: e.to_string(),
+                    });
                     return;
                 }
             };
             let project = match deserialize_slave(&text) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("解析失败: {e}")));
+                    let _ = tx.send(UiEvent::ErrorKey {
+                        key: "err.parse_failed_fmt",
+                        arg: e.to_string(),
+                    });
                     return;
                 }
             };
@@ -1578,7 +1653,10 @@ impl SlaveApp {
                         expanded: true,
                     };
                     if let Err(e) = connection.add_device(device).await {
-                        let _ = tx.send(UiEvent::Error(format!("加载设备失败: {e}")));
+                        let _ = tx.send(UiEvent::ErrorKey {
+                            key: "err.load_device_failed_fmt",
+                            arg: e.to_string(),
+                        });
                         continue;
                     }
                     device_snapshots.push(snap);
@@ -1596,7 +1674,10 @@ impl SlaveApp {
                     devices: device_snapshots,
                 });
             }
-            let _ = tx.send(UiEvent::Info(format!("已加载：{}", file.path().display())));
+            let _ = tx.send(UiEvent::InfoKey {
+                key: "err.loaded_fmt",
+                arg: file.path().display().to_string(),
+            });
             ctx2.request_repaint();
         });
     }
@@ -1662,6 +1743,12 @@ impl SlaveApp {
                     self.status_msg = Some(msg);
                 }
                 UiEvent::Error(msg) => self.last_error = Some(msg),
+                UiEvent::ErrorKey { key, arg } => {
+                    self.last_error = Some(tr1(self.lang, key, arg));
+                }
+                UiEvent::InfoKey { key, arg } => {
+                    self.status_msg = Some(tr1(self.lang, key, arg));
+                }
             }
         }
     }
@@ -1957,7 +2044,8 @@ impl SlaveApp {
                     let dev_is_selected = matches!(&self.selection,
                         Selection::Device { conn_id, slave_id }
                             if conn_id == &snap.id && *slave_id == dev.slave_id);
-                    let dev_label = tr2(self.lang, "slave.with_id_name_fmt", dev.slave_id, &dev.name);
+                    let dev_label =
+                        tr2(self.lang, "slave.with_id_name_fmt", dev.slave_id, &dev.name);
 
                     // Device row
                     ui.horizontal(|ui| {
@@ -2241,7 +2329,11 @@ impl SlaveApp {
                             .selected_text(reg_type_label(state.reg_type, self.lang))
                             .show_ui(ui, |ui| {
                                 for (rt, key) in REG_GROUPS {
-                                    ui.selectable_value(&mut state.reg_type, *rt, tr(self.lang, *key));
+                                    ui.selectable_value(
+                                        &mut state.reg_type,
+                                        *rt,
+                                        tr(self.lang, *key),
+                                    );
                                 }
                             });
                         ui.end_row();
@@ -2284,17 +2376,14 @@ impl SlaveApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if raw_count == 0 {
-                        ui.colored_label(
-                            egui::Color32::RED,
-                            tr(lang, "dlg.batch.invalid_range"),
-                        );
+                        ui.colored_label(egui::Color32::RED, tr(lang, "dlg.batch.invalid_range"));
                     } else if raw_count > 50_000 {
                         ui.colored_label(
                             egui::Color32::RED,
-                            format!("范围过大（最多 50000，当前 {raw_count}）"),
+                            tr1(lang, "err.range_too_large_fmt", raw_count),
                         );
                     } else {
-                        ui.label(format!("将添加 {raw_count} 个条目"));
+                        ui.label(tr1(lang, "dlg.batch.will_add_fmt", raw_count));
                     }
                 });
                 ui.horizontal(|ui| {
@@ -2357,22 +2446,38 @@ impl SlaveApp {
                         ui.heading(format!("{}  {}", icons::BROADCAST, label));
                         let (txt, color) = match state {
                             ConnectionState::Running => (
-                                format!("{}  {}", icons::CIRCLE, tr(self.lang, "conn.state.running")),
+                                format!(
+                                    "{}  {}",
+                                    icons::CIRCLE,
+                                    tr(self.lang, "conn.state.running")
+                                ),
                                 theme::success(self.flavor),
                             ),
                             ConnectionState::Stopped => (
-                                format!("{}  {}", icons::PAUSE, tr(self.lang, "conn.state.stopped")),
+                                format!(
+                                    "{}  {}",
+                                    icons::PAUSE,
+                                    tr(self.lang, "conn.state.stopped")
+                                ),
                                 theme::subtext(self.flavor),
                             ),
                         };
                         uikit::status_pill(ui, txt, color);
                     });
-                    uikit::caption(ui, self.flavor, tr1(self.lang, "device.count_fmt", dev_count));
+                    uikit::caption(
+                        ui,
+                        self.flavor,
+                        tr1(self.lang, "device.count_fmt", dev_count),
+                    );
                     ui.add_space(8.0);
                     if uikit::primary_button(
                         ui,
                         self.flavor,
-                        format!("{}  {}", icons::PLUS_CIRCLE, tr(self.lang, "regtable.new_slave")),
+                        format!(
+                            "{}  {}",
+                            icons::PLUS_CIRCLE,
+                            tr(self.lang, "regtable.new_slave")
+                        ),
                     )
                     .clicked()
                     {
@@ -2433,11 +2538,7 @@ impl SlaveApp {
                             if uikit::danger_button(
                                 ui,
                                 flavor,
-                                format!(
-                                    "{}  {}",
-                                    icons::TRASH,
-                                    tr(lang, "regtable.delete_slave")
-                                ),
+                                format!("{}  {}", icons::TRASH, tr(lang, "regtable.delete_slave")),
                             )
                             .clicked()
                             {
@@ -2487,7 +2588,10 @@ impl SlaveApp {
                         new_jitter.delta_percent = delta as u8;
                         ui.horizontal(|ui| {
                             ui.label(tr(self.lang, "jitter.scope"));
-                            ui.checkbox(&mut new_jitter.affect_coils, tr(self.lang, "jitter.coils"));
+                            ui.checkbox(
+                                &mut new_jitter.affect_coils,
+                                tr(self.lang, "jitter.coils"),
+                            );
                             ui.checkbox(
                                 &mut new_jitter.affect_discrete,
                                 tr(self.lang, "jitter.discrete"),
@@ -2496,7 +2600,10 @@ impl SlaveApp {
                                 &mut new_jitter.affect_holding,
                                 tr(self.lang, "jitter.holding"),
                             );
-                            ui.checkbox(&mut new_jitter.affect_input, tr(self.lang, "jitter.input"));
+                            ui.checkbox(
+                                &mut new_jitter.affect_input,
+                                tr(self.lang, "jitter.input"),
+                            );
                         });
 
                         if new_jitter != cur_jitter {
@@ -2788,8 +2895,13 @@ impl SlaveApp {
                     );
                     if !is_bool {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if uikit::link_action(ui, flavor, tr(lang, "regtable.clear_selected"), false)
-                                .clicked()
+                            if uikit::link_action(
+                                ui,
+                                flavor,
+                                tr(lang, "regtable.clear_selected"),
+                                false,
+                            )
+                            .clicked()
                             {
                                 self.selected_addrs.clear();
                                 self.click_anchor = None;
@@ -3052,7 +3164,11 @@ impl SlaveApp {
                                         if let Some(list) = &filtered_addrs {
                                             if list.is_empty() {
                                                 ui.add_space(8.0);
-                                                uikit::caption(ui, flavor, tr(lang, "regtable.no_match"));
+                                                uikit::caption(
+                                                    ui,
+                                                    flavor,
+                                                    tr(lang, "regtable.no_match"),
+                                                );
                                                 return;
                                             }
                                         }
@@ -3128,17 +3244,33 @@ impl SlaveApp {
                                         let defs = view.defs.clone();
                                         tb.header(26.0, |mut header| {
                                             header.col(|ui| {
-                                                theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.address"))
+                                                theme::text::tiny_caps(
+                                                    ui,
+                                                    flavor,
+                                                    tr(lang, "regtable.address"),
+                                                )
                                             });
                                             if is_bool {
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.value"))
+                                                    theme::text::tiny_caps(
+                                                        ui,
+                                                        flavor,
+                                                        tr(lang, "regtable.value"),
+                                                    )
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.name"))
+                                                    theme::text::tiny_caps(
+                                                        ui,
+                                                        flavor,
+                                                        tr(lang, "regtable.name"),
+                                                    )
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.note"));
+                                                    theme::text::tiny_caps(
+                                                        ui,
+                                                        flavor,
+                                                        tr(lang, "regtable.note"),
+                                                    );
                                                     // 表头下方 2px 蓝线（跨整行，画在最后一列底边）
                                                     let r = ui.max_rect();
                                                     let y = r.max.y - 1.0;
@@ -3160,7 +3292,11 @@ impl SlaveApp {
                                                     theme::text::tiny_caps(ui, flavor, "HEX")
                                                 });
                                                 header.col(|ui| {
-                                                    theme::text::tiny_caps(ui, flavor, tr(lang, "regtable.binary"))
+                                                    theme::text::tiny_caps(
+                                                        ui,
+                                                        flavor,
+                                                        tr(lang, "regtable.binary"),
+                                                    )
                                                 });
                                                 header.col(|ui| {
                                                     // 表头下方 2px 蓝线（画在尾列底边，覆盖全行）
@@ -3522,9 +3658,15 @@ impl eframe::App for SlaveApp {
                     }
                 });
                 ui.menu_button(tr(lang, "menu.view"), |ui| {
-                    ui.checkbox(&mut self.value_parse_open, tr(lang, "menu.view.show_value_panel"));
+                    ui.checkbox(
+                        &mut self.value_parse_open,
+                        tr(lang, "menu.view.show_value_panel"),
+                    );
                     if ui
-                        .checkbox(&mut self.log_state.open, tr(lang, "menu.view.show_log_panel"))
+                        .checkbox(
+                            &mut self.log_state.open,
+                            tr(lang, "menu.view.show_log_panel"),
+                        )
                         .clicked()
                     {
                         if !self.log_state.open {
@@ -3558,7 +3700,11 @@ impl eframe::App for SlaveApp {
                     ui.separator();
                     let zoom = ctx.zoom_factor();
                     if ui
-                        .button(format!("{}  ({:.0}%)", tr(lang, "menu.view.zoom_in"), zoom * 100.0))
+                        .button(format!(
+                            "{}  ({:.0}%)",
+                            tr(lang, "menu.view.zoom_in"),
+                            zoom * 100.0
+                        ))
                         .clicked()
                     {
                         ctx.set_zoom_factor((zoom + 0.1).min(3.0));
