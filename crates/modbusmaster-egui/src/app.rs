@@ -4,14 +4,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::master::{
     MasterConfig, MasterConnection, MasterState, PollEvent, ReadFunction, ReadResult, ScanGroup,
 };
 use modbussim_core::transport::Transport;
-use modbussim_ui_shared::icons;
+use modbussim_ui_shared::i18n::{tr, tr1, Lang};
 use modbussim_ui_shared::log_panel::{self, LogPanelAction, LogPanelState};
 use modbussim_ui_shared::project::{
     deserialize_master, serialize_master, MasterConnectionSave, MasterProject, PollSave, TcpSpec,
@@ -21,91 +20,19 @@ use modbussim_ui_shared::ui as uikit;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
+use crate::events::UiEvent;
+use crate::result_table::{read_fc_label, render_bool_table, render_u16_table};
+use crate::scan_group::ScanGroupUi;
+
 pub struct MasterConnectionEntry {
     pub id: String,
+    #[allow(dead_code)]
     pub label: String,
     pub connection: Arc<RwLock<MasterConnection>>,
     pub log_collector: Arc<LogCollector>,
 }
 
 pub type SharedConnections = Arc<RwLock<Vec<MasterConnectionEntry>>>;
-
-pub enum UiEvent {
-    ConnectionCreated {
-        id: String,
-        label: String,
-        slave_id: u8,
-    },
-    ConnectionStateChanged {
-        id: String,
-        state: MasterState,
-    },
-    ConnectionRemoved(String),
-    ReadDone {
-        id: String,
-        result: ReadResult,
-    },
-    PollStarted {
-        id: String,
-        group_id: String,
-    },
-    PollStopped {
-        id: String,
-        group_id: String,
-    },
-    PollUpdate {
-        id: String,
-        group_id: String,
-        result: ReadResult,
-    },
-    PollError {
-        id: String,
-        group_id: String,
-        msg: String,
-    },
-    PollConfigLoaded {
-        id: String,
-        group_id: String,
-        fc: ReadFunction,
-        addr: u16,
-        qty: u16,
-        interval_ms: u64,
-    },
-    Info(String),
-    Error(String),
-}
-
-/// One scan group belonging to a master connection.
-#[derive(Clone)]
-pub struct ScanGroupUi {
-    pub id: String,   // stable id, used as core::ScanGroup.id
-    pub name: String, // user-facing label
-    pub fc: ReadFunction,
-    pub addr: u16,
-    pub qty: u16,
-    pub interval_ms: u64,
-    pub enabled: bool,
-    pub latest: Option<ReadResult>,
-    pub last_update: Option<Instant>,
-    pub last_error: Option<String>,
-}
-
-impl ScanGroupUi {
-    pub fn new_with_id(id: String) -> Self {
-        Self {
-            name: id.clone(),
-            id,
-            fc: ReadFunction::ReadHoldingRegisters,
-            addr: 0,
-            qty: 10,
-            interval_ms: 500,
-            enabled: false,
-            latest: None,
-            last_update: None,
-            last_error: None,
-        }
-    }
-}
 
 #[derive(Clone)]
 struct ConnSnap {
@@ -123,12 +50,13 @@ enum MasterTab {
 }
 
 impl MasterTab {
-    fn label(self) -> &'static str {
-        match self {
-            MasterTab::Read => "读取",
-            MasterTab::Write => "写入",
-            MasterTab::Poll => "轮询",
-        }
+    fn label(self, lang: Lang) -> &'static str {
+        let key = match self {
+            MasterTab::Read => "tab.read",
+            MasterTab::Write => "tab.write",
+            MasterTab::Poll => "tab.poll",
+        };
+        tr(lang, key)
     }
 }
 
@@ -174,11 +102,12 @@ pub struct MasterApp {
     status_msg: Option<String>,
 
     pub flavor: Flavor,
+    pub lang: Lang,
     active_tab: MasterTab,
 }
 
 impl MasterApp {
-    pub fn new(rt: Arc<Runtime>, flavor: Flavor) -> Self {
+    pub fn new(rt: Arc<Runtime>, flavor: Flavor, lang: Lang) -> Self {
         let (events_tx, events_rx) = crossbeam_channel::unbounded();
         Self {
             rt,
@@ -209,6 +138,7 @@ impl MasterApp {
             last_error: None,
             status_msg: None,
             flavor,
+            lang,
             active_tab: MasterTab::Read,
         }
     }
@@ -220,19 +150,28 @@ impl MasterApp {
 
     fn create_connection(&self, ctx: egui::Context) {
         let host = self.new_host.trim().to_string();
+        let lang = self.lang;
         let port: u16 = match self.new_port.trim().parse() {
             Ok(p) => p,
             Err(_) => {
-                let _ = self
-                    .events_tx
-                    .send(UiEvent::Error(format!("无效端口: {}", self.new_port)));
+                let _ = self.events_tx.send(UiEvent::Error(tr1(
+                    lang,
+                    "err.invalid_port_fmt",
+                    &self.new_port,
+                )));
                 return;
             }
         };
         let slave_id = self.new_slave_id;
         let timeout_ms = self.new_timeout;
         let id = self.allocate_id();
-        let label = format!("TCP {}:{} · 从站 {}", host, port, slave_id);
+        let mut label = tr(lang, "master.tcp_label_fmt")
+            .replacen("{}", &host, 1)
+            .replacen("{}", &port.to_string(), 1)
+            .replacen("{}", &slave_id.to_string(), 1);
+        if label.is_empty() {
+            label = format!("TCP {}:{} · {}", host, port, slave_id);
+        }
 
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
@@ -268,6 +207,7 @@ impl MasterApp {
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         let id = id.to_string();
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -276,7 +216,7 @@ impl MasterApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
             let result = {
@@ -291,7 +231,7 @@ impl MasterApp {
                     });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("连接失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.connect_failed_fmt", e)));
                 }
             }
         });
@@ -302,6 +242,7 @@ impl MasterApp {
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
         let id = id.to_string();
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -310,7 +251,7 @@ impl MasterApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
             let result = {
@@ -325,7 +266,7 @@ impl MasterApp {
                     });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("断开失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.disconnect_failed_fmt", e)));
                 }
             }
         });
@@ -375,6 +316,7 @@ impl MasterApp {
         let tx = self.events_tx.clone();
         let ctx2 = ctx.clone();
         let group_id = group.id.clone();
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -383,7 +325,7 @@ impl MasterApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
 
@@ -403,7 +345,7 @@ impl MasterApp {
                 match guard.start_scan_group(&core_group).await {
                     Ok(rx) => rx,
                     Err(e) => {
-                        let _ = tx.send(UiEvent::Error(format!("启动轮询失败: {e}")));
+                        let _ = tx.send(UiEvent::Error(tr1(lang, "err.poll_start_failed_fmt", e)));
                         return;
                     }
                 }
@@ -449,6 +391,7 @@ impl MasterApp {
         };
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -459,7 +402,7 @@ impl MasterApp {
             if let Some(conn_arc) = conn_arc {
                 let mut guard = conn_arc.write().await;
                 if let Err(e) = guard.stop_scan_group(&gid).await {
-                    let _ = tx.send(UiEvent::Error(format!("停止轮询失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.poll_stop_failed_fmt", e)));
                 }
             }
         });
@@ -470,10 +413,8 @@ impl MasterApp {
         let gid = format!("group_{}", self.next_group_seq);
         self.next_group_seq += 1;
         let mut g = ScanGroupUi::new_with_id(gid);
-        g.name = format!(
-            "组 {}",
-            self.polling.get(&conn_id).map(|v| v.len() + 1).unwrap_or(1)
-        );
+        let idx = self.polling.get(&conn_id).map(|v| v.len() + 1).unwrap_or(1);
+        g.name = tr1(self.lang, "group.default_name_fmt", idx);
         let list = self.polling.entry(conn_id.clone()).or_default();
         list.push(g);
         let new_idx = list.len() - 1;
@@ -502,6 +443,7 @@ impl MasterApp {
         let fc = self.read_fc;
         let addr = self.read_addr;
         let qty = self.read_qty;
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -510,7 +452,7 @@ impl MasterApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
             let conn = conn_arc.read().await;
@@ -519,7 +461,7 @@ impl MasterApp {
                     let _ = tx.send(UiEvent::ReadDone { id, result });
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("读取失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.read_failed_fmt", e)));
                 }
             }
         });
@@ -532,6 +474,7 @@ impl MasterApp {
         let addr = self.write_addr;
         let value = self.write_value;
         let is_coil = self.write_is_coil;
+        let lang = self.lang;
         self.rt.spawn(async move {
             let conn_arc = connections
                 .read()
@@ -540,7 +483,7 @@ impl MasterApp {
                 .find(|e| e.id == id)
                 .map(|e| e.connection.clone());
             let Some(conn_arc) = conn_arc else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
             let conn = conn_arc.read().await;
@@ -552,10 +495,10 @@ impl MasterApp {
             };
             match result {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::Info(format!("写入成功 · {id}")));
+                    let _ = tx.send(UiEvent::Info(tr1(lang, "err.write_ok_fmt", &id)));
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.write_failed_fmt", e)));
                 }
             }
         });
@@ -628,6 +571,7 @@ impl MasterApp {
     fn save_project(&mut self, ctx: egui::Context) {
         let proj = self.build_project();
         let tx = self.events_tx.clone();
+        let lang = self.lang;
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -644,15 +588,18 @@ impl MasterApp {
             match serialize_master(&proj) {
                 Ok(json) => match tokio::fs::write(path.path(), json).await {
                     Ok(()) => {
-                        let _ =
-                            tx.send(UiEvent::Info(format!("已保存：{}", path.path().display())));
+                        let _ = tx.send(UiEvent::Info(tr1(
+                            lang,
+                            "err.saved_fmt",
+                            path.path().display(),
+                        )));
                     }
                     Err(e) => {
-                        let _ = tx.send(UiEvent::Error(format!("写入失败: {e}")));
+                        let _ = tx.send(UiEvent::Error(tr1(lang, "err.save_failed_fmt", e)));
                     }
                 },
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("序列化失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.serialize_failed_fmt", e)));
                 }
             }
         });
@@ -665,6 +612,7 @@ impl MasterApp {
         let connections_arc = self.connections.clone();
         let next_seq = self.next_seq.clone();
         let ctx2 = ctx.clone();
+        let lang = self.lang;
         rt.spawn(async move {
             let Some(file) = rfd::AsyncFileDialog::new()
                 .add_filter("ModbusProj", &["modbusproj"])
@@ -676,14 +624,14 @@ impl MasterApp {
             let text = match tokio::fs::read_to_string(file.path()).await {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("读取失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.read_file_failed_fmt", e)));
                     return;
                 }
             };
             let project = match deserialize_master(&text) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("解析失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.parse_failed_fmt", e)));
                     return;
                 }
             };
@@ -738,7 +686,11 @@ impl MasterApp {
                     });
                 }
             }
-            let _ = tx.send(UiEvent::Info(format!("已加载：{}", file.path().display())));
+            let _ = tx.send(UiEvent::Info(tr1(
+                lang,
+                "err.loaded_fmt",
+                file.path().display(),
+            )));
             ctx2.request_repaint();
         });
     }
@@ -854,6 +806,7 @@ impl MasterApp {
 impl eframe::App for MasterApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "flavor_v3", &self.flavor);
+        eframe::set_value(storage, "lang_v1", &self.lang);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -863,22 +816,26 @@ impl eframe::App for MasterApp {
         // Menu
         let mut do_save = false;
         let mut do_load = false;
+        let lang = self.lang;
         egui::TopBottomPanel::top("master_menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("文件", |ui| {
-                    if ui.button("保存工程…").clicked() {
+                ui.menu_button(tr(lang, "menu.file"), |ui| {
+                    if ui.button(tr(lang, "menu.file.save")).clicked() {
                         do_save = true;
                         ui.close_menu();
                     }
-                    if ui.button("加载工程…").clicked() {
+                    if ui.button(tr(lang, "menu.file.load")).clicked() {
                         do_load = true;
                         ui.close_menu();
                     }
                 });
-                ui.menu_button("视图", |ui| {
-                    ui.checkbox(&mut self.log_state.open, "显示日志面板");
+                ui.menu_button(tr(lang, "menu.view"), |ui| {
+                    ui.checkbox(
+                        &mut self.log_state.open,
+                        tr(lang, "menu.view.show_log_panel"),
+                    );
                     ui.separator();
-                    ui.label("主题 (Catppuccin)");
+                    ui.label(tr(lang, "menu.view.theme_label"));
                     for f in [
                         Flavor::Mocha,
                         Flavor::Macchiato,
@@ -892,18 +849,29 @@ impl eframe::App for MasterApp {
                     }
                     ui.separator();
                     let zoom = ctx.zoom_factor();
-                    if ui.button(format!("放大 ({:.0}%)", zoom * 100.0)).clicked() {
+                    if ui
+                        .button(format!(
+                            "{} ({:.0}%)",
+                            tr(lang, "menu.view.zoom_in"),
+                            zoom * 100.0
+                        ))
+                        .clicked()
+                    {
                         ctx.set_zoom_factor((zoom + 0.1).min(3.0));
                     }
-                    if ui.button("缩小").clicked() {
+                    if ui.button(tr(lang, "menu.view.zoom_out")).clicked() {
                         ctx.set_zoom_factor((zoom - 0.1).max(0.5));
                     }
-                    if ui.button("重置缩放").clicked() {
+                    if ui.button(tr(lang, "menu.view.zoom_reset")).clicked() {
                         ctx.set_zoom_factor(1.0);
                     }
                 });
-                ui.menu_button("帮助", |ui| {
-                    ui.label("ModbusMaster (egui) · 开发预览");
+                ui.menu_button(tr(lang, "menu.language"), |ui| {
+                    ui.radio_value(&mut self.lang, Lang::Zh, Lang::Zh.native_label());
+                    ui.radio_value(&mut self.lang, Lang::En, Lang::En.native_label());
+                });
+                ui.menu_button(tr(lang, "menu.help"), |ui| {
+                    ui.label(tr(lang, "menu.help.about_master"));
                     ui.hyperlink_to("GitHub", "https://github.com/kelsoprotein-lab/ModbusSim");
                 });
             });
@@ -924,30 +892,30 @@ impl eframe::App for MasterApp {
             .default_width(240.0)
             .min_width(200.0)
             .show(ctx, |ui| {
-                ui.heading("连接");
+                ui.heading(tr(lang, "sidebar.connections"));
                 ui.separator();
 
-                ui.collapsing("新建 TCP 连接", |ui| {
+                ui.collapsing(tr(lang, "master.new_tcp"), |ui| {
                     egui::Grid::new("master_new_form")
                         .num_columns(2)
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
-                            ui.label("Host");
+                            ui.label(tr(lang, "master.host"));
                             ui.text_edit_singleline(&mut self.new_host);
                             ui.end_row();
-                            ui.label("Port");
+                            ui.label(tr(lang, "master.port"));
                             ui.text_edit_singleline(&mut self.new_port);
                             ui.end_row();
-                            ui.label("从站 ID");
+                            ui.label(tr(lang, "master.slave_id"));
                             let mut sid = self.new_slave_id as u32;
                             ui.add(egui::DragValue::new(&mut sid).range(1..=247));
                             self.new_slave_id = sid as u8;
                             ui.end_row();
-                            ui.label("超时 (ms)");
+                            ui.label(tr(lang, "master.timeout_ms"));
                             ui.add(egui::DragValue::new(&mut self.new_timeout).range(100..=60_000));
                             ui.end_row();
                         });
-                    if ui.button("创建").clicked() {
+                    if ui.button(tr(lang, "sidebar.create")).clicked() {
                         action = Some(Action::Create);
                     }
                 });
@@ -956,10 +924,10 @@ impl eframe::App for MasterApp {
                 for s in &self.snap {
                     let is_sel = self.selected.as_deref() == Some(&s.id);
                     let state_tag = match s.state {
-                        MasterState::Connected => "已连接",
-                        MasterState::Disconnected => "未连接",
-                        MasterState::Reconnecting => "重连中",
-                        MasterState::Error => "错误",
+                        MasterState::Connected => tr(lang, "conn.state.connected"),
+                        MasterState::Disconnected => tr(lang, "conn.state.disconnected"),
+                        MasterState::Reconnecting => tr(lang, "conn.state.reconnecting"),
+                        MasterState::Error => tr(lang, "conn.state.error"),
                     };
                     ui.horizontal(|ui| {
                         if ui
@@ -973,17 +941,17 @@ impl eframe::App for MasterApp {
                         ui.add_space(16.0);
                         match s.state {
                             MasterState::Connected | MasterState::Reconnecting => {
-                                if ui.small_button("断开").clicked() {
+                                if ui.small_button(tr(lang, "conn.disconnect")).clicked() {
                                     action = Some(Action::Disconnect(s.id.clone()));
                                 }
                             }
                             _ => {
-                                if ui.small_button("连接").clicked() {
+                                if ui.small_button(tr(lang, "conn.connect")).clicked() {
                                     action = Some(Action::Connect(s.id.clone()));
                                 }
                             }
                         }
-                        if ui.small_button("删除").clicked() {
+                        if ui.small_button(tr(lang, "conn.delete")).clicked() {
                             action = Some(Action::Remove(s.id.clone()));
                         }
                     });
@@ -1000,19 +968,19 @@ impl eframe::App for MasterApp {
                 if let Some(err) = &self.last_error {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::RED, err);
-                        if ui.small_button("清除").clicked() {
+                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
                             clear_err = true;
                         }
                     });
                 } else if let Some(msg) = &self.status_msg {
                     ui.horizontal(|ui| {
                         ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
-                        if ui.small_button("清除").clicked() {
+                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
                             clear_status = true;
                         }
                     });
                 } else {
-                    ui.label("就绪");
+                    ui.label(tr(lang, "conn.ready"));
                 }
             });
         if clear_err {
@@ -1034,13 +1002,17 @@ impl eframe::App for MasterApp {
             let Some(id) = self.selected.clone() else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
-                    ui.label(egui::RichText::new("ModbusMaster").size(18.0).strong());
-                    uikit::caption(ui, flavor, "从左侧创建并连接一个会话。");
+                    ui.label(
+                        egui::RichText::new(tr(lang, "master.app_title"))
+                            .size(18.0)
+                            .strong(),
+                    );
+                    uikit::caption(ui, flavor, tr(lang, "master.empty_hint"));
                 });
                 return;
             };
             let Some(s) = self.snap.iter().find(|s| s.id == id).cloned() else {
-                ui.label("连接已不存在。");
+                ui.label(tr(lang, "master.conn_gone"));
                 return;
             };
             // Header region: address + status pill. No card stroke, no accent stripe.
@@ -1053,10 +1025,18 @@ impl eframe::App for MasterApp {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&s.label).strong().size(13.5));
                         let (txt, color) = match s.state {
-                            MasterState::Connected => ("已连接", theme::success(flavor)),
-                            MasterState::Disconnected => ("未连接", theme::subtext(flavor)),
-                            MasterState::Reconnecting => ("重连中", theme::accent(flavor)),
-                            MasterState::Error => ("错误", theme::danger(flavor)),
+                            MasterState::Connected => {
+                                (tr(lang, "conn.state.connected"), theme::success(flavor))
+                            }
+                            MasterState::Disconnected => {
+                                (tr(lang, "conn.state.disconnected"), theme::subtext(flavor))
+                            }
+                            MasterState::Reconnecting => {
+                                (tr(lang, "conn.state.reconnecting"), theme::accent(flavor))
+                            }
+                            MasterState::Error => {
+                                (tr(lang, "conn.state.error"), theme::danger(flavor))
+                            }
                         };
                         uikit::status_pill(ui, txt, color);
                     });
@@ -1075,11 +1055,11 @@ impl eframe::App for MasterApp {
                         for tab in [MasterTab::Read, MasterTab::Write, MasterTab::Poll] {
                             let selected = self.active_tab == tab;
                             let text = if selected {
-                                egui::RichText::new(tab.label())
+                                egui::RichText::new(tab.label(lang))
                                     .strong()
                                     .color(theme::accent(flavor))
                             } else {
-                                egui::RichText::new(tab.label()).color(theme::subtext(flavor))
+                                egui::RichText::new(tab.label(lang)).color(theme::subtext(flavor))
                             };
                             if ui.add(egui::SelectableLabel::new(selected, text)).clicked() {
                                 self.active_tab = tab;
@@ -1095,9 +1075,9 @@ impl eframe::App for MasterApp {
                                 .num_columns(2)
                                 .spacing([10.0, 6.0])
                                 .show(ui, |ui| {
-                                    ui.label("功能码");
+                                    ui.label(tr(lang, "read.fc"));
                                     egui::ComboBox::from_id_salt("read_fc")
-                                        .selected_text(read_fc_label(self.read_fc))
+                                        .selected_text(read_fc_label(self.read_fc, lang))
                                         .show_ui(ui, |ui| {
                                             for f in [
                                                 ReadFunction::ReadCoils,
@@ -1108,17 +1088,17 @@ impl eframe::App for MasterApp {
                                                 ui.selectable_value(
                                                     &mut self.read_fc,
                                                     f,
-                                                    read_fc_label(f),
+                                                    read_fc_label(f, lang),
                                                 );
                                             }
                                         });
                                     ui.end_row();
-                                    ui.label("起始地址");
+                                    ui.label(tr(lang, "read.start_addr"));
                                     let mut a = self.read_addr as u32;
                                     ui.add(egui::DragValue::new(&mut a).range(0..=65535));
                                     self.read_addr = a as u16;
                                     ui.end_row();
-                                    ui.label("数量");
+                                    ui.label(tr(lang, "read.count"));
                                     let mut q = self.read_qty as u32;
                                     ui.add(egui::DragValue::new(&mut q).range(1..=2000));
                                     self.read_qty = q as u16;
@@ -1126,7 +1106,9 @@ impl eframe::App for MasterApp {
                                 });
                             ui.add_space(8.0);
                             ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                                if uikit::primary_button(ui, flavor, "读取").clicked() {
+                                if uikit::primary_button(ui, flavor, tr(lang, "read.action"))
+                                    .clicked()
+                                {
                                     do_read_id = Some(id.clone());
                                 }
                             });
@@ -1136,25 +1118,29 @@ impl eframe::App for MasterApp {
                                 .num_columns(2)
                                 .spacing([10.0, 6.0])
                                 .show(ui, |ui| {
-                                    ui.label("类型");
+                                    ui.label(tr(lang, "write.type"));
                                     ui.horizontal(|ui| {
                                         ui.radio_value(
                                             &mut self.write_is_coil,
                                             false,
-                                            "FC06 寄存器",
+                                            tr(lang, "write.fc06_reg"),
                                         );
-                                        ui.radio_value(&mut self.write_is_coil, true, "FC05 线圈");
+                                        ui.radio_value(
+                                            &mut self.write_is_coil,
+                                            true,
+                                            tr(lang, "write.fc05_coil"),
+                                        );
                                     });
                                     ui.end_row();
-                                    ui.label("地址");
+                                    ui.label(tr(lang, "write.addr"));
                                     let mut a = self.write_addr as u32;
                                     ui.add(egui::DragValue::new(&mut a).range(0..=65535));
                                     self.write_addr = a as u16;
                                     ui.end_row();
-                                    ui.label("值");
+                                    ui.label(tr(lang, "write.value"));
                                     if self.write_is_coil {
                                         let mut b = self.write_value != 0;
-                                        ui.checkbox(&mut b, "true / false");
+                                        ui.checkbox(&mut b, tr(lang, "write.bool_caption"));
                                         self.write_value = if b { 1 } else { 0 };
                                     } else {
                                         ui.add(
@@ -1166,7 +1152,9 @@ impl eframe::App for MasterApp {
                                 });
                             ui.add_space(8.0);
                             ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                                if uikit::primary_button(ui, flavor, "写入").clicked() {
+                                if uikit::primary_button(ui, flavor, tr(lang, "write.action"))
+                                    .clicked()
+                                {
                                     do_write_id = Some(id.clone());
                                 }
                             });
@@ -1178,17 +1166,21 @@ impl eframe::App for MasterApp {
 
                             // Toolbar
                             ui.horizontal(|ui| {
-                                if uikit::primary_button(ui, flavor, "+ 新建组").clicked() {
+                                if uikit::primary_button(ui, flavor, tr(lang, "poll.new_group"))
+                                    .clicked()
+                                {
                                     self.add_scan_group(id.clone());
                                 }
                                 let len = self.polling.get(&id).map(|v| v.len()).unwrap_or(0);
                                 let has_sel = len > 0 && sel < len;
                                 if has_sel {
-                                    if uikit::danger_button(ui, flavor, "- 删除组").clicked() {
+                                    if uikit::danger_button(ui, flavor, tr(lang, "poll.del_group"))
+                                        .clicked()
+                                    {
                                         self.remove_scan_group(id.clone(), sel, ctx.clone());
                                     }
                                 }
-                                uikit::caption(ui, flavor, format!("{} 个扫描组", len));
+                                uikit::caption(ui, flavor, tr1(lang, "poll.group_count_fmt", len));
                             });
                             ui.add_space(6.0);
 
@@ -1246,7 +1238,7 @@ impl eframe::App for MasterApp {
                                         return;
                                     };
                                     if list.is_empty() {
-                                        uikit::caption(ui, flavor, "点击左上 + 新建扫描组");
+                                        uikit::caption(ui, flavor, tr(lang, "poll.empty_hint"));
                                         return;
                                     }
                                     let idx = sel.min(list.len() - 1);
@@ -1255,12 +1247,12 @@ impl eframe::App for MasterApp {
                                         .num_columns(2)
                                         .spacing([10.0, 6.0])
                                         .show(ui, |ui| {
-                                            ui.label("名称");
+                                            ui.label(tr(lang, "poll.name"));
                                             ui.text_edit_singleline(&mut pu.name);
                                             ui.end_row();
-                                            ui.label("功能码");
+                                            ui.label(tr(lang, "read.fc"));
                                             egui::ComboBox::from_id_salt("poll_fc")
-                                                .selected_text(read_fc_label(pu.fc))
+                                                .selected_text(read_fc_label(pu.fc, lang))
                                                 .show_ui(ui, |ui| {
                                                     for f in [
                                                         ReadFunction::ReadCoils,
@@ -1271,22 +1263,22 @@ impl eframe::App for MasterApp {
                                                         ui.selectable_value(
                                                             &mut pu.fc,
                                                             f,
-                                                            read_fc_label(f),
+                                                            read_fc_label(f, lang),
                                                         );
                                                     }
                                                 });
                                             ui.end_row();
-                                            ui.label("起址");
+                                            ui.label(tr(lang, "poll.start_addr"));
                                             let mut a = pu.addr as u32;
                                             ui.add(egui::DragValue::new(&mut a).range(0..=65535));
                                             pu.addr = a as u16;
                                             ui.end_row();
-                                            ui.label("数量");
+                                            ui.label(tr(lang, "read.count"));
                                             let mut q = pu.qty as u32;
                                             ui.add(egui::DragValue::new(&mut q).range(1..=2000));
                                             pu.qty = q as u16;
                                             ui.end_row();
-                                            ui.label("间隔 (ms)");
+                                            ui.label(tr(lang, "poll.interval_ms"));
                                             ui.add(
                                                 egui::DragValue::new(&mut pu.interval_ms)
                                                     .range(50..=60_000),
@@ -1299,19 +1291,28 @@ impl eframe::App for MasterApp {
                                         let last_update = pu.last_update;
                                         let last_err = pu.last_error.clone();
                                         if running {
-                                            if uikit::danger_button(ui, flavor, "停止").clicked()
+                                            if uikit::danger_button(
+                                                ui,
+                                                flavor,
+                                                tr(lang, "poll.stop"),
+                                            )
+                                            .clicked()
                                             {
                                                 do_stop_poll_id = Some((id.clone(), idx));
                                             }
                                             uikit::status_pill(
                                                 ui,
-                                                "运行中",
+                                                tr(lang, "poll.running"),
                                                 theme::success(flavor),
                                             );
                                         } else {
                                             ui.add_enabled_ui(is_connected, |ui| {
-                                                if uikit::primary_button(ui, flavor, "开始")
-                                                    .clicked()
+                                                if uikit::primary_button(
+                                                    ui,
+                                                    flavor,
+                                                    tr(lang, "poll.start"),
+                                                )
+                                                .clicked()
                                                 {
                                                     do_start_poll_id = Some((id.clone(), idx));
                                                 }
@@ -1321,7 +1322,11 @@ impl eframe::App for MasterApp {
                                             uikit::caption(
                                                 ui,
                                                 flavor,
-                                                format!("· {} ms 前更新", t.elapsed().as_millis()),
+                                                tr1(
+                                                    lang,
+                                                    "poll.updated_ms_ago_fmt",
+                                                    t.elapsed().as_millis(),
+                                                ),
                                             );
                                         }
                                         if let Some(err) = last_err {
@@ -1353,9 +1358,9 @@ impl eframe::App for MasterApp {
                     egui::Margin::symmetric(12.0 as i8, 10.0 as i8),
                     |ui| {
                         let title = if poll_latest.is_some() {
-                            "轮询结果"
+                            tr(lang, "result.poll_title")
                         } else {
-                            "读取结果"
+                            tr(lang, "result.read_title")
                         };
                         let base = if poll_latest.is_some() {
                             poll_addr
@@ -1366,10 +1371,10 @@ impl eframe::App for MasterApp {
                         ui.add_space(4.0);
                         match result {
                             ReadResult::HoldingRegisters(vs) | ReadResult::InputRegisters(vs) => {
-                                render_u16_table(ui, base, vs);
+                                render_u16_table(ui, base, vs, lang);
                             }
                             ReadResult::Coils(bs) | ReadResult::DiscreteInputs(bs) => {
-                                render_bool_table(ui, base, bs);
+                                render_bool_table(ui, base, bs, lang);
                             }
                         }
                     },
@@ -1418,7 +1423,7 @@ impl MasterApp {
         let action = log_panel::render(
             ctx,
             self.flavor,
-            modbussim_ui_shared::i18n::Lang::default(),
+            self.lang,
             &mut self.log_state,
             &self.log_cache,
             self.log_cache_conn_id.as_deref(),
@@ -1450,10 +1455,11 @@ impl MasterApp {
         };
         let connections = self.connections.clone();
         let tx = self.events_tx.clone();
+        let lang = self.lang;
         self.rt.spawn(async move {
             let entries = connections.read().await;
             let Some(entry) = entries.iter().find(|e| e.id == id) else {
-                let _ = tx.send(UiEvent::Error(format!("连接 {id} 未找到")));
+                let _ = tx.send(UiEvent::Error(tr1(lang, "err.conn_not_found_fmt", &id)));
                 return;
             };
             let csv = entry.log_collector.export_csv().await;
@@ -1472,96 +1478,17 @@ impl MasterApp {
             };
             match tokio::fs::write(path.path(), csv).await {
                 Ok(()) => {
-                    let _ = tx.send(UiEvent::Info(format!(
-                        "日志已导出：{}",
-                        path.path().display()
+                    let _ = tx.send(UiEvent::Info(tr1(
+                        lang,
+                        "err.log_exported_fmt",
+                        path.path().display(),
                     )));
                 }
                 Err(e) => {
-                    let _ = tx.send(UiEvent::Error(format!("导出失败: {e}")));
+                    let _ = tx.send(UiEvent::Error(tr1(lang, "err.export_failed_fmt", e)));
                 }
             }
         });
         ctx.request_repaint();
     }
-}
-
-fn read_fc_label(f: ReadFunction) -> &'static str {
-    match f {
-        ReadFunction::ReadCoils => "FC01 读线圈",
-        ReadFunction::ReadDiscreteInputs => "FC02 读离散输入",
-        ReadFunction::ReadHoldingRegisters => "FC03 读保持寄存器",
-        ReadFunction::ReadInputRegisters => "FC04 读输入寄存器",
-    }
-}
-
-fn render_u16_table(ui: &mut egui::Ui, start: u16, values: &[u16]) {
-    TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .column(Column::exact(80.0))
-        .column(Column::exact(100.0))
-        .column(Column::exact(90.0))
-        .column(Column::remainder())
-        .header(20.0, |mut h| {
-            h.col(|ui| {
-                ui.strong("地址");
-            });
-            h.col(|ui| {
-                ui.strong("Unsigned");
-            });
-            h.col(|ui| {
-                ui.strong("Signed");
-            });
-            h.col(|ui| {
-                ui.strong("Hex");
-            });
-        })
-        .body(|body| {
-            body.rows(18.0, values.len(), |mut row| {
-                let i = row.index();
-                let addr = start.wrapping_add(i as u16);
-                let v = values[i];
-                row.col(|ui| {
-                    ui.monospace(format!("{}", addr));
-                });
-                row.col(|ui| {
-                    ui.monospace(v.to_string());
-                });
-                row.col(|ui| {
-                    ui.monospace((v as i16).to_string());
-                });
-                row.col(|ui| {
-                    ui.monospace(format!("0x{:04X}", v));
-                });
-            });
-        });
-}
-
-fn render_bool_table(ui: &mut egui::Ui, start: u16, values: &[bool]) {
-    TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .column(Column::exact(80.0))
-        .column(Column::remainder())
-        .header(20.0, |mut h| {
-            h.col(|ui| {
-                ui.strong("地址");
-            });
-            h.col(|ui| {
-                ui.strong("布尔");
-            });
-        })
-        .body(|body| {
-            body.rows(18.0, values.len(), |mut row| {
-                let i = row.index();
-                let addr = start.wrapping_add(i as u16);
-                row.col(|ui| {
-                    ui.monospace(format!("{}", addr));
-                });
-                row.col(|ui| {
-                    ui.monospace(if values[i] { "true" } else { "false" });
-                });
-            });
-        });
 }

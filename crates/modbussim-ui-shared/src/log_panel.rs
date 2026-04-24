@@ -157,7 +157,9 @@ pub fn render(
                         crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.direction"))
                     });
                     h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.fc")));
-                    h.col(|ui| crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.detail")));
+                    h.col(|ui| {
+                        crate::theme::text::tiny_caps(ui, flavor, tr(lang, "log.col.detail"))
+                    });
                 })
                 .body(|body| {
                     body.rows(18.0, entries.len(), |mut row| {

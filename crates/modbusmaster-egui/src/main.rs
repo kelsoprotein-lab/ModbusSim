@@ -1,4 +1,7 @@
 mod app;
+mod events;
+mod result_table;
+mod scan_group;
 
 use std::sync::Arc;
 
@@ -33,8 +36,12 @@ fn main() -> eframe::Result<()> {
                     eframe::get_value::<modbussim_ui_shared::theme::Flavor>(s, "flavor_v3")
                 })
                 .unwrap_or_default();
+            let lang = cc
+                .storage
+                .and_then(|s| eframe::get_value::<modbussim_ui_shared::i18n::Lang>(s, "lang_v1"))
+                .unwrap_or_default();
             modbussim_ui_shared::theme::apply(&cc.egui_ctx, flavor);
-            Ok(Box::new(app::MasterApp::new(rt.clone(), flavor)))
+            Ok(Box::new(app::MasterApp::new(rt.clone(), flavor, lang)))
         }),
     )
 }
