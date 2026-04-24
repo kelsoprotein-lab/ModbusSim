@@ -60,6 +60,30 @@ impl MasterTab {
     }
 }
 
+/// 侧栏按钮触发的延迟动作;update() 末尾集中 apply。
+enum SidebarAction {
+    Create,
+    Select(String),
+    Connect(String),
+    Disconnect(String),
+    Remove(String),
+}
+
+#[derive(Default)]
+struct MenuFlags {
+    save: bool,
+    load: bool,
+}
+
+/// 中央面板延迟动作(update 末尾统一 apply,避开中途 &mut self 借用冲突)。
+#[derive(Default)]
+struct CentralActions {
+    read: Option<String>,
+    write: Option<String>,
+    start_poll: Option<(String, usize)>,
+    stop_poll: Option<(String, usize)>,
+}
+
 pub struct MasterApp {
     rt: Arc<Runtime>,
     connections: SharedConnections,
@@ -813,191 +837,15 @@ impl eframe::App for MasterApp {
         self.drain_events();
         self.refresh_log_cache();
 
-        // Menu
-        let mut do_save = false;
-        let mut do_load = false;
         let lang = self.lang;
-        egui::TopBottomPanel::top("master_menu").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button(tr(lang, "menu.file"), |ui| {
-                    if ui.button(tr(lang, "menu.file.save")).clicked() {
-                        do_save = true;
-                        ui.close_menu();
-                    }
-                    if ui.button(tr(lang, "menu.file.load")).clicked() {
-                        do_load = true;
-                        ui.close_menu();
-                    }
-                });
-                ui.menu_button(tr(lang, "menu.view"), |ui| {
-                    ui.checkbox(
-                        &mut self.log_state.open,
-                        tr(lang, "menu.view.show_log_panel"),
-                    );
-                    ui.separator();
-                    ui.label(tr(lang, "menu.view.theme_label"));
-                    for f in [
-                        Flavor::Mocha,
-                        Flavor::Macchiato,
-                        Flavor::Frappe,
-                        Flavor::Latte,
-                    ] {
-                        if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
-                            theme::apply(ctx, self.flavor);
-                            ui.close_menu();
-                        }
-                    }
-                    ui.separator();
-                    let zoom = ctx.zoom_factor();
-                    if ui
-                        .button(format!(
-                            "{} ({:.0}%)",
-                            tr(lang, "menu.view.zoom_in"),
-                            zoom * 100.0
-                        ))
-                        .clicked()
-                    {
-                        ctx.set_zoom_factor((zoom + 0.1).min(3.0));
-                    }
-                    if ui.button(tr(lang, "menu.view.zoom_out")).clicked() {
-                        ctx.set_zoom_factor((zoom - 0.1).max(0.5));
-                    }
-                    if ui.button(tr(lang, "menu.view.zoom_reset")).clicked() {
-                        ctx.set_zoom_factor(1.0);
-                    }
-                });
-                ui.menu_button(tr(lang, "menu.language"), |ui| {
-                    ui.radio_value(&mut self.lang, Lang::Zh, Lang::Zh.native_label());
-                    ui.radio_value(&mut self.lang, Lang::En, Lang::En.native_label());
-                });
-                ui.menu_button(tr(lang, "menu.help"), |ui| {
-                    ui.label(tr(lang, "menu.help.about_master"));
-                    ui.hyperlink_to("GitHub", "https://github.com/kelsoprotein-lab/ModbusSim");
-                });
-            });
-        });
+        let flavor = self.flavor;
 
-        enum Action {
-            Create,
-            Select(String),
-            Connect(String),
-            Disconnect(String),
-            Remove(String),
-        }
-        let mut action: Option<Action> = None;
-
-        // Left sidebar
-        egui::SidePanel::left("master_connections")
-            .resizable(true)
-            .default_width(240.0)
-            .min_width(200.0)
-            .show(ctx, |ui| {
-                ui.heading(tr(lang, "sidebar.connections"));
-                ui.separator();
-
-                ui.collapsing(tr(lang, "master.new_tcp"), |ui| {
-                    egui::Grid::new("master_new_form")
-                        .num_columns(2)
-                        .spacing([8.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label(tr(lang, "master.host"));
-                            ui.text_edit_singleline(&mut self.new_host);
-                            ui.end_row();
-                            ui.label(tr(lang, "master.port"));
-                            ui.text_edit_singleline(&mut self.new_port);
-                            ui.end_row();
-                            ui.label(tr(lang, "master.slave_id"));
-                            let mut sid = self.new_slave_id as u32;
-                            ui.add(egui::DragValue::new(&mut sid).range(1..=247));
-                            self.new_slave_id = sid as u8;
-                            ui.end_row();
-                            ui.label(tr(lang, "master.timeout_ms"));
-                            ui.add(egui::DragValue::new(&mut self.new_timeout).range(100..=60_000));
-                            ui.end_row();
-                        });
-                    if ui.button(tr(lang, "sidebar.create")).clicked() {
-                        action = Some(Action::Create);
-                    }
-                });
-                ui.separator();
-
-                for s in &self.snap {
-                    let is_sel = self.selected.as_deref() == Some(&s.id);
-                    let state_tag = match s.state {
-                        MasterState::Connected => tr(lang, "conn.state.connected"),
-                        MasterState::Disconnected => tr(lang, "conn.state.disconnected"),
-                        MasterState::Reconnecting => tr(lang, "conn.state.reconnecting"),
-                        MasterState::Error => tr(lang, "conn.state.error"),
-                    };
-                    ui.horizontal(|ui| {
-                        if ui
-                            .selectable_label(is_sel, format!("{} [{}]", s.label, state_tag))
-                            .clicked()
-                        {
-                            action = Some(Action::Select(s.id.clone()));
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        match s.state {
-                            MasterState::Connected | MasterState::Reconnecting => {
-                                if ui.small_button(tr(lang, "conn.disconnect")).clicked() {
-                                    action = Some(Action::Disconnect(s.id.clone()));
-                                }
-                            }
-                            _ => {
-                                if ui.small_button(tr(lang, "conn.connect")).clicked() {
-                                    action = Some(Action::Connect(s.id.clone()));
-                                }
-                            }
-                        }
-                        if ui.small_button(tr(lang, "conn.delete")).clicked() {
-                            action = Some(Action::Remove(s.id.clone()));
-                        }
-                    });
-                    ui.separator();
-                }
-            });
-
-        // Status + log
-        let mut clear_err = false;
-        let mut clear_status = false;
-        egui::TopBottomPanel::bottom("master_status")
-            .resizable(false)
-            .show(ctx, |ui| {
-                if let Some(err) = &self.last_error {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::RED, err);
-                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
-                            clear_err = true;
-                        }
-                    });
-                } else if let Some(msg) = &self.status_msg {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
-                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
-                            clear_status = true;
-                        }
-                    });
-                } else {
-                    ui.label(tr(lang, "conn.ready"));
-                }
-            });
-        if clear_err {
-            self.last_error = None;
-        }
-        if clear_status {
-            self.status_msg = None;
-        }
-
+        let menu = self.render_menu_bar(ctx, lang);
+        let sidebar_action = self.render_sidebar(ctx, lang);
+        self.render_status_bar(ctx, lang);
         self.render_log_panel(ctx);
 
-        // Central: read/write forms + result
-        let mut do_read_id: Option<String> = None;
-        let mut do_write_id: Option<String> = None;
-        let mut do_start_poll_id: Option<(String, usize)> = None;
-        let mut do_stop_poll_id: Option<(String, usize)> = None;
-        let flavor = self.flavor;
+        let mut central = CentralActions::default();
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(id) = self.selected.clone() else {
                 ui.vertical_centered(|ui| {
@@ -1068,273 +916,25 @@ impl eframe::App for MasterApp {
                     });
                     ui.separator();
 
-                    // Tab content
+                    // Tab content — each tab 抽成独立方法,见下方 impl 块。
+                    let connected = s.state == MasterState::Connected;
                     match self.active_tab {
                         MasterTab::Read => {
-                            egui::Grid::new("read_form")
-                                .num_columns(2)
-                                .spacing([10.0, 6.0])
-                                .show(ui, |ui| {
-                                    ui.label(tr(lang, "read.fc"));
-                                    egui::ComboBox::from_id_salt("read_fc")
-                                        .selected_text(read_fc_label(self.read_fc, lang))
-                                        .show_ui(ui, |ui| {
-                                            for f in [
-                                                ReadFunction::ReadCoils,
-                                                ReadFunction::ReadDiscreteInputs,
-                                                ReadFunction::ReadHoldingRegisters,
-                                                ReadFunction::ReadInputRegisters,
-                                            ] {
-                                                ui.selectable_value(
-                                                    &mut self.read_fc,
-                                                    f,
-                                                    read_fc_label(f, lang),
-                                                );
-                                            }
-                                        });
-                                    ui.end_row();
-                                    ui.label(tr(lang, "read.start_addr"));
-                                    let mut a = self.read_addr as u32;
-                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                    self.read_addr = a as u16;
-                                    ui.end_row();
-                                    ui.label(tr(lang, "read.count"));
-                                    let mut q = self.read_qty as u32;
-                                    ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                                    self.read_qty = q as u16;
-                                    ui.end_row();
-                                });
-                            ui.add_space(8.0);
-                            ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                                if uikit::primary_button(ui, flavor, tr(lang, "read.action"))
-                                    .clicked()
-                                {
-                                    do_read_id = Some(id.clone());
-                                }
-                            });
+                            self.render_read_tab(ui, lang, flavor, connected, &id, &mut central);
                         }
                         MasterTab::Write => {
-                            egui::Grid::new("write_form")
-                                .num_columns(2)
-                                .spacing([10.0, 6.0])
-                                .show(ui, |ui| {
-                                    ui.label(tr(lang, "write.type"));
-                                    ui.horizontal(|ui| {
-                                        ui.radio_value(
-                                            &mut self.write_is_coil,
-                                            false,
-                                            tr(lang, "write.fc06_reg"),
-                                        );
-                                        ui.radio_value(
-                                            &mut self.write_is_coil,
-                                            true,
-                                            tr(lang, "write.fc05_coil"),
-                                        );
-                                    });
-                                    ui.end_row();
-                                    ui.label(tr(lang, "write.addr"));
-                                    let mut a = self.write_addr as u32;
-                                    ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                    self.write_addr = a as u16;
-                                    ui.end_row();
-                                    ui.label(tr(lang, "write.value"));
-                                    if self.write_is_coil {
-                                        let mut b = self.write_value != 0;
-                                        ui.checkbox(&mut b, tr(lang, "write.bool_caption"));
-                                        self.write_value = if b { 1 } else { 0 };
-                                    } else {
-                                        ui.add(
-                                            egui::DragValue::new(&mut self.write_value)
-                                                .range(0..=65535),
-                                        );
-                                    }
-                                    ui.end_row();
-                                });
-                            ui.add_space(8.0);
-                            ui.add_enabled_ui(s.state == MasterState::Connected, |ui| {
-                                if uikit::primary_button(ui, flavor, tr(lang, "write.action"))
-                                    .clicked()
-                                {
-                                    do_write_id = Some(id.clone());
-                                }
-                            });
+                            self.render_write_tab(ui, lang, flavor, connected, &id, &mut central);
                         }
                         MasterTab::Poll => {
-                            // Ensure connection has a polling list
-                            self.polling.entry(id.clone()).or_default();
-                            let sel = *self.selected_group.get(&id).unwrap_or(&0);
-
-                            // Toolbar
-                            ui.horizontal(|ui| {
-                                if uikit::primary_button(ui, flavor, tr(lang, "poll.new_group"))
-                                    .clicked()
-                                {
-                                    self.add_scan_group(id.clone());
-                                }
-                                let len = self.polling.get(&id).map(|v| v.len()).unwrap_or(0);
-                                let has_sel = len > 0 && sel < len;
-                                if has_sel {
-                                    if uikit::danger_button(ui, flavor, tr(lang, "poll.del_group"))
-                                        .clicked()
-                                    {
-                                        self.remove_scan_group(id.clone(), sel, ctx.clone());
-                                    }
-                                }
-                                uikit::caption(ui, flavor, tr1(lang, "poll.group_count_fmt", len));
-                            });
-                            ui.add_space(6.0);
-
-                            let is_connected = s.state == MasterState::Connected;
-
-                            ui.horizontal(|ui| {
-                                // Left: group list
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(200.0, ui.available_height()),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        egui::ScrollArea::vertical().show(ui, |ui| {
-                                            if let Some(list) = self.polling.get(&id) {
-                                                for (i, g) in list.iter().enumerate() {
-                                                    let selected = i == sel;
-                                                    let dot = if g.enabled { "●" } else { "○" };
-                                                    let color = if g.enabled {
-                                                        theme::success(flavor)
-                                                    } else {
-                                                        theme::subtext(flavor)
-                                                    };
-                                                    let label =
-                                                        egui::RichText::new(format!(
-                                                "{} {}  {} @{} ×{}",
-                                                dot,
-                                                g.name,
-                                                match g.fc {
-                                                    ReadFunction::ReadCoils => "FC01",
-                                                    ReadFunction::ReadDiscreteInputs => "FC02",
-                                                    ReadFunction::ReadHoldingRegisters => "FC03",
-                                                    ReadFunction::ReadInputRegisters => "FC04",
-                                                },
-                                                g.addr,
-                                                g.qty,
-                                            ))
-                                                        .color(color);
-                                                    if ui
-                                                        .add(egui::SelectableLabel::new(
-                                                            selected, label,
-                                                        ))
-                                                        .clicked()
-                                                    {
-                                                        self.selected_group.insert(id.clone(), i);
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    },
-                                );
-                                ui.separator();
-
-                                // Right: selected group detail
-                                ui.vertical(|ui| {
-                                    let Some(list) = self.polling.get_mut(&id) else {
-                                        return;
-                                    };
-                                    if list.is_empty() {
-                                        uikit::caption(ui, flavor, tr(lang, "poll.empty_hint"));
-                                        return;
-                                    }
-                                    let idx = sel.min(list.len() - 1);
-                                    let pu = &mut list[idx];
-                                    egui::Grid::new("poll_form")
-                                        .num_columns(2)
-                                        .spacing([10.0, 6.0])
-                                        .show(ui, |ui| {
-                                            ui.label(tr(lang, "poll.name"));
-                                            ui.text_edit_singleline(&mut pu.name);
-                                            ui.end_row();
-                                            ui.label(tr(lang, "read.fc"));
-                                            egui::ComboBox::from_id_salt("poll_fc")
-                                                .selected_text(read_fc_label(pu.fc, lang))
-                                                .show_ui(ui, |ui| {
-                                                    for f in [
-                                                        ReadFunction::ReadCoils,
-                                                        ReadFunction::ReadDiscreteInputs,
-                                                        ReadFunction::ReadHoldingRegisters,
-                                                        ReadFunction::ReadInputRegisters,
-                                                    ] {
-                                                        ui.selectable_value(
-                                                            &mut pu.fc,
-                                                            f,
-                                                            read_fc_label(f, lang),
-                                                        );
-                                                    }
-                                                });
-                                            ui.end_row();
-                                            ui.label(tr(lang, "poll.start_addr"));
-                                            let mut a = pu.addr as u32;
-                                            ui.add(egui::DragValue::new(&mut a).range(0..=65535));
-                                            pu.addr = a as u16;
-                                            ui.end_row();
-                                            ui.label(tr(lang, "read.count"));
-                                            let mut q = pu.qty as u32;
-                                            ui.add(egui::DragValue::new(&mut q).range(1..=2000));
-                                            pu.qty = q as u16;
-                                            ui.end_row();
-                                            ui.label(tr(lang, "poll.interval_ms"));
-                                            ui.add(
-                                                egui::DragValue::new(&mut pu.interval_ms)
-                                                    .range(50..=60_000),
-                                            );
-                                            ui.end_row();
-                                        });
-                                    ui.add_space(8.0);
-                                    ui.horizontal(|ui| {
-                                        let running = pu.enabled;
-                                        let last_update = pu.last_update;
-                                        let last_err = pu.last_error.clone();
-                                        if running {
-                                            if uikit::danger_button(
-                                                ui,
-                                                flavor,
-                                                tr(lang, "poll.stop"),
-                                            )
-                                            .clicked()
-                                            {
-                                                do_stop_poll_id = Some((id.clone(), idx));
-                                            }
-                                            uikit::status_pill(
-                                                ui,
-                                                tr(lang, "poll.running"),
-                                                theme::success(flavor),
-                                            );
-                                        } else {
-                                            ui.add_enabled_ui(is_connected, |ui| {
-                                                if uikit::primary_button(
-                                                    ui,
-                                                    flavor,
-                                                    tr(lang, "poll.start"),
-                                                )
-                                                .clicked()
-                                                {
-                                                    do_start_poll_id = Some((id.clone(), idx));
-                                                }
-                                            });
-                                        }
-                                        if let Some(t) = last_update {
-                                            uikit::caption(
-                                                ui,
-                                                flavor,
-                                                tr1(
-                                                    lang,
-                                                    "poll.updated_ms_ago_fmt",
-                                                    t.elapsed().as_millis(),
-                                                ),
-                                            );
-                                        }
-                                        if let Some(err) = last_err {
-                                            ui.colored_label(theme::danger(flavor), err);
-                                        }
-                                    });
-                                });
-                            });
+                            self.render_poll_tab(
+                                ui,
+                                ctx,
+                                lang,
+                                flavor,
+                                connected,
+                                &id,
+                                &mut central,
+                            );
                         }
                     }
                 },
@@ -1382,30 +982,31 @@ impl eframe::App for MasterApp {
             }
         });
 
-        match action {
-            Some(Action::Create) => self.create_connection(ctx.clone()),
-            Some(Action::Select(id)) => self.selected = Some(id),
-            Some(Action::Connect(id)) => self.connect(&id, ctx.clone()),
-            Some(Action::Disconnect(id)) => self.disconnect(&id, ctx.clone()),
-            Some(Action::Remove(id)) => self.remove_connection(&id, ctx.clone()),
-            None => {}
+        if let Some(a) = sidebar_action {
+            match a {
+                SidebarAction::Create => self.create_connection(ctx.clone()),
+                SidebarAction::Select(id) => self.selected = Some(id),
+                SidebarAction::Connect(id) => self.connect(&id, ctx.clone()),
+                SidebarAction::Disconnect(id) => self.disconnect(&id, ctx.clone()),
+                SidebarAction::Remove(id) => self.remove_connection(&id, ctx.clone()),
+            }
         }
-        if let Some(id) = do_read_id {
+        if let Some(id) = central.read {
             self.do_read(id, ctx.clone());
         }
-        if let Some(id) = do_write_id {
+        if let Some(id) = central.write {
             self.do_write(id, ctx.clone());
         }
-        if let Some((id, idx)) = do_start_poll_id {
+        if let Some((id, idx)) = central.start_poll {
             self.start_poll(id, idx, ctx.clone());
         }
-        if let Some((id, idx)) = do_stop_poll_id {
+        if let Some((id, idx)) = central.stop_poll {
             self.stop_poll(id, idx, ctx.clone());
         }
-        if do_save {
+        if menu.save {
             self.save_project(ctx.clone());
         }
-        if do_load {
+        if menu.load {
             self.load_project(ctx.clone());
         }
 
@@ -1419,6 +1020,414 @@ impl eframe::App for MasterApp {
 }
 
 impl MasterApp {
+    fn render_menu_bar(&mut self, ctx: &egui::Context, lang: Lang) -> MenuFlags {
+        let mut flags = MenuFlags::default();
+        egui::TopBottomPanel::top("master_menu").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button(tr(lang, "menu.file"), |ui| {
+                    if ui.button(tr(lang, "menu.file.save")).clicked() {
+                        flags.save = true;
+                        ui.close_menu();
+                    }
+                    if ui.button(tr(lang, "menu.file.load")).clicked() {
+                        flags.load = true;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button(tr(lang, "menu.view"), |ui| {
+                    ui.checkbox(
+                        &mut self.log_state.open,
+                        tr(lang, "menu.view.show_log_panel"),
+                    );
+                    ui.separator();
+                    ui.label(tr(lang, "menu.view.theme_label"));
+                    for f in [
+                        Flavor::Mocha,
+                        Flavor::Macchiato,
+                        Flavor::Frappe,
+                        Flavor::Latte,
+                    ] {
+                        if ui.radio_value(&mut self.flavor, f, f.label()).clicked() {
+                            theme::apply(ctx, self.flavor);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    let zoom = ctx.zoom_factor();
+                    if ui
+                        .button(format!(
+                            "{} ({:.0}%)",
+                            tr(lang, "menu.view.zoom_in"),
+                            zoom * 100.0
+                        ))
+                        .clicked()
+                    {
+                        ctx.set_zoom_factor((zoom + 0.1).min(3.0));
+                    }
+                    if ui.button(tr(lang, "menu.view.zoom_out")).clicked() {
+                        ctx.set_zoom_factor((zoom - 0.1).max(0.5));
+                    }
+                    if ui.button(tr(lang, "menu.view.zoom_reset")).clicked() {
+                        ctx.set_zoom_factor(1.0);
+                    }
+                });
+                ui.menu_button(tr(lang, "menu.language"), |ui| {
+                    ui.radio_value(&mut self.lang, Lang::Zh, Lang::Zh.native_label());
+                    ui.radio_value(&mut self.lang, Lang::En, Lang::En.native_label());
+                });
+                ui.menu_button(tr(lang, "menu.help"), |ui| {
+                    ui.label(tr(lang, "menu.help.about_master"));
+                    ui.hyperlink_to("GitHub", "https://github.com/kelsoprotein-lab/ModbusSim");
+                });
+            });
+        });
+        flags
+    }
+
+    fn render_sidebar(&mut self, ctx: &egui::Context, lang: Lang) -> Option<SidebarAction> {
+        let mut action: Option<SidebarAction> = None;
+        egui::SidePanel::left("master_connections")
+            .resizable(true)
+            .default_width(240.0)
+            .min_width(200.0)
+            .show(ctx, |ui| {
+                ui.heading(tr(lang, "sidebar.connections"));
+                ui.separator();
+
+                ui.collapsing(tr(lang, "master.new_tcp"), |ui| {
+                    egui::Grid::new("master_new_form")
+                        .num_columns(2)
+                        .spacing([8.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label(tr(lang, "master.host"));
+                            ui.text_edit_singleline(&mut self.new_host);
+                            ui.end_row();
+                            ui.label(tr(lang, "master.port"));
+                            ui.text_edit_singleline(&mut self.new_port);
+                            ui.end_row();
+                            ui.label(tr(lang, "master.slave_id"));
+                            let mut sid = self.new_slave_id as u32;
+                            ui.add(egui::DragValue::new(&mut sid).range(1..=247));
+                            self.new_slave_id = sid as u8;
+                            ui.end_row();
+                            ui.label(tr(lang, "master.timeout_ms"));
+                            ui.add(egui::DragValue::new(&mut self.new_timeout).range(100..=60_000));
+                            ui.end_row();
+                        });
+                    if ui.button(tr(lang, "sidebar.create")).clicked() {
+                        action = Some(SidebarAction::Create);
+                    }
+                });
+                ui.separator();
+
+                for s in &self.snap {
+                    let is_sel = self.selected.as_deref() == Some(&s.id);
+                    let state_tag = match s.state {
+                        MasterState::Connected => tr(lang, "conn.state.connected"),
+                        MasterState::Disconnected => tr(lang, "conn.state.disconnected"),
+                        MasterState::Reconnecting => tr(lang, "conn.state.reconnecting"),
+                        MasterState::Error => tr(lang, "conn.state.error"),
+                    };
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(is_sel, format!("{} [{}]", s.label, state_tag))
+                            .clicked()
+                        {
+                            action = Some(SidebarAction::Select(s.id.clone()));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        match s.state {
+                            MasterState::Connected | MasterState::Reconnecting => {
+                                if ui.small_button(tr(lang, "conn.disconnect")).clicked() {
+                                    action = Some(SidebarAction::Disconnect(s.id.clone()));
+                                }
+                            }
+                            _ => {
+                                if ui.small_button(tr(lang, "conn.connect")).clicked() {
+                                    action = Some(SidebarAction::Connect(s.id.clone()));
+                                }
+                            }
+                        }
+                        if ui.small_button(tr(lang, "conn.delete")).clicked() {
+                            action = Some(SidebarAction::Remove(s.id.clone()));
+                        }
+                    });
+                    ui.separator();
+                }
+            });
+        action
+    }
+
+    fn render_status_bar(&mut self, ctx: &egui::Context, lang: Lang) {
+        let mut clear_err = false;
+        let mut clear_status = false;
+        egui::TopBottomPanel::bottom("master_status")
+            .resizable(false)
+            .show(ctx, |ui| {
+                if let Some(err) = &self.last_error {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::RED, err);
+                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
+                            clear_err = true;
+                        }
+                    });
+                } else if let Some(msg) = &self.status_msg {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::from_rgb(60, 140, 60), msg);
+                        if ui.small_button(tr(lang, "sidebar.clear")).clicked() {
+                            clear_status = true;
+                        }
+                    });
+                } else {
+                    ui.label(tr(lang, "conn.ready"));
+                }
+            });
+        if clear_err {
+            self.last_error = None;
+        }
+        if clear_status {
+            self.status_msg = None;
+        }
+    }
+
+    fn render_read_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        flavor: Flavor,
+        connected: bool,
+        id: &str,
+        central: &mut CentralActions,
+    ) {
+        egui::Grid::new("read_form")
+            .num_columns(2)
+            .spacing([10.0, 6.0])
+            .show(ui, |ui| {
+                ui.label(tr(lang, "read.fc"));
+                egui::ComboBox::from_id_salt("read_fc")
+                    .selected_text(read_fc_label(self.read_fc, lang))
+                    .show_ui(ui, |ui| {
+                        for f in [
+                            ReadFunction::ReadCoils,
+                            ReadFunction::ReadDiscreteInputs,
+                            ReadFunction::ReadHoldingRegisters,
+                            ReadFunction::ReadInputRegisters,
+                        ] {
+                            ui.selectable_value(&mut self.read_fc, f, read_fc_label(f, lang));
+                        }
+                    });
+                ui.end_row();
+                ui.label(tr(lang, "read.start_addr"));
+                let mut a = self.read_addr as u32;
+                ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                self.read_addr = a as u16;
+                ui.end_row();
+                ui.label(tr(lang, "read.count"));
+                let mut q = self.read_qty as u32;
+                ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                self.read_qty = q as u16;
+                ui.end_row();
+            });
+        ui.add_space(8.0);
+        ui.add_enabled_ui(connected, |ui| {
+            if uikit::primary_button(ui, flavor, tr(lang, "read.action")).clicked() {
+                central.read = Some(id.to_string());
+            }
+        });
+    }
+
+    fn render_write_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        flavor: Flavor,
+        connected: bool,
+        id: &str,
+        central: &mut CentralActions,
+    ) {
+        egui::Grid::new("write_form")
+            .num_columns(2)
+            .spacing([10.0, 6.0])
+            .show(ui, |ui| {
+                ui.label(tr(lang, "write.type"));
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.write_is_coil, false, tr(lang, "write.fc06_reg"));
+                    ui.radio_value(&mut self.write_is_coil, true, tr(lang, "write.fc05_coil"));
+                });
+                ui.end_row();
+                ui.label(tr(lang, "write.addr"));
+                let mut a = self.write_addr as u32;
+                ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                self.write_addr = a as u16;
+                ui.end_row();
+                ui.label(tr(lang, "write.value"));
+                if self.write_is_coil {
+                    let mut b = self.write_value != 0;
+                    ui.checkbox(&mut b, tr(lang, "write.bool_caption"));
+                    self.write_value = if b { 1 } else { 0 };
+                } else {
+                    ui.add(egui::DragValue::new(&mut self.write_value).range(0..=65535));
+                }
+                ui.end_row();
+            });
+        ui.add_space(8.0);
+        ui.add_enabled_ui(connected, |ui| {
+            if uikit::primary_button(ui, flavor, tr(lang, "write.action")).clicked() {
+                central.write = Some(id.to_string());
+            }
+        });
+    }
+
+    fn render_poll_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        lang: Lang,
+        flavor: Flavor,
+        connected: bool,
+        id: &str,
+        central: &mut CentralActions,
+    ) {
+        self.polling.entry(id.to_string()).or_default();
+        let sel = *self.selected_group.get(id).unwrap_or(&0);
+
+        // Toolbar
+        ui.horizontal(|ui| {
+            if uikit::primary_button(ui, flavor, tr(lang, "poll.new_group")).clicked() {
+                self.add_scan_group(id.to_string());
+            }
+            let len = self.polling.get(id).map(|v| v.len()).unwrap_or(0);
+            let has_sel = len > 0 && sel < len;
+            if has_sel && uikit::danger_button(ui, flavor, tr(lang, "poll.del_group")).clicked() {
+                self.remove_scan_group(id.to_string(), sel, ctx.clone());
+            }
+            uikit::caption(ui, flavor, tr1(lang, "poll.group_count_fmt", len));
+        });
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            // Left: group list
+            ui.allocate_ui_with_layout(
+                egui::vec2(200.0, ui.available_height()),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(list) = self.polling.get(id) {
+                            for (i, g) in list.iter().enumerate() {
+                                let selected = i == sel;
+                                let dot = if g.enabled { "●" } else { "○" };
+                                let color = if g.enabled {
+                                    theme::success(flavor)
+                                } else {
+                                    theme::subtext(flavor)
+                                };
+                                let label = egui::RichText::new(format!(
+                                    "{} {}  {} @{} ×{}",
+                                    dot,
+                                    g.name,
+                                    match g.fc {
+                                        ReadFunction::ReadCoils => "FC01",
+                                        ReadFunction::ReadDiscreteInputs => "FC02",
+                                        ReadFunction::ReadHoldingRegisters => "FC03",
+                                        ReadFunction::ReadInputRegisters => "FC04",
+                                    },
+                                    g.addr,
+                                    g.qty,
+                                ))
+                                .color(color);
+                                if ui
+                                    .add(egui::SelectableLabel::new(selected, label))
+                                    .clicked()
+                                {
+                                    self.selected_group.insert(id.to_string(), i);
+                                }
+                            }
+                        }
+                    });
+                },
+            );
+            ui.separator();
+
+            // Right: selected group detail
+            ui.vertical(|ui| {
+                let Some(list) = self.polling.get_mut(id) else {
+                    return;
+                };
+                if list.is_empty() {
+                    uikit::caption(ui, flavor, tr(lang, "poll.empty_hint"));
+                    return;
+                }
+                let idx = sel.min(list.len() - 1);
+                let pu = &mut list[idx];
+                egui::Grid::new("poll_form")
+                    .num_columns(2)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(tr(lang, "poll.name"));
+                        ui.text_edit_singleline(&mut pu.name);
+                        ui.end_row();
+                        ui.label(tr(lang, "read.fc"));
+                        egui::ComboBox::from_id_salt("poll_fc")
+                            .selected_text(read_fc_label(pu.fc, lang))
+                            .show_ui(ui, |ui| {
+                                for f in [
+                                    ReadFunction::ReadCoils,
+                                    ReadFunction::ReadDiscreteInputs,
+                                    ReadFunction::ReadHoldingRegisters,
+                                    ReadFunction::ReadInputRegisters,
+                                ] {
+                                    ui.selectable_value(&mut pu.fc, f, read_fc_label(f, lang));
+                                }
+                            });
+                        ui.end_row();
+                        ui.label(tr(lang, "poll.start_addr"));
+                        let mut a = pu.addr as u32;
+                        ui.add(egui::DragValue::new(&mut a).range(0..=65535));
+                        pu.addr = a as u16;
+                        ui.end_row();
+                        ui.label(tr(lang, "read.count"));
+                        let mut q = pu.qty as u32;
+                        ui.add(egui::DragValue::new(&mut q).range(1..=2000));
+                        pu.qty = q as u16;
+                        ui.end_row();
+                        ui.label(tr(lang, "poll.interval_ms"));
+                        ui.add(egui::DragValue::new(&mut pu.interval_ms).range(50..=60_000));
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let running = pu.enabled;
+                    let last_update = pu.last_update;
+                    let last_err = pu.last_error.clone();
+                    if running {
+                        if uikit::danger_button(ui, flavor, tr(lang, "poll.stop")).clicked() {
+                            central.stop_poll = Some((id.to_string(), idx));
+                        }
+                        uikit::status_pill(ui, tr(lang, "poll.running"), theme::success(flavor));
+                    } else {
+                        ui.add_enabled_ui(connected, |ui| {
+                            if uikit::primary_button(ui, flavor, tr(lang, "poll.start")).clicked() {
+                                central.start_poll = Some((id.to_string(), idx));
+                            }
+                        });
+                    }
+                    if let Some(t) = last_update {
+                        uikit::caption(
+                            ui,
+                            flavor,
+                            tr1(lang, "poll.updated_ms_ago_fmt", t.elapsed().as_millis()),
+                        );
+                    }
+                    if let Some(err) = last_err {
+                        ui.colored_label(theme::danger(flavor), err);
+                    }
+                });
+            });
+        });
+    }
+
     fn render_log_panel(&mut self, ctx: &egui::Context) {
         let action = log_panel::render(
             ctx,
