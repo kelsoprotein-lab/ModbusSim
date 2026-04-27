@@ -178,6 +178,11 @@ cargo run -p modbusmaster-egui --release
 cargo test --workspace
 ```
 
+## 更新日志
+
+完整版本历史见 [`CHANGELOG.md`](CHANGELOG.md);二进制下载(Tauri + egui 双版本)见
+[Releases 页面](https://github.com/kelsoprotein-lab/ModbusSim/releases)。
+
 ## 许可证
 
 MIT
