@@ -8,6 +8,35 @@ All notable changes to ModbusSim are documented in this file.
 
 ---
 
+## [0.14.1] - 2026-05-01
+
+补丁版本:把 v0.14.0 hotfix 引入的 `SlaveDevice::apply_random_mutation_thread` 在 Tauri 子站 `random_mutate_registers` 命令中真正用上,删除 75 行重复实现;新增 6 个单元测试钉住四类寄存器变异行为。无破坏性变更。
+
+Patch release: Tauri slave's `random_mutate_registers` command now actually calls the core `SlaveDevice::apply_random_mutation_thread` API introduced as a v0.14.0 hotfix, removing 75 lines of duplicated logic; six new unit tests pin the mutation behaviour for all four register types. No breaking changes.
+
+### Highlights / 亮点
+
+- ♻️ **Tauri slave 复用 core 变异 API** — `commands.rs::random_mutate_registers` 由 75 行就地实现改为单行 `device.apply_random_mutation_thread(&types)`,行为与 egui 子站完全一致。/ Tauri slave's mutation command shrinks from 75 lines to a single core call, matching egui slave behaviour exactly.
+- 🧪 **变异行为单元测试覆盖** — 新增 `tests/random_mutation.rs`:6 个用例钉住 Coil / DiscreteInput / HoldingRegister / InputRegister 都会真正变化,empty defs 返回 0 不 panic;workspace 测试达 280 / 0 失败。/ New `tests/random_mutation.rs` with 6 cases proving all four register types actually mutate (the original "FC03/FC04 不变化" report) and empty defs return 0 without panicking; workspace test count reaches 280, 0 failures.
+- 🩺 **后端诊断日志** — `random_mutate` 命令现在打印每类型 addr 计数 + 实际变异数,前端 invoke 也打 `console.debug`,排查"变异请求来了但 UI 没刷"类问题不再靠猜。/ Both backend (`log::debug!`) and frontend (`console.debug`) now record per-type address counts and actual mutation counts, removing the guesswork when diagnosing silent mutation requests.
+- 📜 **项目级 CLAUDE.md 入库** — `.claude/CLAUDE.md` 加入仓库:Think Before Coding / Simplicity First / Surgical Changes / Goal-Driven Execution 四条 LLM 协作准则,所有协作者共享同一基线。/ Project-level `.claude/CLAUDE.md` is now checked in, sharing the four LLM-collaboration guidelines with every contributor.
+
+### Changed 改进
+
+- `crates/modbussim-app/src/commands.rs::random_mutate_registers` 删除 ~75 行就地变异逻辑(coils / discrete inputs / holding / input 各自手写 RNG + delta clamp),改调 core `apply_random_mutation_thread`,行为可被 `random_mutation.rs` 测试覆盖。/ `commands.rs::random_mutate_registers` drops ~75 lines of in-place mutation logic in favour of the core helper; behaviour is now testable via `random_mutation.rs`.
+- `frontend/src/components/Toolbar.vue::scheduleMutation` invoke 增加 `<number>` 类型标注 + `console.debug` 日志(types + 实际变异数)。/ `scheduleMutation` now types the invoke as `<number>` and logs the mutation count to dev console.
+
+### Tests 测试
+
+- 新增 `crates/modbussim-core/tests/random_mutation.rs`(6 cases):`coil_actually_flips` / `discrete_input_actually_flips` / `holding_register_actually_changes_after_iterations` / `input_register_actually_changes_after_iterations` / `mixed_types_all_change` / `empty_defs_returns_zero_no_panic`。/ Six unit tests in the new `random_mutation.rs` file cover every register type plus the empty-defs no-op edge case.
+- 全量 `cargo test --workspace`:**280 通过 / 0 失败**(此前 274 + 本版本 6)。/ Workspace test count is now **280 passing, 0 failing** (previous 274 + 6 new).
+
+### Internal 内部
+
+- `.claude/CLAUDE.md` 入库为项目级 LLM 行为指引(`settings.local.json` / `commands/` / `skills/` 仍为个人本地配置,继续不入库)。/ `.claude/CLAUDE.md` is now version-controlled while local skill / command / settings files remain untracked.
+
+---
+
 ## [0.14.0] - 2026-04-28
 
 自 `v0.13.0` 起的大版本更新:Slave UI 整体冷蓝重构、TLS 支持、egui 双端全面 i18n、空状态 Hero 三色弦动画、端到端联动测试覆盖扩展到 10 场景。无破坏性变更。
@@ -68,5 +97,6 @@ A large feature drop since `v0.13.0`: full slave-UI cool-blue redesign, TLS supp
 
 详见 git tag 与提交历史。/ See git tag and commit history.
 
+[0.14.1]: https://github.com/kelsoprotein-lab/ModbusSim/releases/tag/v0.14.1
 [0.14.0]: https://github.com/kelsoprotein-lab/ModbusSim/releases/tag/v0.14.0
 [0.13.0]: https://github.com/kelsoprotein-lab/ModbusSim/releases/tag/v0.13.0
