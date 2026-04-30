@@ -15,7 +15,6 @@ use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
 use modbussim_core::tools;
 use modbussim_core::transport::{self, Parity, SerialConfig, SlaveTlsConfig, Transport};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -918,75 +917,34 @@ pub async fn random_mutate_registers(
         .get_mut(&request.slave_id)
         .ok_or_else(|| format!("slave {} not found", request.slave_id))?;
 
-    let mut rng = rand::rng();
-    let mut mutated = 0u32;
+    let types: Vec<RegisterType> = request
+        .register_types
+        .iter()
+        .map(|s| parse_register_type(s))
+        .collect::<Result<_, _>>()?;
 
-    for rt_str in &request.register_types {
-        let reg_type = parse_register_type(rt_str)?;
-        let addrs: Vec<u16> = device
-            .register_defs
-            .iter()
-            .filter(|d| d.register_type == reg_type)
-            .map(|d| d.address)
-            .collect();
-        if addrs.is_empty() {
-            continue;
-        }
+    // Diagnostic: how many addrs are present per requested type
+    let counts: Vec<(RegisterType, usize)> = types
+        .iter()
+        .map(|&t| {
+            let n = device
+                .register_defs
+                .iter()
+                .filter(|d| d.register_type == t)
+                .count();
+            (t, n)
+        })
+        .collect();
 
-        // Mutate ~30% of registers of this type, at least 3
-        let count = (addrs.len() * 30 / 100).max(3).min(addrs.len());
-        // Shuffle and take first `count`
-        let mut pick = addrs.clone();
-        for i in (1..pick.len()).rev() {
-            let j = rng.random_range(0..=i);
-            pick.swap(i, j);
-        }
-        for &addr in &pick[..count] {
-            match reg_type {
-                RegisterType::Coil => {
-                    let cur = device
-                        .register_map
-                        .coils
-                        .get(&addr)
-                        .copied()
-                        .unwrap_or(false);
-                    device.register_map.write_coil(addr, !cur);
-                }
-                RegisterType::DiscreteInput => {
-                    let cur = device
-                        .register_map
-                        .discrete_inputs
-                        .get(&addr)
-                        .copied()
-                        .unwrap_or(false);
-                    device.register_map.discrete_inputs.insert(addr, !cur);
-                }
-                RegisterType::HoldingRegister => {
-                    let cur = device
-                        .register_map
-                        .holding_registers
-                        .get(&addr)
-                        .copied()
-                        .unwrap_or(0);
-                    let delta: i32 = rng.random_range(-100..=100);
-                    let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
-                    device.register_map.write_holding_register(addr, new_val);
-                }
-                RegisterType::InputRegister => {
-                    let cur = device
-                        .register_map
-                        .input_registers
-                        .get(&addr)
-                        .copied()
-                        .unwrap_or(0);
-                    let delta: i32 = rng.random_range(-100..=100);
-                    let new_val = (cur as i32 + delta).clamp(0, 65535) as u16;
-                    device.register_map.input_registers.insert(addr, new_val);
-                }
-            }
-            mutated += 1;
-        }
-    }
+    let mutated = device.apply_random_mutation_thread(&types);
+
+    log::debug!(
+        "random_mutate slave={} requested={:?} addr_counts={:?} mutated={}",
+        request.slave_id,
+        request.register_types,
+        counts,
+        mutated
+    );
 
     Ok(mutated)
 }

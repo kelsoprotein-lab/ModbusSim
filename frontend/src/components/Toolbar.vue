@@ -308,13 +308,14 @@ function scheduleMutation() {
       .map(([k]) => k)
     if (types.length > 0) {
       try {
-        await invoke('random_mutate_registers', {
+        const mutated = await invoke<number>('random_mutate_registers', {
           request: {
             connection_id: selectedConnectionId.value,
             slave_id: selectedSlaveId.value,
             register_types: types,
           }
         })
+        console.debug('[mutation] types=', types, 'mutated=', mutated)
         refreshRegisters()
       } catch (e) { console.error('mutation failed:', e) }
     }
