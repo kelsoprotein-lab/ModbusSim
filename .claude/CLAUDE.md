@@ -60,6 +60,16 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. 不擅自运行程序做无互动自测
+
+**桌面/前端类应用（Tauri、egui、Vue dev server 等）由用户在本地交互验证，Claude 不要主动启动。**
+
+- 不要主动 `cargo tauri dev` / `npm run dev` / `cargo run` 启动 GUI / 长驻进程做"看一眼是否正常"。
+- 不要在用户没要求时自动重启已运行的应用。
+- 验证手段限于：`cargo check`、`cargo test`、`cargo clippy`、`vue-tsc --noEmit`、`npm run build` 等无人值守命令。
+- UI / 交互行为的验证写在交付说明里，由用户手工点击；说"我已让 dev server 跑起来确认无误"是不允许的（除非用户明确要求）。
+- 例外：用户明确说"启动子站/主站/前端"等显式指令时才运行；运行后任务完成应停止或交还控制，不要保留长时间监控。
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
