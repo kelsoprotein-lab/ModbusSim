@@ -34,3 +34,6 @@ export type { Toast } from './composables/useErrorHandler'
 
 // Components
 export { default as AppDialog } from './components/AppDialog.vue'
+
+// i18n
+export { useI18n, type Locale } from './i18n'
