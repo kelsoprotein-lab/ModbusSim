@@ -11,9 +11,10 @@ use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::log_helpers;
 use modbussim_core::master::{
-    scan_registers_with_ctx, scan_slave_ids_with_ctx, MasterConfig, MasterConnection, ReadFunction,
-    ReadResult, ScanGroup,
+    scan_registers_with_ctx, scan_slave_ids_with_ctx, MasterConfig, MasterConnection, MasterState,
+    ReadFunction, ReadResult, ScanGroup,
 };
+use modbussim_core::reconnect::ReconnectPolicy;
 use modbussim_core::parse::{parse_read_function, read_function_to_string};
 use modbussim_core::tools;
 use modbussim_core::transport::{self, Parity, SerialConfig, TlsConfig, Transport};
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -272,10 +273,167 @@ pub async fn create_master_connection(
             scan_groups: Vec::new(),
             log_collector,
             cached_data: std::collections::HashMap::new(),
+            reconnect_handle: Arc::new(Mutex::new(None)),
         },
     );
 
     Ok(info)
+}
+
+// ---------------------------------------------------------------------------
+// Connection state helpers
+// ---------------------------------------------------------------------------
+
+/// Stable PascalCase tags exposed to the frontend (matches existing
+/// listeners that compare against "Connected"/"Disconnected").
+fn state_tag(state: MasterState) -> &'static str {
+    match state {
+        MasterState::Connected => "Connected",
+        MasterState::Disconnected => "Disconnected",
+        MasterState::Reconnecting => "Reconnecting",
+        MasterState::Error => "Error",
+    }
+}
+
+fn emit_state(app: &AppHandle, conn_id: &str, tag: &str) {
+    let _ = app.emit(
+        "master-connection-state",
+        ConnectionStateEvent {
+            id: conn_id.to_string(),
+            state: tag.to_string(),
+        },
+    );
+}
+
+/// Abort the supervisor task associated with `conn_id`, if any. Used when
+/// the user explicitly disconnects or deletes the connection so that the
+/// auto-reconnect loop does not race with manual control.
+async fn abort_supervisor(
+    master_conns: &Arc<tokio::sync::RwLock<std::collections::HashMap<String, MasterConnectionState>>>,
+    conn_id: &str,
+) {
+    let handle_slot = {
+        let conns = master_conns.read().await;
+        conns.get(conn_id).map(|cs| cs.reconnect_handle.clone())
+    };
+    if let Some(handle_arc) = handle_slot {
+        if let Some(handle) = handle_arc.lock().await.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Long-lived task that watches for transport-loss notifications and
+/// drives an exponential-backoff reconnect loop. One instance is spawned
+/// per `connect_master` success and lives until either the supervisor is
+/// aborted (manual disconnect/delete) or the policy gives up.
+async fn run_supervisor(
+    app: AppHandle,
+    master_conns: Arc<tokio::sync::RwLock<std::collections::HashMap<String, MasterConnectionState>>>,
+    conn_id: String,
+    mut lost_rx: broadcast::Receiver<()>,
+) {
+    loop {
+        // Wait for the next transport-loss signal. Lagged or closed means
+        // the supervisor has nothing useful to do.
+        match lost_rx.recv().await {
+            Ok(()) => {}
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+        // Drain any extras so we only run one reconnect cycle per burst.
+        while lost_rx.try_recv().is_ok() {}
+
+        // Snapshot policy + enabled scan groups under a short read lock.
+        let snapshot = {
+            let conns = master_conns.read().await;
+            let Some(cs) = conns.get(&conn_id) else {
+                return; // connection deleted
+            };
+            let policy = cs.connection.reconnect_policy.clone();
+            let groups: Vec<String> = cs
+                .scan_groups
+                .iter()
+                .filter(|g| g.enabled)
+                .map(|g| g.id.clone())
+                .collect();
+            (policy, groups)
+        };
+        let (policy, enabled_groups): (ReconnectPolicy, Vec<String>) = snapshot;
+
+        if !policy.enabled {
+            // Auto-reconnect disabled: surface the loss as Disconnected and
+            // wait for either the user or another lost signal.
+            {
+                let mut conns = master_conns.write().await;
+                if let Some(cs) = conns.get_mut(&conn_id) {
+                    let _ = cs.connection.disconnect().await;
+                }
+            }
+            emit_state(&app, &conn_id, "Disconnected");
+            continue;
+        }
+
+        emit_state(&app, &conn_id, "Reconnecting");
+
+        // Tear down the dead transport before retrying.
+        {
+            let mut conns = master_conns.write().await;
+            if let Some(cs) = conns.get_mut(&conn_id) {
+                let _ = cs.connection.disconnect().await;
+            } else {
+                return;
+            }
+        }
+
+        // Backoff retry loop.
+        let mut attempt: u32 = 0;
+        let outcome = loop {
+            tokio::time::sleep(policy.delay_for_attempt(attempt)).await;
+
+            let res = {
+                let mut conns = master_conns.write().await;
+                let Some(cs) = conns.get_mut(&conn_id) else {
+                    return;
+                };
+                cs.connection.connect().await
+            };
+
+            if res.is_ok() {
+                break Ok(());
+            }
+            attempt += 1;
+            if !policy.should_retry(attempt) {
+                break Err(());
+            }
+        };
+
+        match outcome {
+            Ok(()) => {
+                emit_state(&app, &conn_id, "Connected");
+
+                // Refresh subscription so we observe the next loss against
+                // the new transport's lifetime.
+                let new_rx = {
+                    let conns = master_conns.read().await;
+                    let Some(cs) = conns.get(&conn_id) else {
+                        return;
+                    };
+                    cs.connection.subscribe_connection_lost()
+                };
+                lost_rx = new_rx;
+
+                // Restart polling for groups that were enabled before loss.
+                for gid in enabled_groups {
+                    let _ = start_polling_inner(&app, &master_conns, &conn_id, &gid).await;
+                }
+            }
+            Err(()) => {
+                emit_state(&app, &conn_id, "Error");
+                return;
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -284,24 +442,40 @@ pub async fn connect_master(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), String> {
-    let mut conns = state.master_connections.write().await;
-    let conn_state = conns
-        .get_mut(&connection_id)
-        .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
+    // Stop any leftover supervisor before we touch the transport.
+    abort_supervisor(&state.master_connections, &connection_id).await;
 
-    conn_state
-        .connection
-        .connect()
-        .await
-        .map_err(|e| format!("{}", e))?;
+    // Connect, capture a fresh lost-signal receiver, and grab the shared
+    // reconnect_handle slot — all under one write lock.
+    let (lost_rx, handle_slot, current_state) = {
+        let mut conns = state.master_connections.write().await;
+        let conn_state = conns
+            .get_mut(&connection_id)
+            .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
 
-    let _ = app.emit(
-        "master-connection-state",
-        ConnectionStateEvent {
-            id: connection_id,
-            state: format!("{:?}", conn_state.connection.state()),
-        },
-    );
+        conn_state
+            .connection
+            .connect()
+            .await
+            .map_err(|e| format!("{}", e))?;
+
+        (
+            conn_state.connection.subscribe_connection_lost(),
+            conn_state.reconnect_handle.clone(),
+            conn_state.connection.state(),
+        )
+    };
+
+    emit_state(&app, &connection_id, state_tag(current_state));
+
+    // Spawn the supervisor for auto-reconnect.
+    let supervisor = tokio::spawn(run_supervisor(
+        app.clone(),
+        state.master_connections.clone(),
+        connection_id.clone(),
+        lost_rx,
+    ));
+    *handle_slot.lock().await = Some(supervisor);
 
     Ok(())
 }
@@ -312,25 +486,23 @@ pub async fn disconnect_master(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), String> {
-    let mut conns = state.master_connections.write().await;
-    let conn_state = conns
-        .get_mut(&connection_id)
-        .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
+    // Cancel any in-flight reconnect first so it cannot race with us.
+    abort_supervisor(&state.master_connections, &connection_id).await;
 
-    conn_state
-        .connection
-        .disconnect()
-        .await
-        .map_err(|e| format!("{}", e))?;
+    {
+        let mut conns = state.master_connections.write().await;
+        let conn_state = conns
+            .get_mut(&connection_id)
+            .ok_or_else(|| format!("Connection not found: {}", connection_id))?;
 
-    let _ = app.emit(
-        "master-connection-state",
-        ConnectionStateEvent {
-            id: connection_id,
-            state: format!("{:?}", conn_state.connection.state()),
-        },
-    );
+        conn_state
+            .connection
+            .disconnect()
+            .await
+            .map_err(|e| format!("{}", e))?;
+    }
 
+    emit_state(&app, &connection_id, "Disconnected");
     Ok(())
 }
 
@@ -339,6 +511,8 @@ pub async fn delete_master_connection(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<(), String> {
+    abort_supervisor(&state.master_connections, &connection_id).await;
+
     let mut conns = state.master_connections.write().await;
     let mut conn_state = conns
         .remove(&connection_id)

@@ -5,7 +5,8 @@ use modbussim_core::master::{MasterConnection, ReadResult, ScanGroup};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::task::JoinHandle;
 
 /// Runtime state for a single master connection.
 pub struct MasterConnectionState {
@@ -14,6 +15,10 @@ pub struct MasterConnectionState {
     pub log_collector: Arc<LogCollector>,
     /// Latest polled data for each scan group, keyed by scan_group_id.
     pub cached_data: HashMap<String, CachedPollData>,
+    /// Supervisor task that watches for transport-loss notifications and
+    /// drives the auto-reconnect loop. `None` while the connection is
+    /// idle (never connected, or after an explicit user disconnect).
+    pub reconnect_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 /// Cached poll result for a scan group.

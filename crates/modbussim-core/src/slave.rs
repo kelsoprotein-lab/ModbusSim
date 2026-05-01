@@ -319,10 +319,11 @@ impl SlaveConnection {
             .ok_or(SlaveError::SlaveNotFound(slave_id))
     }
 
-    /// Start the server. Returns error if already running or bind fails.
+    /// Start the server. Idempotent: returns Ok if already running. Errors
+    /// only on bind/transport failure.
     pub async fn start(&mut self) -> Result<(), SlaveError> {
         if self.state == ConnectionState::Running {
-            return Err(SlaveError::AlreadyRunning);
+            return Ok(());
         }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -437,10 +438,10 @@ impl SlaveConnection {
         Ok(())
     }
 
-    /// Stop the TCP server gracefully.
+    /// Stop the server gracefully. Idempotent: returns Ok if already stopped.
     pub async fn stop(&mut self) -> Result<(), SlaveError> {
         if self.state == ConnectionState::Stopped {
-            return Err(SlaveError::NotRunning);
+            return Ok(());
         }
 
         if let Some(tx) = self.shutdown_tx.take() {

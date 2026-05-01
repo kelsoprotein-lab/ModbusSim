@@ -340,6 +340,8 @@ async function submitWrite() {
 }
 
 const isConnected = () => selectedConnectionState.value === 'Connected'
+const isReconnecting = () => selectedConnectionState.value === 'Reconnecting'
+const isDisconnected = () => selectedConnectionState.value === 'Disconnected'
 const hasConnection = () => selectedConnectionId.value !== null
 </script>
 
@@ -362,11 +364,11 @@ const hasConnection = () => selectedConnectionId.value !== null
     <div class="toolbar-divider"></div>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn btn-start" :disabled="!hasConnection() || isConnected()" @click="connectMaster">
+      <button class="toolbar-btn btn-start" :disabled="!hasConnection() || isConnected() || isReconnecting()" @click="connectMaster">
         连接
       </button>
-      <button class="toolbar-btn btn-stop" :disabled="!hasConnection() || !isConnected()" @click="disconnectMaster">
-        断开
+      <button class="toolbar-btn btn-stop" :disabled="!hasConnection() || isDisconnected()" @click="disconnectMaster">
+        {{ isReconnecting() ? '取消重连' : '断开' }}
       </button>
       <button class="toolbar-btn btn-close" :disabled="!hasConnection()" @click="deleteMaster">
         删除

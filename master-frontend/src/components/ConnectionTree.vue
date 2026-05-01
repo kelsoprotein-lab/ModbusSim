@@ -248,6 +248,15 @@ function fcLabel(fn: string): string {
 .node-status.connected { background: #a6e3a1; }
 .node-status.disconnected { background: #f38ba8; }
 .node-status.error { background: #fab387; }
+.node-status.reconnecting {
+  background: #f9e2af;
+  animation: reconnecting-pulse 1s ease-in-out infinite;
+}
+
+@keyframes reconnecting-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
 
 .poll-indicator {
   width: 6px;

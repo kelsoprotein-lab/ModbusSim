@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio_modbus::prelude::*;
 use tokio_modbus::ExceptionCode;
 
@@ -129,25 +129,42 @@ pub struct MasterConnection {
     pub config: MasterConfig,
     pub transport: Transport,
     pub reconnect_policy: ReconnectPolicy,
-    reconnect_handle: Option<tokio::task::JoinHandle<()>>,
     state: MasterState,
     transport_ctx: Option<TransportCtx>,
     poll_tasks: HashMap<String, PollTaskHandle>,
     log_collector: Option<Arc<LogCollector>>,
+    /// Broadcast channel for notifying upstream subscribers when the
+    /// underlying transport is observed dead (e.g. after repeated read
+    /// failures from poll tasks). Capacity is small because subscribers
+    /// only need a wakeup, not the full history.
+    connection_lost_tx: broadcast::Sender<()>,
 }
+
+/// How many consecutive transport-level failures a poll task tolerates
+/// before it gives up and signals connection loss.
+const TRANSPORT_LOST_STREAK: u32 = 3;
 
 impl MasterConnection {
     pub fn new(config: MasterConfig, transport: Transport) -> Self {
+        let (connection_lost_tx, _) = broadcast::channel(4);
         Self {
             config,
             transport,
             reconnect_policy: ReconnectPolicy::default(),
-            reconnect_handle: None,
             state: MasterState::Disconnected,
             transport_ctx: None,
             poll_tasks: HashMap::new(),
             log_collector: None,
+            connection_lost_tx,
         }
+    }
+
+    /// Subscribe to connection-lost notifications. Each `()` published on
+    /// the returned receiver means "poll tasks have observed the transport
+    /// going dead". Multiple subscribers are supported; senders use
+    /// best-effort delivery (errors when there are no receivers are ignored).
+    pub fn subscribe_connection_lost(&self) -> broadcast::Receiver<()> {
+        self.connection_lost_tx.subscribe()
     }
 
     /// Set the log collector for this connection.
@@ -212,13 +229,11 @@ impl MasterConnection {
         Ok(())
     }
 
-    /// Disconnect from the target.
+    /// Disconnect from the target. Idempotent: calling on an already
+    /// disconnected connection is a no-op.
     pub async fn disconnect(&mut self) -> Result<(), MasterError> {
-        if self.state == MasterState::Disconnected {
-            return Err(MasterError::NotConnected);
-        }
-
-        // Stop all polling first
+        // Always stop polling first so that no task keeps holding a
+        // reference to the transport context.
         self.stop_all_scans().await;
 
         if let Some(ctx) = self.transport_ctx.take() {
@@ -537,6 +552,7 @@ impl MasterConnection {
         let log_collector = self.log_collector.clone();
         let group_slave_id = group.slave_id;
         let default_slave_id = self.config.slave_id;
+        let connection_lost_tx = self.connection_lost_tx.clone();
 
         let handle = tokio::spawn(async move {
             let interval = Duration::from_millis(interval_ms);
@@ -547,6 +563,7 @@ impl MasterConnection {
                 ReadFunction::ReadInputRegisters => FunctionCode::ReadInputRegisters,
             };
             let slave_id = group_slave_id.unwrap_or(default_slave_id);
+            let mut transport_err_streak: u32 = 0;
             loop {
                 // Check for shutdown
                 if shutdown_rx.try_recv().is_ok() {
@@ -595,6 +612,21 @@ impl MasterConnection {
                     collector.add(entry).await;
                 }
 
+                // Decide whether the transport looks dead. Modbus exceptions
+                // (e.g. illegal address) mean the slave is alive but rejecting
+                // the request, so they do NOT count toward the streak.
+                let transport_died = match &result {
+                    Ok(_) => {
+                        transport_err_streak = 0;
+                        false
+                    }
+                    Err(MasterError::Exception(_)) => false,
+                    Err(_) => {
+                        transport_err_streak += 1;
+                        transport_err_streak >= TRANSPORT_LOST_STREAK
+                    }
+                };
+
                 let event = match result {
                     Ok(data) => PollEvent::Data(data),
                     Err(e) => PollEvent::Error(format!("{e}")),
@@ -602,6 +634,12 @@ impl MasterConnection {
 
                 if event_tx.send(event).await.is_err() {
                     break; // Receiver dropped
+                }
+
+                if transport_died {
+                    // Best-effort signal; if no one is listening, drop it.
+                    let _ = connection_lost_tx.send(());
+                    break;
                 }
 
                 tokio::time::sleep(interval).await;
@@ -1118,6 +1156,34 @@ mod tests {
         let err = MasterError::Exception(ExceptionCode::IllegalDataAddress);
         let msg = err.to_string();
         assert!(msg.contains("IllegalDataAddress") || msg.contains("Illegal"));
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_idempotent() {
+        let config = MasterConfig::default();
+        let transport = Transport::Tcp {
+            host: "127.0.0.1".into(),
+            port: 502,
+        };
+        let mut conn = MasterConnection::new(config, transport);
+        // Never connected: disconnect should still succeed.
+        assert!(conn.disconnect().await.is_ok());
+        // Calling again must remain OK (idempotent).
+        assert!(conn.disconnect().await.is_ok());
+        assert_eq!(conn.state(), MasterState::Disconnected);
+    }
+
+    #[test]
+    fn test_subscribe_connection_lost() {
+        let config = MasterConfig::default();
+        let transport = Transport::Tcp {
+            host: "127.0.0.1".into(),
+            port: 502,
+        };
+        let conn = MasterConnection::new(config, transport);
+        // Subscribing twice yields independent receivers.
+        let _rx1 = conn.subscribe_connection_lost();
+        let _rx2 = conn.subscribe_connection_lost();
     }
 
     #[test]
