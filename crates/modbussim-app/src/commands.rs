@@ -183,8 +183,8 @@ pub async fn create_slave_connection(
 
     // Auto-create default slave device (slave_id=1) with pre-filled registers
     let default_device = match request.init_mode.as_deref() {
-        Some("random") => SlaveDevice::with_random_registers(1, "从站 1", 20000),
-        _ => SlaveDevice::with_default_registers(1, "从站 1", 20000),
+        Some("random") => SlaveDevice::with_random_registers(1, "", 20000),
+        _ => SlaveDevice::with_default_registers(1, "", 20000),
     };
     connection
         .add_device(default_device)
