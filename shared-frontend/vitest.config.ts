@@ -5,5 +5,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: false,
     include: ['tests/**/*.spec.ts'],
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost/',
+      },
+    },
   },
 })
