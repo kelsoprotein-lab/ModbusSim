@@ -4,11 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
-    "vue": "^3.5.30",
-    "@tauri-apps/api": "^2.10.1"
+    "@tauri-apps/api": "^2.10.1",
+    "vue": "^3.5.30"
   },
   "devDependencies": {
-    "@vue/tsconfig": "^0.9.0"
+    "@vue/test-utils": "^2.4.10",
+    "@vue/tsconfig": "^0.9.0",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.5"
   }
 }
