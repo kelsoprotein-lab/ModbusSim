@@ -22,6 +22,7 @@ pub fn run() {
             commands::add_register,
             commands::remove_register,
             commands::read_register,
+            commands::read_registers_bulk,
             commands::write_register,
             commands::list_registers,
             commands::export_registers,
