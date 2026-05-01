@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { swapBytes16, toFloat32, float32ToU16Pair, type ByteOrder } from 'shared-frontend'
+import { swapBytes16, toFloat32, float32ToU16Pair, useI18n, type ByteOrder } from 'shared-frontend'
+
+const { t } = useI18n()
 import RegisterModal from './RegisterModal.vue'
 import BatchAddModal from './BatchAddModal.vue'
 
@@ -35,6 +37,17 @@ const registerValues = ref<Record<string, number>>({})
 const editingCell = ref<{ address: number; register_type: string } | null>(null)
 const editValue = ref('')
 const isLoading = ref(false)
+const changedKeys = ref<Set<string>>(new Set())
+const changeTimers = new Map<string, number>()
+function markChanged(key: string) {
+  changedKeys.value.add(key)
+  const prev = changeTimers.get(key)
+  if (prev) clearTimeout(prev)
+  changeTimers.set(key, window.setTimeout(() => {
+    changedKeys.value.delete(key)
+    changeTimers.delete(key)
+  }, 1500))
+}
 const error = ref<string | null>(null)
 const searchQuery = ref('')
 const contextMenu = ref({ show: false, x: 0, y: 0, reg: null as Register | null })
@@ -146,7 +159,7 @@ function encodeTypedValue(value: number, dataType: string, endian: string): [num
   }
 }
 
-// Float 格式：地址连续的寄存器配对，第二个为伴随
+// Float format: paired consecutive addresses; second is companion
 const floatCompanionIndices = computed(() => {
   if (!isFloatFormat.value) return new Set<number>()
   const set = new Set<number>()
@@ -256,16 +269,19 @@ async function loadRegisters() {
     })
     registers.value = defs
 
+    const types = Array.from(new Set(defs.map(d => d.register_type)))
     const values: Record<string, number> = {}
-    for (const reg of defs) {
-      const result = await invoke<{ address: number; value: number }>('read_register', {
-        connectionId: selectedConnectionId.value,
-        slaveId: selectedSlaveId.value,
-        registerType: reg.register_type,
-        address: reg.address,
-      })
-      values[`${reg.register_type}-${reg.address}`] = result.value
-    }
+    await Promise.all(types.map(async (rt) => {
+      const rows = await invoke<{ address: number; value: number }[]>(
+        'read_registers_bulk',
+        {
+          connectionId: selectedConnectionId.value,
+          slaveId: selectedSlaveId.value,
+          registerType: rt,
+        },
+      )
+      for (const r of rows) values[`${rt}-${r.address}`] = r.value
+    }))
     registerValues.value = values
   } catch (e) {
     error.value = String(e)
@@ -276,6 +292,9 @@ async function loadRegisters() {
 watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], async () => {
   clearSelection()
   stopAutoRefresh()
+  changedKeys.value.clear()
+  for (const t of changeTimers.values()) clearTimeout(t)
+  changeTimers.clear()
   await loadRegisters()
   if (registers.value.length > 0) startAutoRefresh()
 })
@@ -288,17 +307,25 @@ let refreshTimer: number | null = null
 async function refreshValues() {
   if (!selectedConnectionId.value || selectedSlaveId.value === null) return
   if (registers.value.length === 0) return
-  for (const reg of registers.value) {
-    try {
-      const result = await invoke<{ address: number; value: number }>('read_register', {
+  const types = Array.from(new Set(registers.value.map(r => r.register_type)))
+  try {
+    const results = await Promise.all(types.map(rt =>
+      invoke<{ address: number; value: number }[]>('read_registers_bulk', {
         connectionId: selectedConnectionId.value,
         slaveId: selectedSlaveId.value,
-        registerType: reg.register_type,
-        address: reg.address,
-      })
-      registerValues.value[`${reg.register_type}-${reg.address}`] = result.value
-    } catch { /* skip */ }
-  }
+        registerType: rt,
+      }).then(rows => ({ rt, rows }))
+    ))
+    for (const { rt, rows } of results) {
+      for (const r of rows) {
+        const k = `${rt}-${r.address}`
+        if (registerValues.value[k] !== r.value) {
+          registerValues.value[k] = r.value
+          markChanged(k)
+        }
+      }
+    }
+  } catch { /* skip */ }
   emitSelection()
 }
 
@@ -311,7 +338,11 @@ function stopAutoRefresh() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
 }
 
-onUnmounted(() => stopAutoRefresh())
+onUnmounted(() => {
+  stopAutoRefresh()
+  for (const t of changeTimers.values()) clearTimeout(t)
+  changeTimers.clear()
+})
 
 function clearSelection() {
   selectedRows.value = []
@@ -539,41 +570,41 @@ function formatRegType(type: string): string {
   <div class="register-table" @click="closeContextMenu">
     <div class="table-header-bar">
       <span class="table-title">
-        {{ selectedRegisterType ? formatRegType(selectedRegisterType) : '全部寄存器' }}
+        {{ selectedRegisterType ? formatRegType(selectedRegisterType) : t('table.allRegisters') }}
       </span>
       <input
         v-model="searchQuery"
         class="search-input"
         type="text"
-        placeholder="搜索地址/名称..."
+        :placeholder="t('registerTable.searchPlaceholder')"
       />
-      <button class="addr-mode-btn" @click="toggleAddrMode" :title="addrMode === 'hex' ? '切换为十进制' : '切换为十六进制'">
+      <button class="addr-mode-btn" @click="toggleAddrMode" :title="addrMode === 'hex' ? t('registerTable.switchToDecimal') : t('registerTable.switchToHex')">
         {{ addrMode === 'hex' ? 'HEX' : 'DEC' }}
       </button>
-      <select v-model="valueFormat" class="format-select" title="值显示格式">
+      <select v-model="valueFormat" class="format-select" :title="t('registerEdit.advanced')">
         <option v-for="opt in formatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <button
         class="add-reg-btn"
         :disabled="!selectedConnectionId || selectedSlaveId === null"
         @click="showAddModal = true"
-        title="添加寄存器"
+        :title="t('registerTable.addRegister')"
       >+</button>
       <button
         class="add-reg-btn batch"
         :disabled="!selectedConnectionId || selectedSlaveId === null"
         @click="showBatchModal = true"
-        title="批量添加寄存器"
-      >批量</button>
-      <span class="table-count">{{ filteredRegisters.length }} 个寄存器</span>
+        :title="t('registerTable.batchAddTitle')"
+      >{{ t('registerTable.batchAdd') }}</button>
+      <span class="table-count">{{ t('table.registerCount', { count: filteredRegisters.length }) }}</span>
     </div>
 
-    <div v-if="isLoading" class="table-loading">加载中...</div>
+    <div v-if="isLoading" class="table-loading">{{ t('common.loading') }}</div>
     <div v-else-if="!selectedConnectionId || selectedSlaveId === null" class="table-empty">
-      请在左侧树形导航中选择一个从站
+      {{ t('registerTable.selectSlave') }}
     </div>
     <div v-else-if="filteredRegisters.length === 0" class="table-empty">
-      暂无寄存器
+      {{ t('registerTable.noRegisters') }}
     </div>
 
     <div
@@ -586,10 +617,10 @@ function formatRegType(type: string): string {
       <table class="table">
         <thead>
           <tr>
-            <th>地址</th>
-            <th>名称</th>
-            <th>值</th>
-            <th>备注</th>
+            <th>{{ t('table.address') }}</th>
+            <th>{{ t('dialog.simpleName') }}</th>
+            <th>{{ t('dialog.simpleValue') }}</th>
+            <th>{{ t('table.comment') }}</th>
           </tr>
         </thead>
       </table>
@@ -598,7 +629,10 @@ function formatRegType(type: string): string {
           v-for="virtualRow in rowVirtualizer.getVirtualItems()"
           :key="filteredRegisters[virtualRow.index]?.address ?? virtualRow.index"
           class="virtual-row"
-          :class="{ selected: isSelected(filteredRegisters[virtualRow.index]) }"
+          :class="{
+            selected: isSelected(filteredRegisters[virtualRow.index]),
+            'value-changed': changedKeys.has(`${filteredRegisters[virtualRow.index].register_type}-${filteredRegisters[virtualRow.index].address}`)
+          }"
           :style="{
             position: 'absolute',
             top: 0,
@@ -612,7 +646,7 @@ function formatRegType(type: string): string {
         >
           <span class="vcol col-addr">{{ formatAddress(filteredRegisters[virtualRow.index]) }}</span>
           <span class="vcol col-name">{{ filteredRegisters[virtualRow.index].name || '-' }}</span>
-          <span :class="['vcol', 'col-value', { wide: valueFormat === 'auto' }]" @dblclick.stop="startEdit(filteredRegisters[virtualRow.index])">
+          <span :class="['vcol', 'col-value', { wide: valueFormat === 'auto', 'value-highlight': changedKeys.has(`${filteredRegisters[virtualRow.index].register_type}-${filteredRegisters[virtualRow.index].address}`) }]" @dblclick.stop="startEdit(filteredRegisters[virtualRow.index])">
             <template v-if="editingCell?.address === filteredRegisters[virtualRow.index].address && editingCell?.register_type === filteredRegisters[virtualRow.index].register_type">
               <input
                 v-model="editValue"
@@ -648,7 +682,7 @@ function formatRegType(type: string): string {
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
       @click.stop
     >
-      <div class="context-menu-item danger" @click="deleteRegister">删除寄存器</div>
+      <div class="context-menu-item danger" @click="deleteRegister">{{ t('registerEdit.deleteRegister') }}</div>
     </div>
 
     <!-- Add Register Modal -->
@@ -934,6 +968,21 @@ function formatRegType(type: string): string {
 
 .virtual-row.selected .col-comment {
   color: #45475a;
+}
+
+.virtual-row.value-changed {
+  background: rgba(250, 179, 135, 0.18);
+  transition: background 0.6s ease-out;
+}
+
+.virtual-row.value-changed.selected {
+  background: #89b4fa;
+}
+
+.col-value.value-highlight {
+  color: #fab387;
+  font-weight: 700;
+  transition: color 0.6s ease-out;
 }
 
 .vcol {

@@ -3,7 +3,9 @@ import { inject, computed, ref, watch, nextTick, type Ref, type Directive } from
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat } from 'shared-frontend'
+import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat, useI18n } from 'shared-frontend'
+
+const { t } = useI18n()
 
 const vFocus: Directive<HTMLInputElement> = {
   mounted(el) {
@@ -268,16 +270,16 @@ async function handleEditKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="value-panel">
-    <div class="panel-header">值解析</div>
+    <div class="panel-header">{{ t('valuePanel.title') }}</div>
 
     <div v-if="!hasSelection" class="empty-state">
-      选择一个寄存器查看详情
+      {{ t('valuePanel.selectHint') }}
     </div>
 
     <template v-else>
       <div class="panel-title">{{ panelTitle }}</div>
       <div v-if="selCount > 1 && !allSameType" class="panel-hint">
-        选中了不同类型的寄存器，无法组合解析
+        {{ t('valuePanel.mixedTypeHint') }}
       </div>
 
       <!-- Bool type -->

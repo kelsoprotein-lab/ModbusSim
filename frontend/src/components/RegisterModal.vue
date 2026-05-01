@@ -2,7 +2,9 @@
 import { ref, watch, computed, inject } from 'vue'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from 'shared-frontend'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface Register {
@@ -67,7 +69,7 @@ watch(
   { immediate: true }
 )
 
-const modalTitle = computed(() => (props.mode === 'add' ? '添加寄存器' : '编辑寄存器'))
+const modalTitle = computed(() => (props.mode === 'add' ? t('registerEdit.addTitle') : t('registerEdit.editTitle')))
 
 // Check for address conflict before saving
 function hasConflict(): boolean {
@@ -126,7 +128,7 @@ async function save() {
     emit('saved')
     emit('close')
   } catch (e) {
-    await showAlert(`操作失败：${e}`)
+    await showAlert(t('errors.operationFailed', { err: String(e) }))
   }
 }
 
@@ -151,36 +153,36 @@ function handleBackdropClick(e: MouseEvent) {
         <div class="modal-body">
           <!-- Basic fields -->
           <div class="form-group">
-            <label class="form-label">名称</label>
-            <input v-model="formName" type="text" class="form-input" placeholder="可留空" />
+            <label class="form-label">{{ t('dialog.simpleName') }}</label>
+            <input v-model="formName" type="text" class="form-input" :placeholder="t('registerEdit.namePlaceholder')" />
           </div>
 
           <div class="form-group">
-            <label class="form-label">地址</label>
+            <label class="form-label">{{ t('table.address') }}</label>
             <input v-model.number="formAddress" type="number" class="form-input" min="0" max="65535" />
           </div>
 
           <div class="form-group">
-            <label class="form-label">类型</label>
+            <label class="form-label">{{ t('table.type') }}</label>
             <select v-model="formType" class="form-select">
-              <option value="coil">线圈 (Coil)</option>
-              <option value="discrete_input">离散输入 (Discrete Input)</option>
-              <option value="input_register">输入寄存器 (Input Register)</option>
-              <option value="holding_register">保持寄存器 (Holding Register)</option>
+              <option value="coil">{{ t('table.coil') }} (Coil)</option>
+              <option value="discrete_input">{{ t('table.discreteInput') }} (Discrete Input)</option>
+              <option value="input_register">{{ t('table.inputRegister') }} (Input Register)</option>
+              <option value="holding_register">{{ t('table.holdingRegister') }} (Holding Register)</option>
             </select>
           </div>
 
           <!-- Advanced options toggle -->
           <div class="form-group">
             <button class="btn-link" @click="showAdvanced = !showAdvanced">
-              {{ showAdvanced ? '▼ 隐藏高级选项' : '▶ 显示高级选项' }}
+              {{ showAdvanced ? `▼ ${t('registerEdit.hideAdvanced')}` : `▶ ${t('registerEdit.advanced')}` }}
             </button>
           </div>
 
           <!-- Advanced fields -->
           <template v-if="showAdvanced">
             <div class="form-group">
-              <label class="form-label">数据类型</label>
+              <label class="form-label">{{ t('dialog.dataType') }}</label>
               <select v-model="formDataType" class="form-select">
                 <option value="bool">Bool</option>
                 <option value="uint16">UInt16</option>
@@ -192,35 +194,35 @@ function handleBackdropClick(e: MouseEvent) {
             </div>
 
             <div class="form-group">
-              <label class="form-label">字节序</label>
+              <label class="form-label">{{ t('dialog.byteOrder') }}</label>
               <select v-model="formEndian" class="form-select">
-                <option value="big">大端序 (Big Endian)</option>
-                <option value="little">小端序 (Little Endian)</option>
-                <option value="mid_big">中大端序 (Mid-Big)</option>
-                <option value="mid_little">中小端序 (Mid-Little)</option>
+                <option value="big">{{ t('dialog.byteOrderBig') }}</option>
+                <option value="little">{{ t('dialog.byteOrderLittle') }}</option>
+                <option value="mid_big">{{ t('dialog.byteOrderMidBig') }}</option>
+                <option value="mid_little">{{ t('dialog.byteOrderMidLittle') }}</option>
               </select>
             </div>
 
             <div class="form-group">
-              <label class="form-label">注释</label>
-              <input v-model="formComment" type="text" class="form-input" placeholder="可留空" />
+              <label class="form-label">{{ t('registerEdit.commentLabel') }}</label>
+              <input v-model="formComment" type="text" class="form-input" :placeholder="t('registerEdit.namePlaceholder')" />
             </div>
           </template>
         </div>
 
         <!-- Footer -->
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="$emit('close')">取消</button>
-          <button class="btn btn-primary" @click="handleConfirm">确认</button>
+          <button class="btn btn-secondary" @click="$emit('close')">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="handleConfirm">{{ t('common.confirm') }}</button>
         </div>
 
         <!-- Conflict dialog -->
         <div v-if="showConflict" class="conflict-dialog">
-          <div class="conflict-title">地址冲突</div>
-          <div class="conflict-body">该地址已存在，是否覆盖？</div>
+          <div class="conflict-title">{{ t('registerEdit.conflictTitle') }}</div>
+          <div class="conflict-body">{{ t('registerEdit.conflictBody') }}</div>
           <div class="conflict-footer">
-            <button class="btn btn-secondary" @click="showConflict = false">取消</button>
-            <button class="btn btn-danger" @click="handleOverride">覆盖</button>
+            <button class="btn btn-secondary" @click="showConflict = false">{{ t('common.cancel') }}</button>
+            <button class="btn btn-danger" @click="handleOverride">{{ t('common.override') }}</button>
           </div>
         </div>
       </div>

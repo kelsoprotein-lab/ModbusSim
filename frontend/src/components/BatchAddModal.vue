@@ -3,7 +3,9 @@ import { ref, computed, inject } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from 'shared-frontend'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface Register {
@@ -45,9 +47,9 @@ const count = computed(() => {
 const existingCount = computed(() => {
   const s = startAddress.value ?? 0
   const e = endAddress.value ?? 0
-  const t = formType.value
+  const regType = formType.value
   return props.existingRegisters.filter(
-    (r) => r.register_type === t && r.address >= s && r.address <= e
+    (r) => r.register_type === regType && r.address >= s && r.address <= e
   ).length
 })
 
@@ -63,10 +65,10 @@ async function handleConfirm() {
 
   const s = startAddress.value ?? 0
   const e = endAddress.value ?? 0
-  const t = formType.value
+  const regType = formType.value
   const existingSet = new Set(
     props.existingRegisters
-      .filter((r) => r.register_type === t)
+      .filter((r) => r.register_type === regType)
       .map((r) => r.address)
   )
 
@@ -94,7 +96,7 @@ async function handleConfirm() {
     emit('saved')
     emit('close')
   } catch (err) {
-    await showAlert(`批量添加失败：${err}`)
+    await showAlert(t('errors.batchAddFailed', { err: String(err) }))
   } finally {
     isSaving.value = false
   }
@@ -112,34 +114,34 @@ function handleBackdropClick(e: MouseEvent) {
     <div v-if="show" class="modal-backdrop" @click="handleBackdropClick">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">批量添加寄存器</span>
+          <span class="modal-title">{{ t('batchAdd.title') }}</span>
           <button class="btn-close" @click="$emit('close')">×</button>
         </div>
 
         <div class="modal-body">
           <div class="form-row">
             <div class="form-group half">
-              <label class="form-label">起始地址</label>
+              <label class="form-label">{{ t('table.startAddress') }}</label>
               <input v-model.number="startAddress" type="number" class="form-input" min="0" max="65535" />
             </div>
             <div class="form-group half">
-              <label class="form-label">结束地址</label>
+              <label class="form-label">{{ t('table.endAddress') }}</label>
               <input v-model.number="endAddress" type="number" class="form-input" min="0" max="65535" />
             </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">类型</label>
+            <label class="form-label">{{ t('table.type') }}</label>
             <select v-model="formType" class="form-select">
-              <option value="coil">线圈 (Coil)</option>
-              <option value="discrete_input">离散输入 (Discrete Input)</option>
-              <option value="input_register">输入寄存器 (Input Register)</option>
-              <option value="holding_register">保持寄存器 (Holding Register)</option>
+              <option value="coil">{{ t('table.coil') }} (Coil)</option>
+              <option value="discrete_input">{{ t('table.discreteInput') }} (Discrete Input)</option>
+              <option value="input_register">{{ t('table.inputRegister') }} (Input Register)</option>
+              <option value="holding_register">{{ t('table.holdingRegister') }} (Holding Register)</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">数据类型</label>
+            <label class="form-label">{{ t('dialog.dataType') }}</label>
             <select v-model="formDataType" class="form-select">
               <option value="bool">Bool</option>
               <option value="uint16">UInt16</option>
@@ -151,34 +153,34 @@ function handleBackdropClick(e: MouseEvent) {
           </div>
 
           <div class="form-group">
-            <label class="form-label">字节序</label>
+            <label class="form-label">{{ t('dialog.byteOrder') }}</label>
             <select v-model="formEndian" class="form-select">
-              <option value="big">大端序 (Big Endian)</option>
-              <option value="little">小端序 (Little Endian)</option>
-              <option value="mid_big">中大端序 (Mid-Big)</option>
-              <option value="mid_little">中小端序 (Mid-Little)</option>
+              <option value="big">{{ t('dialog.byteOrderBig') }}</option>
+              <option value="little">{{ t('dialog.byteOrderLittle') }}</option>
+              <option value="mid_big">{{ t('dialog.byteOrderMidBig') }}</option>
+              <option value="mid_little">{{ t('dialog.byteOrderMidLittle') }}</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">名称前缀（可选）</label>
-            <input v-model="namePrefix" type="text" class="form-input" placeholder="如 HR → HR_0, HR_1, ..." />
+            <label class="form-label">{{ t('batchAdd.namePrefix') }}</label>
+            <input v-model="namePrefix" type="text" class="form-input" :placeholder="t('batchAdd.namePrefixPlaceholder')" />
           </div>
 
           <div class="count-info">
-            <span v-if="count > 50000" class="count-warn">范围过大（最多 50000）</span>
+            <span v-if="count > 50000" class="count-warn">{{ t('errors.rangeTooLarge') }}</span>
             <template v-else>
-              <span>共 {{ count }} 个地址</span>
-              <span v-if="existingCount > 0" class="count-skip">，跳过 {{ existingCount }} 个已存在</span>
-              <span>，将添加 <strong>{{ newCount }}</strong> 个寄存器</span>
+              <span>{{ t('batchAdd.totalCount', { count }) }}</span>
+              <span v-if="existingCount > 0" class="count-skip">{{ t('batchAdd.skipCount', { count: existingCount }) }}</span>
+              <span>{{ t('batchAdd.willAdd', { count: newCount }) }}</span>
             </template>
           </div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">取消</button>
+          <button class="btn btn-secondary" @click="$emit('close')" :disabled="isSaving">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="handleConfirm" :disabled="!isValid || isSaving">
-            {{ isSaving ? '添加中...' : '确认' }}
+            {{ isSaving ? t('common.adding') : t('common.confirm') }}
           </button>
         </div>
       </div>

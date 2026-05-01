@@ -4,6 +4,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm, showPrompt as ShowPrompt } from '../composables/useDialog'
+import { useI18n } from 'shared-frontend'
+import LangToggle from './LangToggle.vue'
+
+const { t } = useI18n()
 
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedConnectionState = inject<Ref<string>>('selectedConnectionState')!
@@ -131,11 +135,11 @@ async function submitNewConnection() {
   const needsSerial = newConnTransport.value === 'rtu' || newConnTransport.value === 'ascii'
 
   if (needsPort && (!port || port < 1 || port > 65535)) {
-    await showAlert('请输入有效的端口号 (1-65535)')
+    await showAlert(t('errors.invalidPort'))
     return
   }
   if (needsSerial && !serialPort.value) {
-    await showAlert('请选择串口')
+    await showAlert(t('errors.serialPortRequired'))
     return
   }
 
@@ -205,7 +209,7 @@ function openNewSlaveModal() {
 async function submitNewSlave() {
   const slaveId = Number(newSlaveId.value)
   if (!slaveId || slaveId < 1 || slaveId > 247) {
-    await showAlert('请输入有效的从站 ID (1-247)')
+    await showAlert(t('errors.invalidSlaveId'))
     return
   }
   showNewSlaveModal.value = false
@@ -214,7 +218,7 @@ async function submitNewSlave() {
       request: {
         connection_id: selectedConnectionId.value,
         slave_id: slaveId,
-        name: `从站 ${slaveId}`,
+        name: '',
         init_mode: newSlaveInitMode.value,
       }
     })
@@ -248,7 +252,7 @@ async function stopConnection() {
 
 async function closeConnection() {
   if (!selectedConnectionId.value) return
-  if (!(await showConfirm('确认删除此连接？'))) return
+  if (!(await showConfirm(t('errors.confirmDeleteConnection')))) return
   try {
     await invoke('delete_slave_connection', { id: selectedConnectionId.value })
     selectedConnectionId.value = null
@@ -260,7 +264,7 @@ async function closeConnection() {
 }
 
 async function openTools() {
-  await showAlert('工具面板（待实现）')
+  await showAlert(t('errors.toolPanelPending'))
 }
 
 // --- Random Mutation ---
@@ -335,30 +339,30 @@ onUnmounted(() => {
 <template>
   <div class="toolbar">
     <div class="toolbar-group">
-      <button class="toolbar-btn" @click="openProject" title="打开项目">
-        <span class="toolbar-label">打开</span>
+      <button class="toolbar-btn" @click="openProject" :title="t('toolbar.openProjectTitle')">
+        <span class="toolbar-label">{{ t('toolbar.open') }}</span>
       </button>
-      <button class="toolbar-btn" @click="saveProject" title="保存项目">
-        <span class="toolbar-label">保存</span>
+      <button class="toolbar-btn" @click="saveProject" :title="t('toolbar.saveProjectTitle')">
+        <span class="toolbar-label">{{ t('common.save') }}</span>
       </button>
-      <button class="toolbar-btn" @click="saveProjectAs" title="另存为">
-        <span class="toolbar-label">另存为</span>
+      <button class="toolbar-btn" @click="saveProjectAs" :title="t('toolbar.saveAsTitle')">
+        <span class="toolbar-label">{{ t('toolbar.saveAs') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" @click="openNewConnModal" title="新建连接">
+      <button class="toolbar-btn" @click="openNewConnModal" :title="t('toolbar.newConnection')">
         <span class="toolbar-icon">+</span>
-        <span class="toolbar-label">新建连接</span>
+        <span class="toolbar-label">{{ t('toolbar.newConnection') }}</span>
       </button>
       <button
         class="toolbar-btn"
         @click="openNewSlaveModal"
         :disabled="!selectedConnectionId"
-        title="新建从站"
+        :title="t('toolbar.newSlave')"
       >
         <span class="toolbar-icon">+</span>
-        <span class="toolbar-label">新建从站</span>
+        <span class="toolbar-label">{{ t('toolbar.newSlave') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
@@ -367,25 +371,25 @@ onUnmounted(() => {
         class="toolbar-btn btn-start"
         @click="startConnection"
         :disabled="!selectedConnectionId || selectedConnectionState === 'Running'"
-        title="启动连接"
+        :title="t('toolbar.startConnection')"
       >
-        <span class="toolbar-label">启动</span>
+        <span class="toolbar-label">{{ t('toolbar.start') }}</span>
       </button>
       <button
         class="toolbar-btn btn-stop"
         @click="stopConnection"
         :disabled="!selectedConnectionId || selectedConnectionState === 'Stopped'"
-        title="停止连接"
+        :title="t('toolbar.stopConnection')"
       >
-        <span class="toolbar-label">停止</span>
+        <span class="toolbar-label">{{ t('toolbar.stop') }}</span>
       </button>
       <button
         class="toolbar-btn btn-close"
         @click="closeConnection"
         :disabled="!selectedConnectionId"
-        title="关闭连接"
+        :title="t('toolbar.closeConnection')"
       >
-        <span class="toolbar-label">关闭</span>
+        <span class="toolbar-label">{{ t('common.close') }}</span>
       </button>
     </div>
     <div class="toolbar-divider"></div>
@@ -394,9 +398,9 @@ onUnmounted(() => {
         :class="['toolbar-btn', { 'btn-mutation-active': mutationActive }]"
         @click="toggleMutation"
         :disabled="!selectedConnectionId || selectedSlaveId === null"
-        title="随机变位"
+        :title="t('toolbar.randomMutation')"
       >
-        <span class="toolbar-label">{{ mutationActive ? '停止变位' : '随机变位' }}</span>
+        <span class="toolbar-label">{{ mutationActive ? t('toolbar.stopMutation') : t('toolbar.randomMutation') }}</span>
       </button>
       <input
         type="range"
@@ -405,40 +409,42 @@ onUnmounted(() => {
         max="5000"
         step="100"
         v-model.number="mutationRate"
-        title="变位间隔 (ms)"
+        :title="t('toolbar.mutationInterval')"
       />
       <span class="rate-label">{{ mutationRate }}ms</span>
-      <label v-for="(label, key) in { coil: '线圈', discrete_input: '离散输入', holding_register: '保持寄存器', input_register: '输入寄存器' }" :key="key" class="mutation-type-label">
+      <label v-for="key in (['coil','discrete_input','holding_register','input_register'] as const)" :key="key" class="mutation-type-label">
         <input type="checkbox" v-model="mutationTypes[key]" />
-        {{ label }}
+        {{ {coil: t('table.coil'), discrete_input: t('table.discreteInput'), holding_register: t('table.holdingRegister'), input_register: t('table.inputRegister')}[key] }}
       </label>
     </div>
     <div class="toolbar-divider"></div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" @click="openTools" title="工具">
-        <span class="toolbar-label">工具</span>
+      <button class="toolbar-btn" @click="openTools" :title="t('common.tools')">
+        <span class="toolbar-label">{{ t('common.tools') }}</span>
       </button>
     </div>
-    <div class="toolbar-title">ModbusSlave</div>
+    <div class="toolbar-spacer" style="flex:1"></div>
+    <LangToggle />
+    <div class="toolbar-title">{{ t('toolbar.appTitleSlave') }}</div>
   </div>
 
   <!-- New Connection Modal -->
   <Teleport to="body">
     <div v-if="showNewConnModal" class="modal-overlay" @click.self="showNewConnModal = false">
       <div class="modal-box">
-        <div class="modal-title">新建连接</div>
+        <div class="modal-title">{{ t('toolbar.newConnection') }}</div>
         <div class="modal-field">
-          <label>传输类型</label>
+          <label>{{ t('dialog.transport') }}</label>
           <select v-model="newConnTransport" class="form-select">
             <option value="tcp">TCP</option>
-            <option value="rtu">RTU (串口)</option>
-            <option value="ascii">ASCII (串口)</option>
+            <option value="rtu">{{ t('dialog.rtuSerial') }}</option>
+            <option value="ascii">{{ t('dialog.asciiSerial') }}</option>
             <option value="rtu_over_tcp">RTU over TCP</option>
           </select>
         </div>
         <template v-if="newConnTransport === 'tcp' || newConnTransport === 'rtu_over_tcp'">
           <div class="modal-field">
-            <label>端口号</label>
+            <label>{{ t('dialog.portNumber') }}</label>
             <input
               v-model="newConnPort"
               type="number"
@@ -451,44 +457,44 @@ onUnmounted(() => {
         <template v-if="newConnTransport === 'tcp'">
           <div class="modal-field">
             <label>
-              <input type="checkbox" v-model="useTls" /> 启用 TLS
+              <input type="checkbox" v-model="useTls" /> {{ t('dialog.enableTls') }}
             </label>
           </div>
           <template v-if="useTls">
             <div class="modal-field">
-              <label>服务器证书 (PEM)</label>
+              <label>{{ t('dialog.serverCert') }}</label>
               <div style="display: flex; gap: 4px;">
-                <input v-model="tlsCertFile" type="text" placeholder="证书文件路径" style="flex: 1;" />
+                <input v-model="tlsCertFile" type="text" :placeholder="t('dialog.caFilePlaceholder')" style="flex: 1;" />
                 <button class="tool-btn" @click="pickFile('cert')" style="padding: 4px 8px;">...</button>
               </div>
             </div>
             <div class="modal-field">
-              <label>服务器私钥 (PEM)</label>
+              <label>{{ t('dialog.serverKey') }}</label>
               <div style="display: flex; gap: 4px;">
-                <input v-model="tlsKeyFile" type="text" placeholder="私钥文件路径" style="flex: 1;" />
+                <input v-model="tlsKeyFile" type="text" :placeholder="t('dialog.caFilePlaceholder')" style="flex: 1;" />
                 <button class="tool-btn" @click="pickFile('key')" style="padding: 4px 8px;">...</button>
               </div>
             </div>
             <div class="modal-field">
-              <label>PKCS#12 文件</label>
+              <label>{{ t('dialog.pkcs12File') }}</label>
               <div style="display: flex; gap: 4px;">
-                <input v-model="tlsPkcs12File" type="text" placeholder="可选，优先于 PEM" style="flex: 1;" />
+                <input v-model="tlsPkcs12File" type="text" :placeholder="t('dialog.pkcs12FilePlaceholder')" style="flex: 1;" />
                 <button class="tool-btn" @click="pickFile('pkcs12')" style="padding: 4px 8px;">...</button>
               </div>
             </div>
             <div class="modal-field" v-if="tlsPkcs12File">
-              <label>PKCS#12 密码</label>
-              <input v-model="tlsPkcs12Password" type="password" placeholder="密码" />
+              <label>{{ t('dialog.pkcs12Password') }}</label>
+              <input v-model="tlsPkcs12Password" type="password" :placeholder="t('dialog.passwordPlaceholder')" />
             </div>
             <div class="modal-field">
               <label>
-                <input type="checkbox" v-model="tlsRequireClientCert" /> 要求客户端证书 (mTLS)
+                <input type="checkbox" v-model="tlsRequireClientCert" /> {{ t('dialog.requireClientCert') }}
               </label>
             </div>
             <div class="modal-field" v-if="tlsRequireClientCert">
-              <label>CA 证书 (验证客户端)</label>
+              <label>{{ t('dialog.caFileClient') }}</label>
               <div style="display: flex; gap: 4px;">
-                <input v-model="tlsCaFile" type="text" placeholder="CA 证书路径" style="flex: 1;" />
+                <input v-model="tlsCaFile" type="text" :placeholder="t('dialog.caFilePlaceholder')" style="flex: 1;" />
                 <button class="tool-btn" @click="pickFile('ca')" style="padding: 4px 8px;">...</button>
               </div>
             </div>
@@ -496,18 +502,18 @@ onUnmounted(() => {
         </template>
         <template v-if="newConnTransport === 'rtu' || newConnTransport === 'ascii'">
           <div class="modal-field">
-            <label>串口</label>
+            <label>{{ t('dialog.serialPort') }}</label>
             <div style="display: flex; gap: 4px;">
               <select v-model="serialPort" class="form-select" style="flex: 1;">
                 <option v-for="p in serialPorts" :key="p.name" :value="p.name">
                   {{ p.name }}{{ p.description ? ` (${p.description})` : '' }}
                 </option>
               </select>
-              <button class="tool-btn" @click="refreshSerialPorts" title="刷新串口列表" style="padding: 4px 8px;">&#x21bb;</button>
+              <button class="tool-btn" @click="refreshSerialPorts" :title="t('dialog.refreshSerialPorts')" style="padding: 4px 8px;">&#x21bb;</button>
             </div>
           </div>
           <div class="modal-field">
-            <label>波特率</label>
+            <label>{{ t('dialog.baudRate') }}</label>
             <select v-model.number="baudRate" class="form-select">
               <option :value="9600">9600</option>
               <option :value="19200">19200</option>
@@ -517,42 +523,42 @@ onUnmounted(() => {
             </select>
           </div>
           <div class="modal-field">
-            <label>数据位</label>
+            <label>{{ t('dialog.dataBits') }}</label>
             <select v-model.number="dataBits" class="form-select">
               <option :value="7">7</option>
               <option :value="8">8</option>
             </select>
           </div>
           <div class="modal-field">
-            <label>停止位</label>
+            <label>{{ t('dialog.stopBits') }}</label>
             <select v-model.number="stopBits" class="form-select">
               <option :value="1">1</option>
               <option :value="2">2</option>
             </select>
           </div>
           <div class="modal-field">
-            <label>校验</label>
+            <label>{{ t('dialog.parity') }}</label>
             <select v-model="parityMode" class="form-select">
-              <option value="none">None</option>
-              <option value="odd">Odd</option>
-              <option value="even">Even</option>
+              <option value="none">{{ t('dialog.parityNone') }}</option>
+              <option value="odd">{{ t('dialog.parityOdd') }}</option>
+              <option value="even">{{ t('dialog.parityEven') }}</option>
             </select>
           </div>
         </template>
         <div class="modal-field">
-          <label>初始值</label>
+          <label>{{ t('dialog.initValue') }}</label>
           <div class="radio-group">
             <label class="radio-label">
-              <input type="radio" v-model="newConnInitMode" value="zero" /> 全零
+              <input type="radio" v-model="newConnInitMode" value="zero" /> {{ t('dialog.initZero') }}
             </label>
             <label class="radio-label">
-              <input type="radio" v-model="newConnInitMode" value="random" /> 随机
+              <input type="radio" v-model="newConnInitMode" value="random" /> {{ t('dialog.initRandom') }}
             </label>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="modal-btn cancel" @click="showNewConnModal = false">取消</button>
-          <button class="modal-btn confirm" @click="submitNewConnection">确定</button>
+          <button class="modal-btn cancel" @click="showNewConnModal = false">{{ t('common.cancel') }}</button>
+          <button class="modal-btn confirm" @click="submitNewConnection">{{ t('common.ok') }}</button>
         </div>
       </div>
     </div>
@@ -562,9 +568,9 @@ onUnmounted(() => {
   <Teleport to="body">
     <div v-if="showNewSlaveModal" class="modal-overlay" @click.self="showNewSlaveModal = false">
       <div class="modal-box">
-        <div class="modal-title">新建从站</div>
+        <div class="modal-title">{{ t('toolbar.newSlave') }}</div>
         <div class="modal-field">
-          <label>从站 ID</label>
+          <label>{{ t('dialog.slaveId') }}</label>
           <input
             v-model="newSlaveId"
             type="number"
@@ -574,19 +580,19 @@ onUnmounted(() => {
           />
         </div>
         <div class="modal-field">
-          <label>初始值</label>
+          <label>{{ t('dialog.initValue') }}</label>
           <div class="radio-group">
             <label class="radio-label">
-              <input type="radio" v-model="newSlaveInitMode" value="zero" /> 全零
+              <input type="radio" v-model="newSlaveInitMode" value="zero" /> {{ t('dialog.initZero') }}
             </label>
             <label class="radio-label">
-              <input type="radio" v-model="newSlaveInitMode" value="random" /> 随机
+              <input type="radio" v-model="newSlaveInitMode" value="random" /> {{ t('dialog.initRandom') }}
             </label>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="modal-btn cancel" @click="showNewSlaveModal = false">取消</button>
-          <button class="modal-btn confirm" @click="submitNewSlave">确定</button>
+          <button class="modal-btn cancel" @click="showNewSlaveModal = false">{{ t('common.cancel') }}</button>
+          <button class="modal-btn confirm" @click="submitNewSlave">{{ t('common.ok') }}</button>
         </div>
       </div>
     </div>

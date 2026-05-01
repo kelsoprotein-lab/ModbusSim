@@ -3,7 +3,9 @@ import { ref, inject, watch, onMounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from 'shared-frontend'
 
+const { t } = useI18n()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface SlaveConnection {
@@ -33,10 +35,10 @@ interface TreeDevice {
 }
 
 const REGISTER_GROUPS = [
-  { type: 'coil', label: 'FC01 Coils', desc: '线圈 (读写, 1-bit, 功能码 01/05/15)' },
-  { type: 'discrete_input', label: 'FC02 Discrete Inputs', desc: '离散输入 (只读, 1-bit, 功能码 02)' },
-  { type: 'input_register', label: 'FC04 Input Registers', desc: '输入寄存器 (只读, 16-bit, 功能码 04)' },
-  { type: 'holding_register', label: 'FC03 Holding Registers', desc: '保持寄存器 (读写, 16-bit, 功能码 03/06/16)' },
+  { type: 'coil', label: 'FC01 Coils', descKey: 'connectionTree.coilDesc' as const },
+  { type: 'discrete_input', label: 'FC02 Discrete Inputs', descKey: 'connectionTree.discreteInputDesc' as const },
+  { type: 'input_register', label: 'FC04 Input Registers', descKey: 'connectionTree.inputRegisterDesc' as const },
+  { type: 'holding_register', label: 'FC03 Holding Registers', descKey: 'connectionTree.holdingRegisterDesc' as const },
 ]
 
 const helpTooltip = ref<{ type: string; x: number; y: number } | null>(null)
@@ -182,8 +184,8 @@ async function ctxDeleteSlave() {
 
 <template>
   <div class="connection-tree" @click="closeContextMenu">
-    <div class="tree-header">连接</div>
-    <div v-if="treeData.length === 0" class="tree-empty">暂无连接</div>
+    <div class="tree-header">{{ t('tree.connections') }}</div>
+    <div v-if="treeData.length === 0" class="tree-empty">{{ t('tree.noConnection') }}</div>
 
     <div v-for="tc in treeData" :key="tc.conn.id" class="tree-node-group">
       <!-- Connection Node -->
@@ -206,7 +208,7 @@ async function ctxDeleteSlave() {
             @contextmenu.prevent="showContextMenuForSlave($event, tc, td)"
           >
             <span class="node-arrow" @click.stop="toggleDevice(td)">{{ td.expanded ? '▼' : '▶' }}</span>
-            <span class="node-label">{{ td.device.name || `从站 ${td.device.slave_id}` }}</span>
+            <span class="node-label">{{ td.device.name?.trim() || t('station.defaultName', { id: td.device.slave_id }) }}</span>
           </div>
 
           <!-- Register Group Nodes -->
@@ -237,16 +239,16 @@ async function ctxDeleteSlave() {
           v-if="contextMenu.connState === 'Stopped'"
           class="context-menu-item"
           @click="ctxStartConnection"
-        >启动连接</div>
+        >{{ t('toolbar.startConnection') }}</div>
         <div
           v-else
           class="context-menu-item"
           @click="ctxStopConnection"
-        >停止连接</div>
-        <div class="context-menu-item danger" @click="ctxDeleteConnection">删除连接</div>
+        >{{ t('toolbar.stopConnection') }}</div>
+        <div class="context-menu-item danger" @click="ctxDeleteConnection">{{ t('tree.deleteConnection') }}</div>
       </template>
       <template v-if="contextMenu.type === 'slave'">
-        <div class="context-menu-item danger" @click="ctxDeleteSlave">删除从站</div>
+        <div class="context-menu-item danger" @click="ctxDeleteSlave">{{ t('tree.deleteSlave') }}</div>
       </template>
     </div>
 
@@ -257,7 +259,7 @@ async function ctxDeleteSlave() {
         class="help-tooltip"
         :style="{ left: helpTooltip.x + 'px', top: helpTooltip.y + 'px' }"
       >
-        {{ REGISTER_GROUPS.find(g => g.type === helpTooltip!.type)?.desc }}
+        {{ (() => { const g = REGISTER_GROUPS.find(g => g.type === helpTooltip!.type); return g ? t(g.descKey) : '' })() }}
       </div>
     </Teleport>
   </div>
