@@ -4,8 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm, showPrompt as ShowPrompt } from '../composables/useDialog'
-import { useI18n } from 'shared-frontend'
-import LangToggle from './LangToggle.vue'
+import { useI18n, LangToggle } from 'shared-frontend'
 
 const { t } = useI18n()
 

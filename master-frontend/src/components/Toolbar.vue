@@ -4,9 +4,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm } from '../composables/useDialog'
-import { float32ToU16Pair, type ByteOrder, useI18n } from 'shared-frontend'
+import { float32ToU16Pair, type ByteOrder, useI18n, LangToggle } from 'shared-frontend'
 import ScanDialog from './ScanDialog.vue'
-import LangToggle from './LangToggle.vue'
 
 const { t } = useI18n()
 
