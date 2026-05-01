@@ -532,6 +532,65 @@ pub async fn read_register(
 }
 
 #[tauri::command]
+pub async fn read_registers_bulk(
+    state: State<'_, AppState>,
+    connection_id: String,
+    slave_id: u8,
+    register_type: String,
+) -> Result<Vec<RegisterValueInfo>, String> {
+    let connections = state.slave_connections.read().await;
+    let conn = connections
+        .get(&connection_id)
+        .ok_or_else(|| format!("connection {} not found", connection_id))?;
+
+    let reg_type = parse_register_type(&register_type)?;
+
+    let devices = conn.connection.devices.read().await;
+    let device = devices
+        .get(&slave_id)
+        .ok_or_else(|| format!("slave {} not found", slave_id))?;
+
+    let mut out = Vec::with_capacity(device.register_defs.len());
+    for def in device
+        .register_defs
+        .iter()
+        .filter(|d| d.register_type == reg_type)
+    {
+        let value = match reg_type {
+            RegisterType::Coil => device
+                .register_map
+                .coils
+                .get(&def.address)
+                .copied()
+                .unwrap_or(false) as u16,
+            RegisterType::DiscreteInput => device
+                .register_map
+                .discrete_inputs
+                .get(&def.address)
+                .copied()
+                .unwrap_or(false) as u16,
+            RegisterType::HoldingRegister => device
+                .register_map
+                .holding_registers
+                .get(&def.address)
+                .copied()
+                .unwrap_or(0),
+            RegisterType::InputRegister => device
+                .register_map
+                .input_registers
+                .get(&def.address)
+                .copied()
+                .unwrap_or(0),
+        };
+        out.push(RegisterValueInfo {
+            address: def.address,
+            value,
+        });
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 pub async fn write_register(
     state: State<'_, AppState>,
     app_handle: AppHandle,
