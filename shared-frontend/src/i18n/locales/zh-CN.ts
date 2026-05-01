@@ -110,6 +110,7 @@ const messages = {
     timestamp: '时间',
     detail: '详情',
     noLogs: '暂无日志',
+    searchPlaceholder: '搜索...',
   },
   dialog: {
     transport: '传输类型',
@@ -162,6 +163,13 @@ const messages = {
     initRandom: '随机',
     rtuSerial: 'RTU (串口)',
     asciiSerial: 'ASCII (串口)',
+    caFilePlaceholder: 'CA 证书路径',
+    clientCertPlaceholder: '可选，用于 mTLS',
+    pkcs12FilePlaceholder: '可选，优先于 PEM',
+    passwordPlaceholder: '密码',
+    simpleName: '名称',
+    simpleValue: '值',
+    float32Summary: '{count} 个 Float32 = {regCount} 个寄存器，起始地址 {addr}',
   },
   errors: {
     invalidPort: '请输入有效的端口号 (1-65535)',
@@ -232,6 +240,7 @@ const messages = {
     searchAddress: '搜索地址...',
     noData: '无数据',
     startPollingHint: '需先启动轮询',
+    ensurePolling: '请确保已启动轮询',
   },
   registerTable: {
     searchPlaceholder: '搜索地址/名称...',

@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, inject, watch, onMounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'shared-frontend'
 import type { MasterConnectionInfo, ScanGroupInfo } from '../types'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'connection-select', id: string, state: string): void
@@ -130,10 +133,10 @@ function fcLabel(fn: string): string {
 
 <template>
   <div class="tree-container" @click="hideContextMenu">
-    <div class="tree-header">连接列表</div>
+    <div class="tree-header">{{ t('tree.connections') }}</div>
 
     <div v-if="connections.length === 0" class="tree-empty">
-      暂无连接
+      {{ t('tree.noConnection') }}
     </div>
 
     <div v-for="conn in connections" :key="conn.info.id" class="tree-node-group">
@@ -170,12 +173,12 @@ function fcLabel(fn: string): string {
     <!-- Context Menu -->
     <div v-if="contextMenu.visible" class="context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
       <template v-if="contextMenu.type === 'connection'">
-        <div class="ctx-item danger" @click="ctxDeleteConnection">删除连接</div>
+        <div class="ctx-item danger" @click="ctxDeleteConnection">{{ t('tree.deleteConnection') }}</div>
       </template>
       <template v-else>
-        <div class="ctx-item" @click="ctxStartPolling">启动轮询</div>
-        <div class="ctx-item" @click="ctxStopPolling">停止轮询</div>
-        <div class="ctx-item danger" @click="ctxRemoveScanGroup">删除扫描组</div>
+        <div class="ctx-item" @click="ctxStartPolling">{{ t('tree.startPolling') }}</div>
+        <div class="ctx-item" @click="ctxStopPolling">{{ t('tree.stopPolling') }}</div>
+        <div class="ctx-item danger" @click="ctxRemoveScanGroup">{{ t('tree.deleteScanGroup') }}</div>
       </template>
     </div>
   </div>

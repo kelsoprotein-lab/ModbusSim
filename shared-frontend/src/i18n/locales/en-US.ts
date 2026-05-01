@@ -112,6 +112,7 @@ const messages: Messages = {
     timestamp: 'Timestamp',
     detail: 'Detail',
     noLogs: 'No logs',
+    searchPlaceholder: 'Search...',
   },
   dialog: {
     transport: 'Transport',
@@ -164,6 +165,13 @@ const messages: Messages = {
     initRandom: 'Random',
     rtuSerial: 'RTU (Serial)',
     asciiSerial: 'ASCII (Serial)',
+    caFilePlaceholder: 'Path to CA certificate',
+    clientCertPlaceholder: 'Optional, for mTLS',
+    pkcs12FilePlaceholder: 'Optional, takes precedence over PEM',
+    passwordPlaceholder: 'Password',
+    simpleName: 'Name',
+    simpleValue: 'Value',
+    float32Summary: '{count} Float32 = {regCount} registers, start address {addr}',
   },
   errors: {
     invalidPort: 'Please enter a valid port number (1-65535)',
@@ -234,6 +242,7 @@ const messages: Messages = {
     searchAddress: 'Search address...',
     noData: 'No data available',
     startPollingHint: 'Start the connection',
+    ensurePolling: 'Make sure polling is started',
   },
   registerTable: {
     searchPlaceholder: 'Search address / name...',

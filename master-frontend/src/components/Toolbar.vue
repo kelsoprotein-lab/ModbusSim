@@ -4,8 +4,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert, showConfirm as ShowConfirm } from '../composables/useDialog'
-import { float32ToU16Pair, type ByteOrder } from 'shared-frontend'
+import { float32ToU16Pair, type ByteOrder, useI18n } from 'shared-frontend'
 import ScanDialog from './ScanDialog.vue'
+import LangToggle from './LangToggle.vue'
+
+const { t } = useI18n()
 
 const { showAlert, showConfirm } = inject<{ showAlert: typeof ShowAlert; showConfirm: typeof ShowConfirm }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
@@ -142,7 +145,7 @@ const float32Preview = computed(() => {
   if (parts.length === 0) return null
   return parts.map((input, index) => {
     const n = parseFloat(input)
-    if (isNaN(n)) return { index, input, float: null, regs: null, error: '无效数字' }
+    if (isNaN(n)) return { index, input, float: null, regs: null, error: t('errors.invalidNumber') }
     const pair = float32ToU16Pair(n, writeForm.value.byteOrder)
     return { index, input, float: n, regs: pair, error: '' }
   })
@@ -161,15 +164,15 @@ const float32RegCount = computed(() => {
 const float32Warning = computed(() => {
   if (!float32Preview.value || !float32Valid.value) return ''
   const count = float32Preview.value.length
-  if (count * 2 > 123) return `超出 FC16 单次最大 123 寄存器限制 (当前 ${count * 2})`
-  if (writeForm.value.address + count * 2 - 1 > 65535) return '寄存器地址溢出 (超过 65535)'
+  if (count * 2 > 123) return t('errors.overflowFC16', { count: count * 2 })
+  if (writeForm.value.address + count * 2 - 1 > 65535) return t('errors.addressOverflow')
   return ''
 })
 
 async function createConnection() {
   const needsSerial = newConnForm.value.transport === 'rtu' || newConnForm.value.transport === 'ascii'
   if (needsSerial && !serialPort.value) {
-    await showAlert('请选择串口')
+    await showAlert(t('errors.serialPortRequired'))
     return
   }
 
@@ -223,7 +226,7 @@ async function connectMaster() {
     await invoke('connect_master', { connectionId: selectedConnectionId.value })
     selectedConnectionState.value = 'Connected'
     refreshTree()
-    const doScan = await showConfirm('连接成功，是否扫描从站设备？')
+    const doScan = await showConfirm(t('errors.connectSuccessAskScan'))
     if (doScan) {
       showScanDialog.value = true
     }
@@ -313,7 +316,7 @@ async function submitWrite() {
       let values: number[]
       if (writeForm.value.dataType === 'float32') {
         const floats = writeForm.value.value.split(',').map(v => parseFloat(v.trim()))
-        if (floats.some(isNaN)) { await showAlert('包含无效的浮点数'); return }
+        if (floats.some(isNaN)) { await showAlert(t('errors.invalidFloat')); return }
         values = []
         for (const f of floats) {
           const [r0, r1] = float32ToU16Pair(f, writeForm.value.byteOrder)
@@ -348,16 +351,16 @@ const hasConnection = () => selectedConnectionId.value !== null
 <template>
   <div class="toolbar">
     <div class="toolbar-group">
-      <button class="toolbar-btn" @click="openProject" title="打开项目">打开</button>
-      <button class="toolbar-btn" @click="saveProject" title="保存项目">保存</button>
-      <button class="toolbar-btn" @click="saveProjectAs" title="另存为">另存为</button>
+      <button class="toolbar-btn" @click="openProject" :title="t('toolbar.openProjectTitle')">{{ t('toolbar.open') }}</button>
+      <button class="toolbar-btn" @click="saveProject" :title="t('toolbar.saveProjectTitle')">{{ t('common.save') }}</button>
+      <button class="toolbar-btn" @click="saveProjectAs" :title="t('toolbar.saveAsTitle')">{{ t('toolbar.saveAs') }}</button>
     </div>
 
     <div class="toolbar-divider"></div>
 
     <div class="toolbar-group">
       <button class="toolbar-btn" @click="showNewConn = true">
-        <span class="btn-icon">+</span> 新建连接
+        <span class="btn-icon">+</span> {{ t('toolbar.newConnection') }}
       </button>
     </div>
 
@@ -365,13 +368,13 @@ const hasConnection = () => selectedConnectionId.value !== null
 
     <div class="toolbar-group">
       <button class="toolbar-btn btn-start" :disabled="!hasConnection() || isConnected() || isReconnecting()" @click="connectMaster">
-        连接
+        {{ t('toolbar.connect') }}
       </button>
       <button class="toolbar-btn btn-stop" :disabled="!hasConnection() || isDisconnected()" @click="disconnectMaster">
-        {{ isReconnecting() ? '取消重连' : '断开' }}
+        {{ isReconnecting() ? t('toolbar.cancelReconnect') : t('toolbar.disconnect') }}
       </button>
       <button class="toolbar-btn btn-close" :disabled="!hasConnection()" @click="deleteMaster">
-        删除
+        {{ t('common.delete') }}
       </button>
     </div>
 
@@ -379,13 +382,13 @@ const hasConnection = () => selectedConnectionId.value !== null
 
     <div class="toolbar-group">
       <button class="toolbar-btn" :disabled="!hasConnection()" @click="showNewScanGroup = true">
-        <span class="btn-icon">+</span> 扫描组
+        <span class="btn-icon">+</span> {{ t('toolbar.addScanGroup') }}
       </button>
       <button class="toolbar-btn btn-start" :disabled="!hasConnection() || !isConnected()" @click="startAllPolling">
-        全部启动
+        {{ t('toolbar.startAll') }}
       </button>
       <button class="toolbar-btn btn-stop" :disabled="!hasConnection() || !isConnected()" @click="stopAllPolling">
-        全部停止
+        {{ t('toolbar.stopAll') }}
       </button>
     </div>
 
@@ -393,98 +396,99 @@ const hasConnection = () => selectedConnectionId.value !== null
 
     <div class="toolbar-group">
       <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="showWriteModal = true">
-        写入
+        {{ t('toolbar.write') }}
       </button>
       <button class="toolbar-btn" :disabled="!hasConnection() || !isConnected()" @click="showScanDialog = true">
-        扫描
+        {{ t('toolbar.scan') }}
       </button>
     </div>
 
     <div class="toolbar-spacer"></div>
-    <span class="toolbar-title">ModbusMaster</span>
+    <LangToggle />
+    <span class="toolbar-title">{{ t('toolbar.appTitleMaster') }}</span>
   </div>
 
   <!-- New Connection Modal -->
   <Teleport to="body">
     <div v-if="showNewConn" class="modal-backdrop" @click.self="showNewConn = false">
       <div class="modal-box">
-        <div class="modal-title">新建连接</div>
+        <div class="modal-title">{{ t('toolbar.newConnection') }}</div>
         <div class="modal-body">
           <label class="form-label">
-            传输类型
+            {{ t('dialog.transport') }}
             <select v-model="newConnForm.transport" class="form-input">
               <option value="tcp">TCP</option>
-              <option value="rtu">RTU (串口)</option>
-              <option value="ascii">ASCII (串口)</option>
+              <option value="rtu">{{ t('dialog.rtuSerial') }}</option>
+              <option value="ascii">{{ t('dialog.asciiSerial') }}</option>
               <option value="rtu_over_tcp">RTU over TCP</option>
             </select>
           </label>
           <template v-if="newConnForm.transport === 'tcp' || newConnForm.transport === 'rtu_over_tcp'">
             <label class="form-label">
-              目标地址
+              {{ t('dialog.targetAddress') }}
               <input v-model="newConnForm.target_address" class="form-input" type="text" placeholder="127.0.0.1" />
             </label>
             <label class="form-label">
-              端口
+              {{ t('dialog.port') }}
               <input v-model.number="newConnForm.port" class="form-input" type="number" min="1" max="65535" />
             </label>
           </template>
           <template v-if="newConnForm.transport === 'tcp'">
             <label class="form-label">
-              <input type="checkbox" v-model="useTls" /> 启用 TLS
+              <input type="checkbox" v-model="useTls" /> {{ t('dialog.enableTls') }}
             </label>
             <template v-if="useTls">
               <label class="form-label">
-                CA 证书 (验证服务器)
+                {{ t('dialog.caFile') }}
                 <div style="display: flex; gap: 4px;">
-                  <input v-model="tlsCaFile" class="form-input" type="text" placeholder="CA 证书路径" style="flex: 1;" />
+                  <input v-model="tlsCaFile" class="form-input" type="text" :placeholder="t('dialog.caFilePlaceholder')" style="flex: 1;" />
                   <button class="tool-btn" @click="pickFile('ca')" style="padding: 4px 8px;">...</button>
                 </div>
               </label>
               <label class="form-label">
-                客户端证书 (PEM)
+                {{ t('dialog.clientCert') }}
                 <div style="display: flex; gap: 4px;">
-                  <input v-model="tlsCertFile" class="form-input" type="text" placeholder="可选，用于 mTLS" style="flex: 1;" />
+                  <input v-model="tlsCertFile" class="form-input" type="text" :placeholder="t('dialog.clientCertPlaceholder')" style="flex: 1;" />
                   <button class="tool-btn" @click="pickFile('cert')" style="padding: 4px 8px;">...</button>
                 </div>
               </label>
               <label class="form-label">
-                客户端私钥 (PEM)
+                {{ t('dialog.clientKey') }}
                 <div style="display: flex; gap: 4px;">
-                  <input v-model="tlsKeyFile" class="form-input" type="text" placeholder="可选，用于 mTLS" style="flex: 1;" />
+                  <input v-model="tlsKeyFile" class="form-input" type="text" :placeholder="t('dialog.clientCertPlaceholder')" style="flex: 1;" />
                   <button class="tool-btn" @click="pickFile('key')" style="padding: 4px 8px;">...</button>
                 </div>
               </label>
               <label class="form-label">
-                PKCS#12 文件
+                {{ t('dialog.pkcs12File') }}
                 <div style="display: flex; gap: 4px;">
-                  <input v-model="tlsPkcs12File" class="form-input" type="text" placeholder="可选，优先于 PEM" style="flex: 1;" />
+                  <input v-model="tlsPkcs12File" class="form-input" type="text" :placeholder="t('dialog.pkcs12FilePlaceholder')" style="flex: 1;" />
                   <button class="tool-btn" @click="pickFile('pkcs12')" style="padding: 4px 8px;">...</button>
                 </div>
               </label>
               <label class="form-label" v-if="tlsPkcs12File">
-                PKCS#12 密码
-                <input v-model="tlsPkcs12Password" class="form-input" type="password" placeholder="密码" />
+                {{ t('dialog.pkcs12Password') }}
+                <input v-model="tlsPkcs12Password" class="form-input" type="password" :placeholder="t('dialog.passwordPlaceholder')" />
               </label>
               <label class="form-label">
-                <input type="checkbox" v-model="tlsAcceptInvalidCerts" /> 接受自签名证书 (测试用)
+                <input type="checkbox" v-model="tlsAcceptInvalidCerts" /> {{ t('dialog.acceptInvalidCerts') }}
               </label>
             </template>
           </template>
           <template v-if="newConnForm.transport === 'rtu' || newConnForm.transport === 'ascii'">
             <label class="form-label">
-              串口
+              {{ t('dialog.serialPort') }}
               <div style="display: flex; gap: 4px;">
                 <select v-model="serialPort" class="form-input" style="flex: 1;">
                   <option v-for="p in serialPorts" :key="p.name" :value="p.name">
                     {{ p.name }}{{ p.description ? ` (${p.description})` : '' }}
                   </option>
                 </select>
-                <button class="tool-btn" @click="refreshSerialPorts" title="刷新串口列表" style="padding: 4px 8px;">&#x21bb;</button>
+                <button class="tool-btn" @click="refreshSerialPorts" :title="t('dialog.refreshSerialPorts')" style="padding: 4px 8px;">&#x21bb;</button>
               </div>
             </label>
             <label class="form-label">
-              波特率
+              {{ t('dialog.baudRate') }}
               <select v-model.number="baudRate" class="form-input">
                 <option :value="9600">9600</option>
                 <option :value="19200">19200</option>
@@ -494,40 +498,40 @@ const hasConnection = () => selectedConnectionId.value !== null
               </select>
             </label>
             <label class="form-label">
-              数据位
+              {{ t('dialog.dataBits') }}
               <select v-model.number="dataBits" class="form-input">
                 <option :value="7">7</option>
                 <option :value="8">8</option>
               </select>
             </label>
             <label class="form-label">
-              停止位
+              {{ t('dialog.stopBits') }}
               <select v-model.number="stopBits" class="form-input">
                 <option :value="1">1</option>
                 <option :value="2">2</option>
               </select>
             </label>
             <label class="form-label">
-              校验
+              {{ t('dialog.parity') }}
               <select v-model="parityMode" class="form-input">
-                <option value="none">None</option>
-                <option value="odd">Odd</option>
-                <option value="even">Even</option>
+                <option value="none">{{ t('dialog.parityNone') }}</option>
+                <option value="odd">{{ t('dialog.parityOdd') }}</option>
+                <option value="even">{{ t('dialog.parityEven') }}</option>
               </select>
             </label>
           </template>
           <label class="form-label">
-            从站 ID
+            {{ t('dialog.slaveId') }}
             <input v-model.number="newConnForm.slave_id" class="form-input" type="number" min="1" max="247" />
           </label>
           <label class="form-label">
-            超时 (ms)
+            {{ t('dialog.timeout') }}
             <input v-model.number="newConnForm.timeout_ms" class="form-input" type="number" min="100" max="30000" />
           </label>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showNewConn = false">取消</button>
-          <button class="btn btn-primary" @click="createConnection">创建</button>
+          <button class="btn btn-secondary" @click="showNewConn = false">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="createConnection">{{ t('common.create') }}</button>
         </div>
       </div>
     </div>
@@ -537,14 +541,14 @@ const hasConnection = () => selectedConnectionId.value !== null
   <Teleport to="body">
     <div v-if="showNewScanGroup" class="modal-backdrop" @click.self="showNewScanGroup = false">
       <div class="modal-box">
-        <div class="modal-title">新建扫描组</div>
+        <div class="modal-title">{{ t('dialog.newScanGroup') }}</div>
         <div class="modal-body">
           <label class="form-label">
-            名称
-            <input v-model="scanGroupForm.name" class="form-input" type="text" placeholder="扫描组名称" />
+            {{ t('dialog.simpleName') }}
+            <input v-model="scanGroupForm.name" class="form-input" type="text" :placeholder="t('dialog.scanGroupName')" />
           </label>
           <label class="form-label">
-            功能码
+            {{ t('table.function') }}
             <select v-model="scanGroupForm.function" class="form-input">
               <option value="read_coils">FC01 - Read Coils</option>
               <option value="read_discrete_inputs">FC02 - Read Discrete Inputs</option>
@@ -553,21 +557,21 @@ const hasConnection = () => selectedConnectionId.value !== null
             </select>
           </label>
           <label class="form-label">
-            起始地址
+            {{ t('table.startAddress') }}
             <input v-model.number="scanGroupForm.start_address" class="form-input" type="number" min="0" max="65535" />
           </label>
           <label class="form-label">
-            数量
+            {{ t('table.quantity') }}
             <input v-model.number="scanGroupForm.quantity" class="form-input" type="number" min="1" max="125" />
           </label>
           <label class="form-label">
-            轮询间隔 (ms)
+            {{ t('dialog.scanInterval') }}
             <input v-model.number="scanGroupForm.interval_ms" class="form-input" type="number" min="100" max="60000" />
           </label>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showNewScanGroup = false">取消</button>
-          <button class="btn btn-primary" @click="addScanGroup">创建</button>
+          <button class="btn btn-secondary" @click="showNewScanGroup = false">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="addScanGroup">{{ t('common.create') }}</button>
         </div>
       </div>
     </div>
@@ -577,10 +581,10 @@ const hasConnection = () => selectedConnectionId.value !== null
   <Teleport to="body">
     <div v-if="showWriteModal" class="modal-backdrop" @click.self="showWriteModal = false">
       <div class="modal-box">
-        <div class="modal-title">写入寄存器</div>
+        <div class="modal-title">{{ t('dialog.writeRegisters') }}</div>
         <div class="modal-body">
           <label class="form-label">
-            功能码
+            {{ t('table.function') }}
             <select v-model="writeForm.function" class="form-input">
               <option value="write_single_coil">FC05 - Write Single Coil</option>
               <option value="write_single_register">FC06 - Write Single Register</option>
@@ -589,14 +593,14 @@ const hasConnection = () => selectedConnectionId.value !== null
             </select>
           </label>
           <label v-if="isMultiRegFC" class="form-label">
-            数据类型
+            {{ t('dialog.dataType') }}
             <select v-model="writeForm.dataType" class="form-input">
               <option value="raw">Raw u16</option>
               <option value="float32">Float32 (REAL)</option>
             </select>
           </label>
           <label v-if="isFloat32Mode" class="form-label">
-            字节序
+            {{ t('dialog.byteOrder') }}
             <select v-model="writeForm.byteOrder" class="form-input">
               <option value="ABCD">AB CD (Big Endian)</option>
               <option value="CDAB">CD AB (Little Endian Word Swap)</option>
@@ -605,24 +609,24 @@ const hasConnection = () => selectedConnectionId.value !== null
             </select>
           </label>
           <label class="form-label">
-            地址
+            {{ t('table.address') }}
             <input v-model.number="writeForm.address" class="form-input" type="number" min="0" max="65535" />
           </label>
           <label class="form-label">
-            值
-            <span class="form-hint" v-if="isFloat32Mode">（逗号分隔浮点数，如 3.14, 2.71, 1.41）</span>
-            <span class="form-hint" v-else-if="writeForm.function.includes('multiple')">（逗号分隔）</span>
+            {{ t('dialog.simpleValue') }}
+            <span class="form-hint" v-if="isFloat32Mode">{{ t('dialog.valueHintFloat32') }}</span>
+            <span class="form-hint" v-else-if="writeForm.function.includes('multiple')">{{ t('dialog.valueHintMultiple') }}</span>
             <textarea v-if="isFloat32Mode" v-model="writeForm.value" class="form-input form-textarea"
               placeholder="3.14, 2.71, 1.41" rows="3" />
             <input v-else v-model="writeForm.value" class="form-input" type="text" placeholder="0" />
           </label>
           <div v-if="float32Preview && float32Preview.length > 0" class="float-preview">
             <div class="preview-summary">
-              {{ float32Preview.length }} 个 Float32 = {{ float32RegCount }} 个寄存器，起始地址 {{ writeForm.address }}
+              {{ t('dialog.float32Summary', { count: float32Preview.length, regCount: float32RegCount, addr: writeForm.address }) }}
               <span v-if="float32Warning" class="preview-warn">{{ float32Warning }}</span>
             </div>
             <table class="preview-table">
-              <thead><tr><th>地址</th><th>Float</th><th>Reg[0]</th><th>Reg[1]</th></tr></thead>
+              <thead><tr><th>{{ t('table.address') }}</th><th>Float</th><th>Reg[0]</th><th>Reg[1]</th></tr></thead>
               <tbody>
                 <tr v-for="item in float32Preview" :key="item.index" :class="{ 'preview-error': item.error }">
                   <td>{{ writeForm.address + item.index * 2 }}</td>
@@ -635,9 +639,9 @@ const hasConnection = () => selectedConnectionId.value !== null
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showWriteModal = false">取消</button>
+          <button class="btn btn-secondary" @click="showWriteModal = false">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="submitWrite"
-            :disabled="isFloat32Mode && (!float32Valid || !!float32Warning)">写入</button>
+            :disabled="isFloat32Mode && (!float32Valid || !!float32Warning)">{{ t('toolbar.write') }}</button>
         </div>
       </div>
     </div>

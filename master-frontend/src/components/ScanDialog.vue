@@ -4,7 +4,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
+import { useI18n } from 'shared-frontend'
 import type { SlaveIdScanEvent, RegisterScanEvent, FoundRegisterDto } from '../types'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
@@ -189,7 +192,7 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
 
   for (const sid of slaveIds) {
     for (const fc of fcs) {
-      slaveScanStatus.value = `添加 Slave ${sid} ${fc.label} 0-99...`
+      slaveScanStatus.value = t('scanDialog.addingProgress', { id: sid, fc: fc.label })
       try {
         await invoke('add_scan_group', {
           connectionId: selectedConnectionId.value,
@@ -216,35 +219,35 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
   <Teleport to="body">
     <div class="modal-backdrop" @click.self="emit('close')">
       <div class="modal-box scan-dialog">
-        <div class="modal-title">设备扫描</div>
+        <div class="modal-title">{{ t('scanDialog.title') }}</div>
 
         <div class="tab-bar">
-          <button :class="['tab-btn', { active: tab === 'slave' }]" @click="tab = 'slave'" :disabled="scanning">从站扫描</button>
-          <button :class="['tab-btn', { active: tab === 'register' }]" @click="tab = 'register'" :disabled="scanning">寄存器扫描</button>
+          <button :class="['tab-btn', { active: tab === 'slave' }]" @click="tab = 'slave'" :disabled="scanning">{{ t('scanDialog.slaveScan') }}</button>
+          <button :class="['tab-btn', { active: tab === 'register' }]" @click="tab = 'register'" :disabled="scanning">{{ t('scanDialog.registerScan') }}</button>
         </div>
 
         <!-- Slave ID Scan -->
         <div v-if="tab === 'slave'" class="tab-content">
           <div class="form-row-inline">
             <div class="form-row">
-              <label>起始 ID</label>
+              <label>{{ t('scanDialog.startId') }}</label>
               <input v-model.number="slaveStartId" type="number" min="1" max="247" :disabled="scanning" />
             </div>
             <div class="form-row">
-              <label>结束 ID</label>
+              <label>{{ t('scanDialog.endId') }}</label>
               <input v-model.number="slaveEndId" type="number" min="1" max="247" :disabled="scanning" />
             </div>
             <div class="form-row">
-              <label>超时 (ms)</label>
+              <label>{{ t('dialog.timeout') }}</label>
               <input v-model.number="slaveScanTimeout" type="number" min="100" max="5000" step="100" :disabled="scanning" />
             </div>
           </div>
 
-          <div class="scan-hint">发现从站后自动添加 FC01-04 全部寄存器 (0-99) 到监控</div>
+          <div class="scan-hint">{{ t('scanDialog.autoAddHint') }}</div>
 
           <div class="action-row">
-            <button v-if="!scanning && slaveScanPhase === 'idle'" class="btn-primary" @click="startSlaveScan">开始扫描</button>
-            <button v-else-if="scanning" class="btn-danger" @click="cancelScan">取消</button>
+            <button v-if="!scanning && slaveScanPhase === 'idle'" class="btn-primary" @click="startSlaveScan">{{ t('scanDialog.startScan') }}</button>
+            <button v-else-if="scanning" class="btn-danger" @click="cancelScan">{{ t('common.cancel') }}</button>
             <div v-else-if="slaveScanPhase === 'scanning_regs'" class="status-text">{{ slaveScanStatus }}</div>
           </div>
 
@@ -256,10 +259,10 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
           </div>
 
           <div v-if="slaveProgress.found_ids.length > 0" class="result-section">
-            <div class="result-title">发现 {{ slaveProgress.found_ids.length }} 个从站</div>
+            <div class="result-title">{{ t('scanDialog.foundSlaves', { count: slaveProgress.found_ids.length }) }}</div>
             <div class="result-scroll">
               <table class="result-table">
-                <thead><tr><th>从站 ID</th></tr></thead>
+                <thead><tr><th>{{ t('dialog.slaveId') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="id in slaveProgress.found_ids" :key="id">
                     <td>{{ id }}</td>
@@ -268,46 +271,46 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
               </table>
             </div>
           </div>
-          <div v-else-if="slaveScanDone" class="empty-result">未发现在线从站</div>
+          <div v-else-if="slaveScanDone" class="empty-result">{{ t('scanDialog.noSlavesFound') }}</div>
         </div>
 
         <!-- Register Scan -->
         <div v-if="tab === 'register'" class="tab-content">
           <div class="form-row">
-            <label>功能码</label>
+            <label>{{ t('table.function') }}</label>
             <select v-model="regFunction" :disabled="scanning">
               <option v-for="opt in functionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
           <div class="form-row-inline">
             <div class="form-row">
-              <label>起始地址</label>
+              <label>{{ t('table.startAddress') }}</label>
               <input v-model.number="regStartAddr" type="number" min="0" max="65535" :disabled="scanning" />
             </div>
             <div class="form-row">
-              <label>结束地址</label>
+              <label>{{ t('table.endAddress') }}</label>
               <input v-model.number="regEndAddr" type="number" min="0" max="65535" :disabled="scanning" />
             </div>
           </div>
           <div class="form-row-inline">
             <div class="form-row">
-              <label>块大小</label>
+              <label>{{ t('scanDialog.chunkSize') }}</label>
               <input v-model.number="regChunkSize" type="number" min="1" max="125" :disabled="scanning" />
             </div>
             <div class="form-row">
-              <label>超时 (ms)</label>
+              <label>{{ t('dialog.timeout') }}</label>
               <input v-model.number="regTimeout" type="number" min="100" max="10000" step="100" :disabled="scanning" />
             </div>
           </div>
 
           <label class="checkbox-row">
             <input type="checkbox" v-model="autoAddGroups" :disabled="scanning" />
-            <span>扫描完成后自动添加到监控</span>
+            <span>{{ t('scanDialog.autoAddAfterScan') }}</span>
           </label>
 
           <div class="action-row">
-            <button v-if="!scanning" class="btn-primary" @click="startRegisterScan">开始扫描</button>
-            <button v-else class="btn-danger" @click="cancelScan">取消</button>
+            <button v-if="!scanning" class="btn-primary" @click="startRegisterScan">{{ t('scanDialog.startScan') }}</button>
+            <button v-else class="btn-danger" @click="cancelScan">{{ t('common.cancel') }}</button>
           </div>
 
           <div v-if="scanning || regScanDone" class="progress-section">
@@ -318,10 +321,10 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
           </div>
 
           <div v-if="regProgress.found_registers.length > 0" class="result-section">
-            <div class="result-title">发现 {{ regProgress.found_registers.length }} 个寄存器</div>
+            <div class="result-title">{{ t('scanDialog.foundRegisters', { count: regProgress.found_registers.length }) }}</div>
             <div class="result-scroll">
               <table class="result-table">
-                <thead><tr><th>地址</th><th>Hex</th><th>值</th></tr></thead>
+                <thead><tr><th>{{ t('table.address') }}</th><th>Hex</th><th>{{ t('dialog.simpleValue') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="reg in regProgress.found_registers" :key="reg.address">
                     <td>{{ reg.address }}</td>
@@ -332,11 +335,11 @@ async function scanAndAddAllRegistersForSlaves(slaveIds: number[]) {
               </table>
             </div>
           </div>
-          <div v-else-if="regScanDone" class="empty-result">未发现有效寄存器</div>
+          <div v-else-if="regScanDone" class="empty-result">{{ t('scanDialog.noRegistersFound') }}</div>
         </div>
 
         <div class="modal-footer">
-          <button class="btn-secondary" @click="emit('close')" :disabled="scanning">关闭</button>
+          <button class="btn-secondary" @click="emit('close')" :disabled="scanning">{{ t('common.close') }}</button>
         </div>
       </div>
     </div>

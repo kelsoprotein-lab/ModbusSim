@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useLogPanel, useLogFilter } from 'shared-frontend'
+import { useLogPanel, useLogFilter, useI18n } from 'shared-frontend'
+
+const { t } = useI18n()
 import type { MasterConnectionInfo } from '../types'
 
 interface Props {
@@ -130,42 +132,42 @@ onMounted(async () => {
   <div :class="['log-panel', { expanded }]">
     <div class="log-header" @click="emit('toggle')">
       <span class="log-toggle">{{ expanded ? '▼' : '▲' }}</span>
-      <span class="log-title">通信日志</span>
+      <span class="log-title">{{ t('log.title') }}</span>
       <span v-if="!expanded && logs.length > 0" class="log-count">{{ logs.length }}</span>
       <div class="log-controls" @click.stop>
         <select v-model="selectedConnId" class="conn-select" @change="doLoadLogs">
           <option v-for="conn in connectionList" :key="conn.id" :value="conn.id">{{ conn.label }}</option>
         </select>
-        <button class="log-btn" @click="doLoadLogs">刷新</button>
-        <button class="log-btn" @click="doClearLogs">清空</button>
-        <button class="log-btn" @click="doExportLogs">导出</button>
+        <button class="log-btn" @click="doLoadLogs">{{ t('common.refresh') }}</button>
+        <button class="log-btn" @click="doClearLogs">{{ t('common.clear') }}</button>
+        <button class="log-btn" @click="doExportLogs">{{ t('common.export') }}</button>
       </div>
     </div>
 
     <div v-if="expanded" class="log-filters">
-      <input v-model="searchQuery" type="text" class="filter-input" placeholder="搜索..." />
+      <input v-model="searchQuery" type="text" class="filter-input" :placeholder="t('log.searchPlaceholder')" />
       <select v-model="directionFilter" class="filter-select">
-        <option value="all">全部</option>
+        <option value="all">{{ t('common.all') }}</option>
         <option value="rx">RX</option>
         <option value="tx">TX</option>
       </select>
       <select v-model="fcFilter" class="filter-select">
-        <option value="all">全部FC</option>
+        <option value="all">{{ t('common.allFc') }}</option>
         <option v-for="fc in availableFcs" :key="fc" :value="fc">{{ fc }}</option>
       </select>
       <span v-if="filterSummary" class="filter-summary">{{ filterSummary }}</span>
     </div>
 
     <div v-if="expanded" class="log-body">
-      <div v-if="connectionList.length === 0" class="log-empty">暂无连接</div>
-      <div v-else-if="filteredLogs.length === 0" class="log-empty">暂无日志</div>
+      <div v-if="connectionList.length === 0" class="log-empty">{{ t('tree.noConnection') }}</div>
+      <div v-else-if="filteredLogs.length === 0" class="log-empty">{{ t('log.noLogs') }}</div>
       <table v-else class="log-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>方向</th>
-            <th>功能码</th>
-            <th>详情</th>
+            <th>{{ t('log.timestamp') }}</th>
+            <th>{{ t('log.direction') }}</th>
+            <th>{{ t('table.function') }}</th>
+            <th>{{ t('log.detail') }}</th>
           </tr>
         </thead>
         <tbody>

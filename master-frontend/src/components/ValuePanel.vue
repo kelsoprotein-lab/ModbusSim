@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { dialogKey } from '../composables/useDialog'
 import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { RegisterValueDto, ScanGroupInfo } from '../types'
-import { swapBytes16, float32ToU16Pair, use16BitFormat, use32BitFormat, use64BitFormat, type ByteOrder } from 'shared-frontend'
+import { swapBytes16, float32ToU16Pair, use16BitFormat, use32BitFormat, use64BitFormat, useI18n, type ByteOrder } from 'shared-frontend'
+
+const { t } = useI18n()
 
 const vFocus: Directive<HTMLInputElement> = {
   mounted(el) {
@@ -231,16 +233,16 @@ const writeCategory = computed<'register' | 'coil' | null>(() => {
 
 <template>
   <div class="value-panel">
-    <div class="panel-header">值解析</div>
+    <div class="panel-header">{{ t('valuePanel.title') }}</div>
 
     <div v-if="!hasSelection" class="empty-state">
-      选择一个寄存器查看详情
+      {{ t('valuePanel.selectHint') }}
     </div>
 
     <template v-else>
       <div class="panel-title">{{ panelTitle }}</div>
-      <div v-if="selectedScanGroup?.function === 'read_input_registers'" class="panel-hint">写入将使用 FC06/FC16</div>
-      <div v-else-if="selectedScanGroup?.function === 'read_discrete_inputs'" class="panel-hint">写入将使用 FC05/FC15</div>
+      <div v-if="selectedScanGroup?.function === 'read_input_registers'" class="panel-hint">{{ t('valuePanel.writeHintInputReg') }}</div>
+      <div v-else-if="selectedScanGroup?.function === 'read_discrete_inputs'" class="panel-hint">{{ t('valuePanel.writeHintDiscrete') }}</div>
 
       <!-- Bool type -->
       <template v-if="isBoolType">

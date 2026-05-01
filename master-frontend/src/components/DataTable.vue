@@ -3,7 +3,10 @@ import { ref, inject, watch, onMounted, onUnmounted, computed, type Ref } from '
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useVirtualizer } from '@tanstack/vue-virtual'
+import { useI18n } from 'shared-frontend'
 import type { ScanGroupInfo, RegisterValueDto, PollDataPayload, ReadResultDto } from '../types'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'register-select', regs: RegisterValueDto[]): void
@@ -298,7 +301,7 @@ const fcLabel = computed(() => {
 
 // Column header for value
 const valueColumnLabel = computed(() => {
-  if (isBoolScanGroup.value) return '值'
+  if (isBoolScanGroup.value) return t('dialog.simpleValue')
   const map: Record<string, string> = {
     unsigned: 'Unsigned',
     signed: 'Signed',
@@ -307,14 +310,14 @@ const valueColumnLabel = computed(() => {
     float32_abcd: 'Float AB CD',
     float32_cdab: 'Float CD AB',
   }
-  return map[displayFormat.value] || '值'
+  return map[displayFormat.value] || t('dialog.simpleValue')
 })
 </script>
 
 <template>
   <div class="data-table-container">
     <div v-if="!selectedScanGroup" class="empty-state">
-      选择一个扫描组查看数据
+      {{ t('valuePanel.selectScanGroup') }}
     </div>
 
     <template v-else>
@@ -331,16 +334,16 @@ const valueColumnLabel = computed(() => {
           v-model="searchFilter"
           class="search-input"
           type="text"
-          placeholder="搜索地址..."
+          :placeholder="t('dataTable.searchAddress')"
         />
         <button class="mode-btn" @click="toggleAddrMode">{{ addrMode === 'hex' ? 'HEX' : 'DEC' }}</button>
-        <span class="register-count">{{ filteredValues.length }} 个</span>
+        <span class="register-count">{{ t('table.itemCount', { count: filteredValues.length }) }}</span>
       </div>
 
       <div v-if="values.length === 0 && !errorMsg" class="empty-state">
         <div>
-          <div>暂无数据</div>
-          <div class="empty-hint">请确保已启动轮询</div>
+          <div>{{ t('valuePanel.noData') }}</div>
+          <div class="empty-hint">{{ t('dataTable.ensurePolling') }}</div>
         </div>
       </div>
 
@@ -352,9 +355,9 @@ const valueColumnLabel = computed(() => {
         <table class="table">
           <thead>
             <tr>
-              <th class="col-addr">地址</th>
-              <th v-if="!isBoolScanGroup && !isFloat" class="col-raw">原始值</th>
-              <th v-if="isFloat" class="col-raw">原始字节</th>
+              <th class="col-addr">{{ t('table.address') }}</th>
+              <th v-if="!isBoolScanGroup && !isFloat" class="col-raw">{{ t('table.rawValue') }}</th>
+              <th v-if="isFloat" class="col-raw">{{ t('table.rawBytes') }}</th>
               <th class="col-display">{{ valueColumnLabel }}</th>
             </tr>
           </thead>
