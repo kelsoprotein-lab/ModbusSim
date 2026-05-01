@@ -251,5 +251,8 @@ const messages = {
   },
 } as const
 
-export type Messages = typeof messages
+type DeepStringify<T> = { [K in keyof T]: T[K] extends string ? string : DeepStringify<T[K]> }
+
+/** 宽类型：仅约束结构（key 完整性），允许任意 string 值，供其他 locale 实现 */
+export type Messages = DeepStringify<typeof messages>
 export default messages
