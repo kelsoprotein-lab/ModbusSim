@@ -9,7 +9,7 @@ use modbussim_core::data_source::{DataSource, DataSourceConfig, DataSourceState}
 use modbussim_core::log_collector::LogCollector;
 use modbussim_core::log_entry::LogEntry;
 use modbussim_core::log_helpers;
-use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type};
+use modbussim_core::parse::{parse_data_type, parse_endian, parse_register_type, register_type_to_str};
 use modbussim_core::project::{self, ProjectFile};
 use modbussim_core::register::{Endian, RegisterDef, RegisterType};
 use modbussim_core::slave::{SlaveConnection, SlaveDevice};
@@ -32,12 +32,24 @@ pub struct SlaveConnectionEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub struct RegisterValueEvent {
+pub struct LogAppendedEvent {
     pub connection_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RegisterChangePayload {
     pub slave_id: u8,
-    pub register_type: String,
+    pub register_type: &'static str,
     pub address: u16,
     pub value: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RegisterValueEvent {
+    pub connection_id: String,
+    pub changes: Vec<RegisterChangePayload>,
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +234,37 @@ pub async fn start_slave_connection(
         let conn = connections
             .get_mut(&id)
             .ok_or_else(|| format!("connection {} not found", id))?;
+
+        let conn_id: std::sync::Arc<str> = std::sync::Arc::from(id.as_str());
+        let cb_handle = app_handle.clone();
+        let cb_conn_id = conn_id.clone();
+        conn.connection.set_change_callback(std::sync::Arc::new(
+            move |changes: &[modbussim_core::slave::RegisterChange]| {
+                let event = RegisterValueEvent {
+                    connection_id: cb_conn_id.to_string(),
+                    changes: changes
+                        .iter()
+                        .map(|c| RegisterChangePayload {
+                            slave_id: c.slave_id,
+                            register_type: register_type_to_str(c.register_type),
+                            address: c.address,
+                            value: c.value,
+                        })
+                        .collect(),
+                };
+                let _ = cb_handle.emit("register-value-changed", event);
+            },
+        ));
+
+        let log_handle = app_handle.clone();
+        let log_conn_id = conn_id;
+        conn.log_collector
+            .set_append_callback(std::sync::Arc::new(move |_entry| {
+                let _ = log_handle.emit(
+                    "log-appended",
+                    LogAppendedEvent { connection_id: log_conn_id.to_string() },
+                );
+            }));
 
         conn.connection
             .start()
@@ -631,10 +674,12 @@ pub async fn write_register(
 
     let event = RegisterValueEvent {
         connection_id: request.connection_id,
-        slave_id: request.slave_id,
-        register_type: request.register_type,
-        address: request.address,
-        value: request.value,
+        changes: vec![RegisterChangePayload {
+            slave_id: request.slave_id,
+            register_type: register_type_to_str(reg_type),
+            address: request.address,
+            value: request.value,
+        }],
     };
     app_handle
         .emit("register-value-changed", event)

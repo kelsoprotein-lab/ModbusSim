@@ -1,25 +1,19 @@
 <script setup lang="ts">
-import { ref, inject, watch, computed, provide, onUnmounted, type Ref } from 'vue'
+import { ref, inject, watch, computed, provide, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { swapBytes16, toFloat32, float32ToU16Pair, useI18n, type ByteOrder } from 'shared-frontend'
-
-const { t } = useI18n()
+import { float32ToU16Pair, useI18n, useFcLabel, formatAddress, showAlert, type ByteOrder } from 'shared-frontend'
 import RegisterModal from './RegisterModal.vue'
 import BatchAddModal from './BatchAddModal.vue'
+import { useRegisterValues } from '../composables/useRegisterValues'
+import {
+  formatU16, formatTypedValue, formatFloatPair, encodeTypedValue,
+  is32BitType, isFloatFormat as isFloatFmt,
+  type RegisterDef as Register, type ValueFormat,
+} from '../composables/useRegisterFormat'
 
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
-
-interface Register {
-  address: number
-  register_type: string
-  data_type: string
-  endian: string
-  name: string
-  comment: string
-}
+const { t } = useI18n()
+const { registerTypeLabel } = useFcLabel()
 
 const emit = defineEmits<{
   (e: 'register-select', regs: { address: number; register_type: string; value: number }[]): void
@@ -30,65 +24,40 @@ const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const selectedRegisterType = inject<Ref<string | null>>('selectedRegisterType')!
 const registerRefreshKey = inject<Ref<number>>('registerRefreshKey')!
 
-const registers = ref<Register[]>([])
+const {
+  registers, registerValues, isLoading, error, changedKeys,
+  loadRegisters, refreshValues, clearChangeTimers, getValue: getValueByKey,
+} = useRegisterValues(selectedConnectionId, selectedSlaveId)
+
 const selectedRows = ref<Register[]>([])
 const lastClickedIndex = ref<number>(-1)
-const registerValues = ref<Record<string, number>>({})
 const editingCell = ref<{ address: number; register_type: string } | null>(null)
 const editValue = ref('')
-const isLoading = ref(false)
-const changedKeys = ref<Set<string>>(new Set())
-const changeTimers = new Map<string, number>()
-function markChanged(key: string) {
-  changedKeys.value.add(key)
-  const prev = changeTimers.get(key)
-  if (prev) clearTimeout(prev)
-  changeTimers.set(key, window.setTimeout(() => {
-    changedKeys.value.delete(key)
-    changeTimers.delete(key)
-  }, 1500))
-}
-const error = ref<string | null>(null)
 const searchQuery = ref('')
 const contextMenu = ref({ show: false, x: 0, y: 0, reg: null as Register | null })
-// scrollContainer removed — replaced by scrollContainerRef for virtual scrolling
 const addrMode = ref<'hex' | 'dec'>('hex')
 provide('addrMode', addrMode)
 const showAddModal = ref(false)
 const showBatchModal = ref(false)
 
-type ValueFormat = 'auto' | 'unsigned' | 'signed' | 'hex' | 'binary' | 'float32_abcd' | 'float32_cdab' | 'float32_badc' | 'float32_dcba'
 const valueFormat = ref<ValueFormat>('auto')
 
-const formatOptions: { value: ValueFormat; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'unsigned', label: 'Unsigned' },
-  { value: 'signed', label: 'Signed' },
-  { value: 'hex', label: 'Hex' },
-  { value: 'binary', label: 'Binary' },
-  { value: 'float32_abcd', label: 'Float AB CD' },
-  { value: 'float32_cdab', label: 'Float CD AB' },
-  { value: 'float32_badc', label: 'Float BA DC' },
-  { value: 'float32_dcba', label: 'Float DC BA' },
-]
+const formatOptions = computed<{ value: ValueFormat; label: string }[]>(() => [
+  { value: 'auto', label: t('formats.auto') },
+  { value: 'unsigned', label: t('formats.unsigned') },
+  { value: 'signed', label: t('formats.signed') },
+  { value: 'hex', label: t('formats.hex') },
+  { value: 'binary', label: t('formats.binary') },
+  { value: 'float32_abcd', label: t('formats.floatABCD') },
+  { value: 'float32_cdab', label: t('formats.floatCDAB') },
+  { value: 'float32_badc', label: t('formats.floatBADC') },
+  { value: 'float32_dcba', label: t('formats.floatDCBA') },
+])
 
-const isFloatFormat = computed(() => valueFormat.value.startsWith('float32_'))
+const isFloatFormat = computed(() => isFloatFmt(valueFormat.value))
 
-function formatValue(raw: number): string {
-  const v = raw & 0xFFFF
-  switch (valueFormat.value) {
-    case 'signed': return (v >= 0x8000 ? v - 0x10000 : v).toString()
-    case 'hex': return '0x' + v.toString(16).toUpperCase().padStart(4, '0')
-    case 'binary': {
-      const b = v.toString(2).padStart(16, '0')
-      return `${b.slice(0, 4)} ${b.slice(4, 8)} ${b.slice(8, 12)} ${b.slice(12, 16)}`
-    }
-    default: return v.toString()
-  }
-}
-
-function is32BitType(dataType: string): boolean {
-  return dataType === 'uint32' || dataType === 'int32' || dataType === 'float32'
+function getValue(reg: Register): number {
+  return getValueByKey(reg.register_type, reg.address)
 }
 
 const companionKeys = computed(() => {
@@ -106,60 +75,6 @@ function isCompanionRegister(reg: Register): boolean {
   return companionKeys.value.has(`${reg.register_type}-${reg.address}`)
 }
 
-function applyEndianDecode(reg0: number, reg1: number, endian: string): [number, number, number, number] {
-  const r0h = (reg0 >> 8) & 0xFF, r0l = reg0 & 0xFF
-  const r1h = (reg1 >> 8) & 0xFF, r1l = reg1 & 0xFF
-  switch (endian) {
-    case 'big':        return [r0h, r0l, r1h, r1l]
-    case 'little':     return [r1h, r1l, r0h, r0l]
-    case 'mid_big':    return [r0l, r0h, r1l, r1h]
-    case 'mid_little': return [r1l, r1h, r0l, r0h]
-    default:           return [r0h, r0l, r1h, r1l]
-  }
-}
-
-function formatTypedValue(reg: Register): string {
-  const hi = getValue(reg)
-  switch (reg.data_type) {
-    case 'bool': return hi !== 0 ? 'ON' : 'OFF'
-    case 'uint16': return (hi & 0xFFFF).toString()
-    case 'int16': { const v = hi & 0xFFFF; return (v >= 0x8000 ? v - 0x10000 : v).toString() }
-    case 'uint32': case 'int32': case 'float32': {
-      const lo = registerValues.value[`${reg.register_type}-${reg.address + 1}`] ?? 0
-      const bytes = applyEndianDecode(hi & 0xFFFF, lo & 0xFFFF, reg.endian)
-      const canonHi = (bytes[0] << 8) | bytes[1]
-      const canonLo = (bytes[2] << 8) | bytes[3]
-      if (reg.data_type === 'float32') return toFloat32(canonHi, canonLo)
-      const buf = new ArrayBuffer(4)
-      const view = new DataView(buf)
-      view.setUint16(0, canonHi)
-      view.setUint16(2, canonLo)
-      if (reg.data_type === 'uint32') return view.getUint32(0).toString()
-      return view.getInt32(0).toString()
-    }
-    default: return (hi & 0xFFFF).toString()
-  }
-}
-
-const endianToByteOrder: Record<string, ByteOrder> = { big: 'ABCD', little: 'CDAB', mid_big: 'BADC', mid_little: 'DCBA' }
-
-function encodeTypedValue(value: number, dataType: string, endian: string): [number, number] {
-  if (dataType === 'float32') return float32ToU16Pair(value, endianToByteOrder[endian] || 'ABCD')
-  const buf = new ArrayBuffer(4)
-  const view = new DataView(buf)
-  if (dataType === 'int32') view.setInt32(0, value)
-  else view.setUint32(0, value >>> 0)
-  const w0 = view.getUint16(0), w1 = view.getUint16(2)
-  const order = endianToByteOrder[endian] || 'ABCD'
-  switch (order) {
-    case 'ABCD': return [w0, w1]
-    case 'CDAB': return [w1, w0]
-    case 'BADC': return [swapBytes16(w0), swapBytes16(w1)]
-    case 'DCBA': return [swapBytes16(w1), swapBytes16(w0)]
-  }
-}
-
-// Float format: paired consecutive addresses; second is companion
 const floatCompanionIndices = computed(() => {
   if (!isFloatFormat.value) return new Set<number>()
   const set = new Set<number>()
@@ -176,18 +91,6 @@ const floatCompanionIndices = computed(() => {
   return set
 })
 
-function formatFloatPair(reg: Register, nextReg: Register | undefined): string {
-  const hi = getValue(reg) & 0xFFFF
-  const lo = nextReg ? getValue(nextReg) & 0xFFFF : 0
-  switch (valueFormat.value) {
-    case 'float32_abcd': return toFloat32(hi, lo)
-    case 'float32_cdab': return toFloat32(lo, hi)
-    case 'float32_badc': return toFloat32(swapBytes16(hi), swapBytes16(lo))
-    case 'float32_dcba': return toFloat32(swapBytes16(lo), swapBytes16(hi))
-    default: return toFloat32(hi, lo)
-  }
-}
-
 function isDisplayCompanion(reg: Register, index: number): boolean {
   if (valueFormat.value === 'auto') return isCompanionRegister(reg)
   if (isFloatFormat.value) return floatCompanionIndices.value.has(index)
@@ -195,21 +98,25 @@ function isDisplayCompanion(reg: Register, index: number): boolean {
 }
 
 function getDisplayValue(reg: Register, index: number): string {
-  if (valueFormat.value === 'auto') return formatTypedValue(reg)
+  if (valueFormat.value === 'auto') {
+    const lo = registerValues.value[`${reg.register_type}-${reg.address + 1}`] ?? 0
+    return formatTypedValue(reg, getValue(reg), lo)
+  }
   if (isFloatFormat.value) {
     const list = filteredRegisters.value
-    const next = index + 1 < list.length ? list[index + 1] : undefined
-    const nextReg = next && next.address === reg.address + 1 && next.register_type === reg.register_type ? next : undefined
-    return formatFloatPair(reg, nextReg)
+    const nextCandidate = index + 1 < list.length ? list[index + 1] : undefined
+    const nextReg = nextCandidate && nextCandidate.address === reg.address + 1 && nextCandidate.register_type === reg.register_type
+      ? nextCandidate
+      : undefined
+    return formatFloatPair(valueFormat.value, getValue(reg), nextReg ? getValue(nextReg) : 0)
   }
-  return formatValue(getValue(reg))
+  return formatU16(getValue(reg), valueFormat.value)
 }
 
 function onRegisterSaved() {
   registerRefreshKey.value++
 }
 
-// Filter registers by selected type + search query
 const filteredRegisters = computed(() => {
   let result = registers.value
   if (selectedRegisterType.value) {
@@ -238,7 +145,6 @@ const filteredRegisters = computed(() => {
   return result.filter(r => r.name.toLowerCase().includes(lower))
 })
 
-// Virtual scrolling
 const scrollContainerRef = ref<HTMLElement | null>(null)
 const ROW_HEIGHT = 32
 
@@ -249,109 +155,25 @@ const rowVirtualizer = useVirtualizer(computed(() => ({
   overscan: 5,
 })))
 
-// Clear selection when search changes
 watch(searchQuery, () => {
   clearSelection()
 })
 
-async function loadRegisters() {
-  if (!selectedConnectionId.value || selectedSlaveId.value === null) {
-    registers.value = []
-    registerValues.value = {}
-    return
-  }
-  isLoading.value = true
-  error.value = null
-  try {
-    const defs = await invoke<Register[]>('list_registers', {
-      connectionId: selectedConnectionId.value,
-      slaveId: selectedSlaveId.value,
-    })
-    registers.value = defs
-
-    const types = Array.from(new Set(defs.map(d => d.register_type)))
-    const values: Record<string, number> = {}
-    await Promise.all(types.map(async (rt) => {
-      const rows = await invoke<{ address: number; value: number }[]>(
-        'read_registers_bulk',
-        {
-          connectionId: selectedConnectionId.value,
-          slaveId: selectedSlaveId.value,
-          registerType: rt,
-        },
-      )
-      for (const r of rows) values[`${rt}-${r.address}`] = r.value
-    }))
-    registerValues.value = values
-  } catch (e) {
-    error.value = String(e)
-  }
-  isLoading.value = false
-}
-
 watch([selectedConnectionId, selectedSlaveId, selectedRegisterType], async () => {
   clearSelection()
-  stopAutoRefresh()
-  changedKeys.value.clear()
-  for (const t of changeTimers.values()) clearTimeout(t)
-  changeTimers.clear()
+  clearChangeTimers()
   await loadRegisters()
-  if (registers.value.length > 0) startAutoRefresh()
 })
 
-watch(registerRefreshKey, () => refreshValues())
-
-// Auto-refresh register values every 2s to pick up external writes (e.g. from Master)
-let refreshTimer: number | null = null
-
-async function refreshValues() {
-  if (!selectedConnectionId.value || selectedSlaveId.value === null) return
-  if (registers.value.length === 0) return
-  const types = Array.from(new Set(registers.value.map(r => r.register_type)))
-  try {
-    const results = await Promise.all(types.map(rt =>
-      invoke<{ address: number; value: number }[]>('read_registers_bulk', {
-        connectionId: selectedConnectionId.value,
-        slaveId: selectedSlaveId.value,
-        registerType: rt,
-      }).then(rows => ({ rt, rows }))
-    ))
-    for (const { rt, rows } of results) {
-      for (const r of rows) {
-        const k = `${rt}-${r.address}`
-        if (registerValues.value[k] !== r.value) {
-          registerValues.value[k] = r.value
-          markChanged(k)
-        }
-      }
-    }
-  } catch { /* skip */ }
+watch(registerRefreshKey, async () => {
+  await refreshValues()
   emitSelection()
-}
-
-function startAutoRefresh() {
-  stopAutoRefresh()
-  refreshTimer = window.setInterval(refreshValues, 2000)
-}
-
-function stopAutoRefresh() {
-  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
-}
-
-onUnmounted(() => {
-  stopAutoRefresh()
-  for (const t of changeTimers.values()) clearTimeout(t)
-  changeTimers.clear()
 })
 
 function clearSelection() {
   selectedRows.value = []
   lastClickedIndex.value = -1
   emitSelection()
-}
-
-function getValue(reg: Register): number {
-  return registerValues.value[`${reg.register_type}-${reg.address}`] ?? 0
 }
 
 function isSelected(reg: Register): boolean {
@@ -364,12 +186,10 @@ function selectRow(e: MouseEvent, reg: Register) {
   const isCtrl = e.ctrlKey || e.metaKey
 
   if (e.shiftKey && lastClickedIndex.value >= 0) {
-    // Shift+click: range select
     const start = Math.min(lastClickedIndex.value, idx)
     const end = Math.max(lastClickedIndex.value, idx)
     selectedRows.value = list.slice(start, end + 1)
   } else if (isCtrl) {
-    // Ctrl/Cmd+click: toggle
     if (isSelected(reg)) {
       selectedRows.value = selectedRows.value.filter(r => !(r.address === reg.address && r.register_type === reg.register_type))
     } else {
@@ -377,7 +197,6 @@ function selectRow(e: MouseEvent, reg: Register) {
     }
     lastClickedIndex.value = idx
   } else {
-    // Normal click: replace
     selectedRows.value = [reg]
     lastClickedIndex.value = idx
   }
@@ -395,7 +214,6 @@ function emitSelection() {
 }
 
 function handleTableKeydown(e: KeyboardEvent) {
-  // If editing, let the edit input handle keys
   if (editingCell.value) return
 
   const list = filteredRegisters.value
@@ -403,7 +221,6 @@ function handleTableKeydown(e: KeyboardEvent) {
 
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
-    // Find current position based on the last single-selected row
     let currentIdx = -1
     if (selectedRows.value.length > 0) {
       const last = selectedRows.value[selectedRows.value.length - 1]
@@ -421,8 +238,6 @@ function handleTableKeydown(e: KeyboardEvent) {
       selectedRows.value = [list[nextIdx]]
       lastClickedIndex.value = nextIdx
       emitSelection()
-
-      // Scroll into view via virtualizer
       rowVirtualizer.value.scrollToIndex(nextIdx, { align: 'auto' })
     }
   }
@@ -439,16 +254,43 @@ function startEdit(reg: Register) {
   }
 }
 
+function isBitType(rt: string): boolean {
+  return rt === 'coil' || rt === 'discrete_input'
+}
+
+async function applyWrites(register_type: string, writes: Array<[number, number]>): Promise<boolean> {
+  try {
+    for (const [addr, value] of writes) {
+      await invoke('write_register', {
+        request: {
+          connection_id: selectedConnectionId.value,
+          slave_id: selectedSlaveId.value,
+          register_type,
+          address: addr,
+          value,
+        }
+      })
+      registerValues.value[`${register_type}-${addr}`] = value
+    }
+    emitSelection()
+    return true
+  } catch (e) {
+    await showAlert(String(e))
+    return false
+  }
+}
+
 async function commitEdit() {
   if (!editingCell.value || !selectedConnectionId.value || selectedSlaveId.value === null) return
   const { address, register_type } = editingCell.value
   const reg = registers.value.find(r => r.address === address && r.register_type === register_type)
+  editingCell.value = null
 
   const needsFloat32Write = isFloatFormat.value || (valueFormat.value === 'auto' && reg && is32BitType(reg.data_type))
 
   if (needsFloat32Write) {
     const inputVal = parseFloat(editValue.value)
-    if (isNaN(inputVal)) { editingCell.value = null; return }
+    if (isNaN(inputVal)) return
     let hi: number, lo: number
     if (isFloatFormat.value) {
       const order = (valueFormat.value.replace('float32_', '').toUpperCase() as ByteOrder) || 'ABCD'
@@ -456,52 +298,22 @@ async function commitEdit() {
     } else {
       ;[hi, lo] = encodeTypedValue(inputVal, reg!.data_type, reg!.endian)
     }
-    try {
-      await invoke('write_register', {
-        request: { connection_id: selectedConnectionId.value, slave_id: selectedSlaveId.value, register_type, address, value: hi }
-      })
-      await invoke('write_register', {
-        request: { connection_id: selectedConnectionId.value, slave_id: selectedSlaveId.value, register_type, address: address + 1, value: lo }
-      })
-      registerValues.value[`${register_type}-${address}`] = hi
-      registerValues.value[`${register_type}-${address + 1}`] = lo
-      emitSelection()
-    } catch (e) {
-      await showAlert(String(e))
-    }
-  } else if (valueFormat.value === 'auto' && reg && reg.data_type === 'int16') {
-    const inputVal = Number(editValue.value)
-    if (isNaN(inputVal)) { editingCell.value = null; return }
-    const value = inputVal < 0 ? (inputVal + 0x10000) & 0xFFFF : inputVal & 0xFFFF
-    try {
-      await invoke('write_register', {
-        request: { connection_id: selectedConnectionId.value, slave_id: selectedSlaveId.value, register_type, address, value }
-      })
-      registerValues.value[`${register_type}-${address}`] = value
-      emitSelection()
-    } catch (e) {
-      await showAlert(String(e))
-    }
-  } else {
-    const value = Number(editValue.value)
-    if (isNaN(value)) { editingCell.value = null; return }
-    try {
-      await invoke('write_register', {
-        request: {
-          connection_id: selectedConnectionId.value,
-          slave_id: selectedSlaveId.value,
-          register_type,
-          address,
-          value: register_type === 'coil' || register_type === 'discrete_input' ? (value !== 0 ? 1 : 0) : value,
-        }
-      })
-      registerValues.value[`${register_type}-${address}`] = register_type === 'coil' || register_type === 'discrete_input' ? (value !== 0 ? 1 : 0) : value
-      emitSelection()
-    } catch (e) {
-      await showAlert(String(e))
-    }
+    await applyWrites(register_type, [[address, hi], [address + 1, lo]])
+    return
   }
-  editingCell.value = null
+
+  if (valueFormat.value === 'auto' && reg && reg.data_type === 'int16') {
+    const inputVal = Number(editValue.value)
+    if (isNaN(inputVal)) return
+    const value = inputVal < 0 ? (inputVal + 0x10000) & 0xFFFF : inputVal & 0xFFFF
+    await applyWrites(register_type, [[address, value]])
+    return
+  }
+
+  const inputVal = Number(editValue.value)
+  if (isNaN(inputVal)) return
+  const value = isBitType(register_type) ? (inputVal !== 0 ? 1 : 0) : inputVal
+  await applyWrites(register_type, [[address, value]])
 }
 
 function cancelEdit() {
@@ -546,23 +358,12 @@ async function deleteRegister() {
   }
 }
 
-function formatAddress(reg: Register): string {
-  if (addrMode.value === 'dec') return reg.address.toString()
-  return '0x' + reg.address.toString(16).toUpperCase().padStart(4, '0')
+function fmtAddress(reg: Register): string {
+  return formatAddress(reg.address, addrMode.value)
 }
 
 function toggleAddrMode() {
   addrMode.value = addrMode.value === 'hex' ? 'dec' : 'hex'
-}
-
-function formatRegType(type: string): string {
-  const map: Record<string, string> = {
-    coil: 'Coil (FC1)',
-    discrete_input: 'Discrete Input (FC2)',
-    holding_register: 'Holding Register (FC3)',
-    input_register: 'Input Register (FC4)',
-  }
-  return map[type] || type
 }
 </script>
 
@@ -570,7 +371,7 @@ function formatRegType(type: string): string {
   <div class="register-table" @click="closeContextMenu">
     <div class="table-header-bar">
       <span class="table-title">
-        {{ selectedRegisterType ? formatRegType(selectedRegisterType) : t('table.allRegisters') }}
+        {{ selectedRegisterType ? registerTypeLabel(selectedRegisterType) : t('table.allRegisters') }}
       </span>
       <input
         v-model="searchQuery"
@@ -584,6 +385,7 @@ function formatRegType(type: string): string {
       <select v-model="valueFormat" class="format-select" :title="t('registerEdit.advanced')">
         <option v-for="opt in formatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
+      <span v-if="error" class="table-error" :title="error">!</span>
       <button
         class="add-reg-btn"
         :disabled="!selectedConnectionId || selectedSlaveId === null"
@@ -644,7 +446,7 @@ function formatRegType(type: string): string {
           @click="selectRow($event, filteredRegisters[virtualRow.index])"
           @contextmenu.prevent="showContextMenu($event, filteredRegisters[virtualRow.index])"
         >
-          <span class="vcol col-addr">{{ formatAddress(filteredRegisters[virtualRow.index]) }}</span>
+          <span class="vcol col-addr">{{ fmtAddress(filteredRegisters[virtualRow.index]) }}</span>
           <span class="vcol col-name">{{ filteredRegisters[virtualRow.index].name || '-' }}</span>
           <span :class="['vcol', 'col-value', { wide: valueFormat === 'auto', 'value-highlight': changedKeys.has(`${filteredRegisters[virtualRow.index].register_type}-${filteredRegisters[virtualRow.index].address}`) }]" @dblclick.stop="startEdit(filteredRegisters[virtualRow.index])">
             <template v-if="editingCell?.address === filteredRegisters[virtualRow.index].address && editingCell?.register_type === filteredRegisters[virtualRow.index].register_type">
@@ -667,7 +469,7 @@ function formatRegType(type: string): string {
               </span>
               <span v-else-if="isDisplayCompanion(filteredRegisters[virtualRow.index], virtualRow.index)" class="companion-value">&#x22EF;</span>
               <span v-else-if="valueFormat === 'auto' || isFloatFormat" class="num-value" :title="valueFormat === 'auto' ? `${filteredRegisters[virtualRow.index].data_type} (${filteredRegisters[virtualRow.index].endian})` : ''">{{ getDisplayValue(filteredRegisters[virtualRow.index], virtualRow.index) }}</span>
-              <span v-else class="num-value">{{ formatValue(getValue(filteredRegisters[virtualRow.index])) }}</span>
+              <span v-else class="num-value">{{ formatU16(getValue(filteredRegisters[virtualRow.index]), valueFormat) }}</span>
             </template>
           </span>
           <span class="vcol col-comment">{{ filteredRegisters[virtualRow.index].comment || '-' }}</span>
@@ -814,6 +616,13 @@ function formatRegType(type: string): string {
   font-size: 11px;
   color: #6c7086;
   white-space: nowrap;
+}
+
+.table-error {
+  color: #f38ba8;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: help;
 }
 
 .table-loading,

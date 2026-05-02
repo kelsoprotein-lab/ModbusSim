@@ -7,7 +7,7 @@ use crate::frame;
 use crate::log_entry::{Direction, FunctionCode};
 use crate::pdu::parse_request_pdu;
 use crate::rtu_slave::{format_request, log_if_enabled, process_request};
-use crate::slave::{SharedDevices, SharedLogCollector};
+use crate::slave::{SharedChangeCallback, SharedDevices, SharedLogCollector};
 
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -24,6 +24,7 @@ pub async fn run_rtu_tcp_slave(
     port: u16,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     let addr = format!("{host}:{port}");
@@ -46,8 +47,9 @@ pub async fn run_rtu_tcp_slave(
                         log::info!("RTU-over-TCP client connected: {peer}");
                         let devices = devices.clone();
                         let log_collector = log_collector.clone();
+                        let change_callback = change_callback.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(stream, devices, log_collector).await {
+                            if let Err(e) = handle_client(stream, devices, log_collector, change_callback).await {
                                 log::warn!("RTU-over-TCP client {peer} error: {e}");
                             }
                             log::info!("RTU-over-TCP client {peer} disconnected");
@@ -70,6 +72,7 @@ async fn handle_client(
     mut stream: tokio::net::TcpStream,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
 ) -> Result<(), String> {
     let idle_timeout = Duration::from_secs(60);
     let mut buf = vec![0u8; 256];
@@ -113,7 +116,7 @@ async fn handle_client(
 
                     // Process the request.
                     if let Some(response_pdu) =
-                        process_request(slave_id, request_pdu, &devices).await
+                        process_request(slave_id, request_pdu, &devices, &change_callback).await
                     {
                         // Log outbound response.
                         if let Some(fc_val) = request_pdu.first() {

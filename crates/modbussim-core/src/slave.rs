@@ -261,12 +261,30 @@ pub type SharedDevices = Arc<RwLock<HashMap<u8, SlaveDevice>>>;
 /// Shared log collector for all connections on a SlaveConnection.
 pub type SharedLogCollector = Option<Arc<LogCollector>>;
 
+/// One register write triggered by an incoming Modbus request.
+#[derive(Debug, Clone)]
+pub struct RegisterChange {
+    pub slave_id: u8,
+    pub register_type: RegisterType,
+    pub address: u16,
+    pub value: u16,
+}
+
+/// Callback fired (synchronously, off the request task) once per inbound
+/// write request from a remote master, with the full list of resulting
+/// register mutations. Slave-side internal writes (e.g. write_register
+/// Tauri command, random_mutate) do NOT route through this callback —
+/// those code paths emit notifications themselves.
+pub type RegisterChangeCallback = Arc<dyn Fn(&[RegisterChange]) + Send + Sync>;
+pub type SharedChangeCallback = Option<RegisterChangeCallback>;
+
 /// A slave connection manages multiple SlaveDevices on a single transport.
 pub struct SlaveConnection {
     pub transport: Transport,
     pub tls_config: SlaveTlsConfig,
     pub devices: SharedDevices,
     pub log_collector: SharedLogCollector,
+    pub change_callback: SharedChangeCallback,
     state: ConnectionState,
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_handle: Option<tokio::task::JoinHandle<()>>,
@@ -279,6 +297,7 @@ impl SlaveConnection {
             tls_config: SlaveTlsConfig::default(),
             devices: Arc::new(RwLock::new(HashMap::new())),
             log_collector: None,
+            change_callback: None,
             state: ConnectionState::Stopped,
             shutdown_tx: None,
             server_handle: None,
@@ -295,6 +314,13 @@ impl SlaveConnection {
     pub fn with_tls_config(mut self, config: SlaveTlsConfig) -> Self {
         self.tls_config = config;
         self
+    }
+
+    /// Install (or replace) the callback fired when a remote master writes
+    /// a register on this connection. Safe to call any time, including while
+    /// the server is running.
+    pub fn set_change_callback(&mut self, cb: RegisterChangeCallback) {
+        self.change_callback = Some(cb);
     }
 
     pub fn state(&self) -> ConnectionState {
@@ -329,6 +355,7 @@ impl SlaveConnection {
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let devices = self.devices.clone();
         let log_collector = self.log_collector.clone();
+        let change_callback = self.change_callback.clone();
 
         let handle = match &self.transport {
             Transport::Tcp { host, port } => {
@@ -345,13 +372,16 @@ impl SlaveConnection {
                     let on_connected = {
                         let devices = devices.clone();
                         let log_collector = log_collector.clone();
+                        let change_callback = change_callback.clone();
                         move |stream, socket_addr| {
                             let devices = devices.clone();
                             let log_collector = log_collector.clone();
+                            let change_callback = change_callback.clone();
                             let new_service = move |_socket_addr| {
                                 Ok(Some(SlaveService::new(
                                     devices.clone(),
                                     log_collector.clone(),
+                                    change_callback.clone(),
                                 )))
                             };
                             async move { accept_tcp_connection(stream, socket_addr, new_service) }
@@ -371,9 +401,14 @@ impl SlaveConnection {
             Transport::Rtu(serial_config) => {
                 let config = serial_config.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::rtu_slave::run_rtu_slave(config, devices, log_collector, shutdown_rx)
-                            .await
+                    if let Err(e) = crate::rtu_slave::run_rtu_slave(
+                        config,
+                        devices,
+                        log_collector,
+                        change_callback,
+                        shutdown_rx,
+                    )
+                    .await
                     {
                         log::error!("RTU slave error: {}", e);
                     }
@@ -386,6 +421,7 @@ impl SlaveConnection {
                         config,
                         devices,
                         log_collector,
+                        change_callback,
                         shutdown_rx,
                     )
                     .await
@@ -403,6 +439,7 @@ impl SlaveConnection {
                         port,
                         devices,
                         log_collector,
+                        change_callback,
                         shutdown_rx,
                     )
                     .await
@@ -422,6 +459,7 @@ impl SlaveConnection {
                         tls_config,
                         devices,
                         log_collector,
+                        change_callback,
                         shutdown_rx,
                     )
                     .await
@@ -457,16 +495,63 @@ impl SlaveConnection {
 
 /// The Modbus service that handles requests for a slave connection.
 /// Shared across all client connections via the `new_service` closure.
+/// Build the list of register mutations implied by a successful write
+/// request. Mirrors the side-effects in `handle_write` (which also writes
+/// to discrete_inputs / input_registers for symmetry with the simulator).
+pub fn changes_from_tokio_request(slave_id: u8, req: &Request<'_>) -> Vec<RegisterChange> {
+    match req {
+        Request::WriteSingleCoil(addr, value) => {
+            let v = if *value { 1 } else { 0 };
+            vec![
+                RegisterChange { slave_id, register_type: RegisterType::Coil, address: *addr, value: v },
+                RegisterChange { slave_id, register_type: RegisterType::DiscreteInput, address: *addr, value: v },
+            ]
+        }
+        Request::WriteSingleRegister(addr, value) => {
+            vec![
+                RegisterChange { slave_id, register_type: RegisterType::HoldingRegister, address: *addr, value: *value },
+                RegisterChange { slave_id, register_type: RegisterType::InputRegister, address: *addr, value: *value },
+            ]
+        }
+        Request::WriteMultipleCoils(addr, values) => {
+            let mut out = Vec::with_capacity(2 * values.len());
+            for (i, &v) in values.iter().enumerate() {
+                let a = addr.wrapping_add(i as u16);
+                let val = if v { 1 } else { 0 };
+                out.push(RegisterChange { slave_id, register_type: RegisterType::Coil, address: a, value: val });
+                out.push(RegisterChange { slave_id, register_type: RegisterType::DiscreteInput, address: a, value: val });
+            }
+            out
+        }
+        Request::WriteMultipleRegisters(addr, values) => {
+            let mut out = Vec::with_capacity(2 * values.len());
+            for (i, &v) in values.iter().enumerate() {
+                let a = addr.wrapping_add(i as u16);
+                out.push(RegisterChange { slave_id, register_type: RegisterType::HoldingRegister, address: a, value: v });
+                out.push(RegisterChange { slave_id, register_type: RegisterType::InputRegister, address: a, value: v });
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
 struct SlaveService {
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
 }
 
 impl SlaveService {
-    fn new(devices: SharedDevices, log_collector: SharedLogCollector) -> Self {
+    fn new(
+        devices: SharedDevices,
+        log_collector: SharedLogCollector,
+        change_callback: SharedChangeCallback,
+    ) -> Self {
         Self {
             devices,
             log_collector,
+            change_callback,
         }
     }
 
@@ -516,6 +601,7 @@ impl Service for SlaveService {
         let SlaveRequest { slave, request } = req;
         let devices = self.devices.clone();
         let log_collector = self.log_collector.clone();
+        let change_callback = self.change_callback.clone();
 
         // Log inbound request & save fc for response log
         let fc = Self::get_function_code(&request);
@@ -533,6 +619,13 @@ impl Service for SlaveService {
         );
 
         Box::pin(async move {
+            // Snapshot any change list before moving `request` into handle_write.
+            let pending_changes: Vec<RegisterChange> = if is_write && change_callback.is_some() {
+                changes_from_tokio_request(slave, &request)
+            } else {
+                Vec::new()
+            };
+
             let result = if is_write {
                 let mut devices = devices.write().await;
                 match devices.get_mut(&slave) {
@@ -546,6 +639,15 @@ impl Service for SlaveService {
                     None => None,
                 }
             };
+
+            // Fire callback only on successful writes.
+            if matches!(&result, Some(Ok(_))) {
+                if let Some(cb) = &change_callback {
+                    if !pending_changes.is_empty() {
+                        cb(&pending_changes);
+                    }
+                }
+            }
 
             // Log outbound response
             if let (Some(fc), Some(collector)) = (fc, &log_collector) {

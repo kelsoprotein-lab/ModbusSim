@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { inject, computed, ref, watch, nextTick, type Ref, type Directive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
 import type { RegisterValueDto, ScanGroupInfo } from '../types'
-import { swapBytes16, float32ToU16Pair, use16BitFormat, use32BitFormat, use64BitFormat, useI18n, type ByteOrder } from 'shared-frontend'
+import { swapBytes16, float32ToU16Pair, use16BitFormat, use32BitFormat, use64BitFormat, useI18n, formatAddress, showAlert, type ByteOrder } from 'shared-frontend'
 
 const { t } = useI18n()
 
@@ -15,7 +13,6 @@ const vFocus: Directive<HTMLInputElement> = {
   }
 }
 
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedScanGroup = inject<Ref<ScanGroupInfo | null>>('selectedScanGroup')!
 const selectedRegisters = inject<Ref<RegisterValueDto[]>>('selectedRegisters')!
@@ -43,8 +40,7 @@ const editValue = ref('')
 const editReady = ref(false)
 
 function fmtAddress(addr: number): string {
-  if (addrMode.value === 'dec') return addr.toString()
-  return '0x' + addr.toString(16).toUpperCase().padStart(4, '0')
+  return formatAddress(addr, addrMode.value)
 }
 
 const panelTitle = computed(() => {

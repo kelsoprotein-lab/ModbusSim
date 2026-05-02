@@ -7,8 +7,10 @@
 use crate::log_entry::{Direction, FunctionCode};
 use crate::mbap;
 use crate::pdu::{build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest};
-use crate::rtu_slave::{execute_read, execute_write, format_request, log_if_enabled};
-use crate::slave::{SharedDevices, SharedLogCollector};
+use crate::rtu_slave::{
+    changes_from_modbus_request, execute_read, execute_write, format_request, log_if_enabled,
+};
+use crate::slave::{SharedChangeCallback, SharedDevices, SharedLogCollector};
 use crate::transport::SlaveTlsConfig;
 use native_tls::{Identity, Protocol, TlsAcceptor};
 use std::net::SocketAddr;
@@ -66,6 +68,7 @@ pub async fn run_tls_slave(
     tls_config: SlaveTlsConfig,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     let acceptor = build_tls_acceptor(&tls_config)?;
@@ -104,6 +107,7 @@ pub async fn run_tls_slave(
                         let acceptor = acceptor.clone();
                         let devices = devices.clone();
                         let log_collector = log_collector.clone();
+                        let change_callback = change_callback.clone();
                         let shutdown_flag = shutdown_flag.clone();
 
                         tokio::task::spawn_blocking(move || {
@@ -121,6 +125,7 @@ pub async fn run_tls_slave(
                                 peer,
                                 devices,
                                 log_collector,
+                                change_callback,
                                 shutdown_flag,
                             ) {
                                 log::warn!("TLS client {peer} error: {e}");
@@ -150,6 +155,7 @@ fn handle_client(
     peer_addr: SocketAddr,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // Set read timeout so we can check the shutdown flag periodically.
@@ -198,7 +204,7 @@ fn handle_client(
 
         // Process the request.
         let response_pdu = match parsed {
-            Ok(req) => process_parsed_request(unit_id, fc_byte, &req, &devices),
+            Ok(req) => process_parsed_request(unit_id, fc_byte, &req, &devices, &change_callback),
             Err(_) => Some(build_exception_pdu(fc_byte, 0x01)),
         };
 
@@ -234,6 +240,7 @@ fn process_parsed_request(
     fc_byte: u8,
     req: &ModbusRequest,
     devices: &SharedDevices,
+    change_callback: &SharedChangeCallback,
 ) -> Option<Vec<u8>> {
     let is_write = matches!(
         req,
@@ -248,7 +255,15 @@ fn process_parsed_request(
             Ok(mut devices) => {
                 let device = devices.get_mut(&unit_id)?;
                 match execute_write(&mut device.register_map, req) {
-                    Ok(data) => Some(build_response_pdu(fc_byte, &data)),
+                    Ok(data) => {
+                        if let Some(cb) = change_callback {
+                            let changes = changes_from_modbus_request(unit_id, req);
+                            if !changes.is_empty() {
+                                cb(&changes);
+                            }
+                        }
+                        Some(build_response_pdu(fc_byte, &data))
+                    }
                     Err(exception) => Some(build_exception_pdu(fc_byte, exception)),
                 }
             }
@@ -277,7 +292,7 @@ fn process_request(
     devices: &SharedDevices,
 ) -> Option<Vec<u8>> {
     match parse_request_pdu(pdu) {
-        Ok(req) => process_parsed_request(unit_id, fc_byte, &req, devices),
+        Ok(req) => process_parsed_request(unit_id, fc_byte, &req, devices, &None),
         Err(_) => Some(build_exception_pdu(fc_byte, 0x01)),
     }
 }

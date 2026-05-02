@@ -3,7 +3,7 @@
 use modbussim_core::project::{self, ProjectFile};
 
 use crate::state::{
-    AppState, CachedPollData, ConnectionStateEvent, FoundRegisterDto, MasterConnectionInfo,
+    AppState, CachedPollData, ConnectionStateEvent, FoundRegisterDto, LogAppendedEvent, MasterConnectionInfo,
     MasterConnectionState, PollDataPayload, PollErrorPayload, ReadResultDto, RegisterScanEvent,
     RegisterValueDto, ScanGroupInfo, SlaveIdScanEvent,
 };
@@ -458,6 +458,16 @@ pub async fn connect_master(
             .connect()
             .await
             .map_err(|e| format!("{}", e))?;
+
+        // Wire log-append push to frontend so LogPanel doesn't have to poll.
+        let log_handle = app.clone();
+        let log_conn_id = connection_id.clone();
+        conn_state.log_collector.set_append_callback(std::sync::Arc::new(move |_entry| {
+            let _ = log_handle.emit(
+                "log-appended",
+                LogAppendedEvent { connection_id: log_conn_id.clone() },
+            );
+        }));
 
         (
             conn_state.connection.subscribe_connection_lost(),

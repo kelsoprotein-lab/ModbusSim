@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { ref, inject, watch, onMounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { useI18n } from 'shared-frontend'
+import { useI18n, showAlert } from 'shared-frontend'
 
 const { t } = useI18n()
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface SlaveConnection {
   id: string

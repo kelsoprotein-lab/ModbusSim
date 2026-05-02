@@ -1,17 +1,34 @@
 use crate::log_entry::{Direction, LogEntry};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
 /// Maximum number of log entries to keep in memory.
 const MAX_LOG_ENTRIES: usize = 10000;
 
+/// Callback invoked whenever an entry is appended. Receives a reference so
+/// the closure can clone only the fields it needs (for Tauri emit, etc.).
+/// The callback runs synchronously while the write lock is held — keep it
+/// fast and non-blocking.
+pub type LogAppendCallback = Arc<dyn Fn(&LogEntry) + Send + Sync>;
+
 /// A thread-safe communication log collector.
 ///
 /// Collects Modbus communication events from slave and master engines,
-/// maintaining a buffer of up to 10000 entries.
-#[derive(Debug, Clone)]
+/// maintaining a ring buffer of up to 10000 entries.
+#[derive(Clone)]
 pub struct LogCollector {
-    entries: Arc<RwLock<Vec<LogEntry>>>,
+    entries: Arc<RwLock<VecDeque<LogEntry>>>,
+    on_append: Arc<Mutex<Option<LogAppendCallback>>>,
+}
+
+impl std::fmt::Debug for LogCollector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogCollector")
+            .field("entries", &self.entries)
+            .field("on_append", &"<callback>")
+            .finish()
+    }
 }
 
 impl Default for LogCollector {
@@ -24,52 +41,91 @@ impl LogCollector {
     /// Create a new empty log collector.
     pub fn new() -> Self {
         Self {
-            entries: Arc::new(RwLock::new(Vec::new())),
+            entries: Arc::new(RwLock::new(VecDeque::new())),
+            on_append: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Install (or replace) the on-append callback. Safe to call any time.
+    pub fn set_append_callback(&self, cb: LogAppendCallback) {
+        if let Ok(mut slot) = self.on_append.lock() {
+            *slot = Some(cb);
+        }
+    }
+
+    /// Snapshot the current callback (cheap Arc clone) so we don't need to
+    /// hold the on_append lock across the entries lock.
+    fn snapshot_callback(&self) -> Option<LogAppendCallback> {
+        self.on_append.lock().ok().and_then(|g| g.clone())
+    }
+
+    fn push_entry(entries: &mut VecDeque<LogEntry>, entry: LogEntry) {
+        if entries.len() >= MAX_LOG_ENTRIES {
+            entries.pop_front();
+        }
+        entries.push_back(entry);
     }
 
     /// Add a log entry.
     ///
     /// If the buffer exceeds MAX_LOG_ENTRIES, the oldest entry is removed.
     pub async fn add(&self, entry: LogEntry) {
+        let cb = self.snapshot_callback();
         let mut entries = self.entries.write().await;
-        if entries.len() >= MAX_LOG_ENTRIES {
-            entries.remove(0);
+        if let Some(cb) = cb {
+            let snap = entry.clone();
+            Self::push_entry(&mut entries, entry);
+            drop(entries);
+            cb(&snap);
+        } else {
+            Self::push_entry(&mut entries, entry);
         }
-        entries.push(entry);
     }
 
     /// Add a log entry (blocking version).
     /// WARNING: panics if called from within an async tokio runtime.
     /// Use `try_add` for sync contexts within an async runtime.
     pub fn add_blocking(&self, entry: LogEntry) {
+        let cb = self.snapshot_callback();
         let mut entries = self.entries.blocking_write();
-        if entries.len() >= MAX_LOG_ENTRIES {
-            entries.remove(0);
+        if let Some(cb) = cb {
+            let snap = entry.clone();
+            Self::push_entry(&mut entries, entry);
+            drop(entries);
+            cb(&snap);
+        } else {
+            Self::push_entry(&mut entries, entry);
         }
-        entries.push(entry);
     }
 
     /// Add a log entry (non-blocking, safe to call from sync code within async runtime).
     /// Silently drops the entry if the lock cannot be acquired immediately.
     pub fn try_add(&self, entry: LogEntry) {
+        let cb = self.snapshot_callback();
         if let Ok(mut entries) = self.entries.try_write() {
-            if entries.len() >= MAX_LOG_ENTRIES {
-                entries.remove(0);
+            if let Some(cb) = cb {
+                let snap = entry.clone();
+                Self::push_entry(&mut entries, entry);
+                drop(entries);
+                cb(&snap);
+            } else {
+                Self::push_entry(&mut entries, entry);
             }
-            entries.push(entry);
         }
     }
 
     /// Get all log entries.
     pub async fn get_all(&self) -> Vec<LogEntry> {
-        self.entries.read().await.clone()
+        self.entries.read().await.iter().cloned().collect()
     }
 
     /// Non-blocking snapshot for sync callers (e.g. the egui render loop).
     /// Returns None if a writer currently holds the lock.
     pub fn try_get_all(&self) -> Option<Vec<LogEntry>> {
-        self.entries.try_read().ok().map(|g| g.clone())
+        self.entries
+            .try_read()
+            .ok()
+            .map(|g| g.iter().cloned().collect())
     }
 
     /// Non-blocking count of entries whose timestamp is within the last `window`.
@@ -92,14 +148,14 @@ impl LogCollector {
 
     /// Get all log entries (blocking version).
     pub fn get_all_blocking(&self) -> Vec<LogEntry> {
-        self.entries.blocking_read().clone()
+        self.entries.blocking_read().iter().cloned().collect()
     }
 
     /// Get the most recent `n` entries.
     pub async fn get_recent(&self, n: usize) -> Vec<LogEntry> {
         let entries = self.entries.read().await;
         let start = entries.len().saturating_sub(n);
-        entries[start..].to_vec()
+        entries.iter().skip(start).cloned().collect()
     }
 
     /// Clear all log entries.

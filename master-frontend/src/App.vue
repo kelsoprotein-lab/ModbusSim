@@ -7,7 +7,6 @@ import DataTable from './components/DataTable.vue'
 import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import { AppDialog } from 'shared-frontend'
-import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
 import type { ScanGroupInfo, RegisterValueDto } from './types'
 
 // Shared state
@@ -42,8 +41,6 @@ function refreshData() {
   dataRefreshKey.value++
 }
 provide('refreshData', refreshData)
-
-provide(dialogKey, { showAlert, showConfirm, showPrompt })
 
 // Listen for backend connection state events → auto-refresh tree & update state
 let unlistenConnState: (() => void) | null = null

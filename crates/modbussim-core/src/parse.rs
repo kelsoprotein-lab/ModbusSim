@@ -11,6 +11,15 @@ pub fn parse_register_type(s: &str) -> Result<RegisterType, String> {
     }
 }
 
+pub fn register_type_to_str(rt: RegisterType) -> &'static str {
+    match rt {
+        RegisterType::Coil => "coil",
+        RegisterType::DiscreteInput => "discrete_input",
+        RegisterType::InputRegister => "input_register",
+        RegisterType::HoldingRegister => "holding_register",
+    }
+}
+
 pub fn parse_endian(s: &str) -> Result<Endian, String> {
     match s {
         "big" => Ok(Endian::Big),

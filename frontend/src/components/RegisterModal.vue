@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, computed, inject } from 'vue'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { useI18n } from 'shared-frontend'
+import { ref, watch, computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { useI18n, showAlert } from 'shared-frontend'
 
 const { t } = useI18n()
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 
 interface Register {
   address: number
@@ -99,7 +97,6 @@ async function handleOverride() {
 }
 
 async function save() {
-  const { invoke } = await import('@tauri-apps/api/core')
   try {
     if (props.mode === 'edit') {
       // Remove old register first

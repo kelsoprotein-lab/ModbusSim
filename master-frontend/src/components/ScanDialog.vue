@@ -2,15 +2,12 @@
 import { ref, inject, onMounted, onUnmounted, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { useI18n } from 'shared-frontend'
+import { useI18n, showAlert } from 'shared-frontend'
 import type { SlaveIdScanEvent, RegisterScanEvent, FoundRegisterDto } from '../types'
 
 const { t } = useI18n()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const refreshTree = inject<() => void>('refreshTree')!
 

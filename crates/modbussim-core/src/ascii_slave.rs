@@ -8,7 +8,7 @@ use crate::frame;
 use crate::log_entry::{Direction, FunctionCode};
 use crate::pdu::parse_request_pdu;
 use crate::rtu_slave::{format_request, log_if_enabled, process_request};
-use crate::slave::{SharedDevices, SharedLogCollector};
+use crate::slave::{SharedChangeCallback, SharedDevices, SharedLogCollector};
 use crate::transport::{Parity, SerialConfig};
 
 use std::time::Duration;
@@ -25,6 +25,7 @@ pub async fn run_ascii_slave(
     config: SerialConfig,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     let parity = convert_parity(&config.parity);
@@ -95,7 +96,9 @@ pub async fn run_ascii_slave(
         }
 
         // Process the request against the device registry.
-        if let Some(response_pdu) = process_request(slave_id, request_pdu, &devices).await {
+        if let Some(response_pdu) =
+            process_request(slave_id, request_pdu, &devices, &change_callback).await
+        {
             // Log outbound response.
             if let Some(fc_val) = request_pdu.first() {
                 if let Some(fc) = FunctionCode::from_u8(*fc_val) {

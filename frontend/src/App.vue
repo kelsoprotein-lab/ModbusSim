@@ -6,7 +6,6 @@ import RegisterTable from './components/RegisterTable.vue'
 import ValuePanel from './components/ValuePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import { AppDialog } from 'shared-frontend'
-import { showAlert, showConfirm, showPrompt, dialogKey } from './composables/useDialog'
 
 // Shared state
 const selectedConnectionId = ref<string | null>(null)
@@ -42,7 +41,6 @@ function refreshRegisters() {
 }
 
 provide('refreshRegisters', refreshRegisters)
-provide(dialogKey, { showAlert, showConfirm, showPrompt })
 
 function handleConnectionSelect(id: string, state: string) {
   selectedConnectionId.value = id

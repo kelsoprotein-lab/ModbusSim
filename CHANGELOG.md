@@ -8,6 +8,60 @@ All notable changes to ModbusSim are documented in this file.
 
 ---
 
+## [0.15.0] - 2026-05-02
+
+Minor 版本:前端大型重构 + 后端推送式事件架构。两端统一抽出共享 `LogPanelShell` / `useFcLabel` / `formatAddress`;`useDialog` 去掉 provide/inject 中转层并接入 i18n;Slave / Master Toolbar 各拆 3 个 modal 子组件;Slave RegisterTable 拆出 `useRegisterValues` + `useRegisterFormat` composables。后端新增 `RegisterChangeCallback` 与 `LogAppendCallback`,核心写路径成功后 emit `register-value-changed` / `log-appended`,前端 `setInterval` 2s 轮询全量替换为 `listen()`。`LogCollector` 内部从 `Vec` 切到 `VecDeque`,日志满 buffer 时 `pop_front()` 取代 O(N) 的 `remove(0)`。无破坏性变更(仍是单工程 git tag 发版,Cargo.toml/tauri.conf.json 不动)。
+
+Minor release: large frontend refactor plus event-driven push architecture on the backend. Both apps now share `LogPanelShell` / `useFcLabel` / `formatAddress`; `useDialog` drops its provide/inject middleman and gains i18n titles; the Slave and Master Toolbars each split into three modal subcomponents; the Slave RegisterTable factors out `useRegisterValues` + `useRegisterFormat` composables. The backend introduces `RegisterChangeCallback` / `LogAppendCallback`; successful core writes emit `register-value-changed` / `log-appended`, and the frontend replaces every 2-second `setInterval` polling loop with `listen()`. `LogCollector` switches its internal storage from `Vec` to `VecDeque` so the ring-buffer eviction is O(1) instead of O(N). No breaking changes (release versioning still tag-only; Cargo.toml/tauri.conf.json unchanged).
+
+### Highlights / 亮点
+
+- ⚡ **2s 轮询 → 事件推送** — 子站寄存器值与通信日志改为后端 emit Tauri 事件,前端 `listen()` 接收;一次 `WriteMultipleRegisters(values=[100])` 从 200 个独立事件压缩为 1 个 batched event,UI 响应即时。/ 2-second polling replaced by Tauri event push for both register values and communication logs; an FC16 write of 100 registers now sends 1 batched event instead of 200 individual ones.
+- 🧹 **共享层一次到位** — 新增 `shared-frontend/components/LogPanelShell.vue` + `composables/useFcLabel`、`useAddressFormat`,主 / 从 `LogPanel.vue` 各从 ~240 行收敛到 ~45 行。/ New `LogPanelShell.vue` + `useFcLabel` / `useAddressFormat` cut both `LogPanel.vue` files from ~240 lines to ~45.
+- 🎛️ **Toolbar / RegisterTable 大瘦身** — Slave Toolbar 844→194 行 + 3 个独立 dialog;Master Toolbar 876→197 行 + 3 个独立 dialog;Slave RegisterTable 1050→874 行 + 2 个 composable。/ Slave Toolbar 844→194 lines + 3 dialog components; Master Toolbar 876→197 lines + 3 dialogs; Slave RegisterTable 1050→874 lines + 2 composables.
+- 🗨️ **Dialog 接入 i18n + 单例兜底** — `useDialog` 标题走 `t('dialog.alertTitle/...')`,旧未关 Promise 在新 dialog 打开时被 cancel,11 处 `inject(dialogKey)` 样板全部移除直接 `import { showAlert }`。/ `useDialog` titles now use i18n; any unresolved previous Promise is cancelled when a new dialog opens; 11 `inject(dialogKey)` boilerplate sites replaced with direct imports.
+- 🪣 **LogCollector 改 `VecDeque`** — 满 buffer (10000 条) 时 `pop_front()` O(1) 取代原 `Vec::remove(0)` O(N);未安装 callback 时不再 clone entry。/ `LogCollector` now uses `VecDeque`: full-buffer eviction is O(1), and unobserved appends skip the clone.
+
+### Added 新增
+
+- 后端推送事件:`crates/modbussim-core::slave::RegisterChangeCallback` (`Arc<dyn Fn(&[RegisterChange])>`) + `SlaveConnection::set_change_callback`;TCP / RTU / ASCII / RTU-over-TCP / TLS 五条写入路径成功后通过 callback 发出。`crates/modbussim-core::log_collector::LogAppendCallback` 在 `add` / `add_blocking` / `try_add` 三条路径触发。/ Backend push events: a `RegisterChangeCallback` taking `&[RegisterChange]` is invoked from all five slave transport write paths after a successful write; `LogAppendCallback` fires from all three `add*` paths.
+- Tauri commands 新增 emit:slave `start_slave_connection` 注入两个 callback,分别 emit `register-value-changed` (batched) 与 `log-appended`;master `connect_master` 注入 log-append callback emit `log-appended`;`crates/modbussim-app::commands::RegisterChangePayload` 与 `crates/modbusmaster-app::state::LogAppendedEvent` 新 DTO。/ Tauri commands now wire app-handle clones into both callbacks and emit `register-value-changed` / `log-appended`; new DTOs `RegisterChangePayload`, `LogAppendedEvent` exposed for the frontend.
+- Shared-frontend 新增:`components/LogPanelShell.vue`(连接列表 + i18n + filter + listen + 合流)、`composables/useFcLabel.ts`(FC / 寄存器类型 i18n 标签)、`composables/useAddressFormat.ts`(`formatAddress(addr, mode)`),并新增 i18n keys `dialog.alertTitle/confirmTitle/promptTitle`、`formats.*`、`fc.*`。/ Shared-frontend gains `LogPanelShell`, `useFcLabel`, `useAddressFormat` composables, plus new i18n keys for dialog titles, value formats, FC labels.
+- Slave 端新组件:`MutationControl.vue` / `NewConnectionDialog.vue` / `NewSlaveDialog.vue` 从 Toolbar 拆出。Composables `useRegisterFormat.ts`(`formatU16` / `formatTypedValue` / `formatFloatPair` / `encodeTypedValue`)与 `useRegisterValues.ts`(load / refresh / `register-value-changed` listen / `loadDirtyKeys` race guard)从 RegisterTable 抽出。/ Slave gets `MutationControl`, `NewConnectionDialog`, `NewSlaveDialog` carved out of Toolbar, plus `useRegisterFormat` and `useRegisterValues` composables out of RegisterTable.
+- Master 端新组件:`NewConnectionDialog.vue` / `NewScanGroupDialog.vue` / `WriteDialog.vue` 从 Toolbar 拆出。/ Master gets `NewConnectionDialog`, `NewScanGroupDialog`, `WriteDialog` carved out of Toolbar.
+- `crates/modbussim-core::parse::register_type_to_str` 反向函数,与已有 `parse_register_type` 配对。/ `parse::register_type_to_str` companion to `parse_register_type`.
+
+### Changed 改进
+
+- `LogCollector` 内部存储 `Vec<LogEntry>` → `VecDeque<LogEntry>`;`add` / `add_blocking` / `try_add` 重写为先 snapshot callback Arc(单次锁),无 callback 时跳过 clone。/ `LogCollector` storage switched to `VecDeque`; `add*` methods snapshot the callback once and skip cloning the entry when no callback is installed.
+- `useRegisterValues::loadRegisters` 增加 `loadSeq` race guard 与 `loadDirtyKeys` 集合 — load 期间到达的 push event 被记录,load 完成时不被快照覆盖。/ `useRegisterValues::loadRegisters` now snapshots `loadSeq` and tracks `loadDirtyKeys`, so push events arriving during a load are not clobbered by the snapshot.
+- `RegisterTable::commitEdit` 抽 `applyWrites(register_type, [[addr, value], ...])` helper,3 路 try/catch + cache write + emitSelection 重复结构合并;新增 `isBitType(rt)` 替代多处 `rt === 'coil' || rt === 'discrete_input'`。/ `RegisterTable::commitEdit` extracts `applyWrites` and `isBitType` helpers, collapsing three duplicated try/catch + cache + emit blocks.
+- `LogPanelShell::scheduleReload` 合流逻辑由 `pendingReload` + do/while 简化为单一 `reloadInFlight` guard(每次 fetch 已为全量,二次 fetch 无意义)。/ `LogPanelShell::scheduleReload` collapses the pending+do/while coalescing pattern into a single `reloadInFlight` guard.
+- 所有 11 处 `inject<{ showAlert: ... }>(dialogKey)!` 样板替换为 `import { showAlert } from 'shared-frontend'`;`App.vue` 中的 `provide(dialogKey, ...)` 一并删除。/ All 11 `inject(dialogKey)` boilerplate sites replaced with direct imports of `showAlert`/`showConfirm`/`showPrompt`; the `provide(dialogKey, ...)` calls in both `App.vue`s removed.
+- `useDialog::open` 对未 resolve 的旧 Promise 调 cancel 路径,避免悬挂;`title` 改走 i18n,`AppDialog` 按钮文案接 `t('common.cancel')` / `t('common.ok')`。/ `useDialog::open` cancels any unresolved previous Promise before opening a new dialog; titles now go through i18n, and `AppDialog`'s buttons localise via `t('common.cancel')` / `t('common.ok')`.
+- `useLogPanel` 解耦 Tauri 命令名:接受 `LogPanelDataSource = { fetchLogs, clearLogs, exportCsv }` 注入,不再硬编码 `get_communication_logs` / `clear_communication_logs` / `export_logs_csv`。/ `useLogPanel` now takes a `LogPanelDataSource` injection instead of hardcoding Tauri command names.
+- `RegisterTable` `formatRegType` 与 `formatOptions` 字符串硬编码改走 i18n(`fc.*`、`formats.*`)。/ `RegisterTable`'s register-type and value-format dropdown labels routed through i18n.
+
+### Removed 移除
+
+- 删除 2-second `setInterval` 轮询:`frontend/src/components/RegisterTable.vue` 与 `LogPanel.vue`、`master-frontend/src/components/LogPanel.vue` 三处。改为 listen 事件 + 必要时 `refreshKey` 触发 bulk refresh。/ Removed three `setInterval(..., 2000)` polling loops; replaced by event listeners + on-demand `refreshKey`-driven bulk refresh.
+- 删除 `frontend/src/composables/useDialog.ts` 与 `master-frontend/src/composables/useDialog.ts` 两个无意义 re-export 转发壳;`shared-frontend::useDialog` 中未使用的 `dialogKey` 导出删除。/ Removed both `useDialog.ts` re-export shells and the unused `dialogKey` export.
+- 删除未引用资源:`frontend/src/components/HelloWorld.vue`、`ToolsView.vue`,以及孤立的 `frontend/src/assets/{hero.png, vite.svg, vue.svg}`。/ Deleted unused `HelloWorld.vue`, `ToolsView.vue`, and orphaned hero/Vite/Vue logo assets.
+
+### Fixed 修复
+
+- master `LogPanel.vue` 自动刷新里硬编码的 `'zh-CN'` locale 改走 `useI18n().locale`;之前写到 `error` ref 后从不显示的问题在 `LogPanelShell` 中以右上角 `!` 角标 + tooltip 修复。/ Hardcoded `'zh-CN'` locale in master `LogPanel.vue` replaced with `useI18n().locale`; the previously dropped `error` ref now surfaces as a `!` badge with tooltip in `LogPanelShell`.
+- master `NewConnectionDialog.vue` 删除从未触发的 `(e: 'request-scan'): void` 与多余的 `connectionId?: string` emit 类型声明。/ Removed never-emitted `request-scan` and unused `connectionId` parameter from master `NewConnectionDialog.vue`'s emit declarations.
+- Slave Toolbar `random_mutate_registers` 残留 `console.debug` 日志移除。/ Removed leftover `console.debug` from slave Toolbar mutation handler.
+
+### Internal 内部
+
+- 重构覆盖 47 个文件、净减约 2000 行;两端 `vue-tsc` 类型检查 + `vite build` 全绿;`shared-frontend` `vitest` 16/16 通过;`cargo test --workspace` 276/276 通过。/ Refactor touches 47 files with a net ~2000-line reduction; both frontends pass `vue-tsc` + `vite build`; `shared-frontend` vitest 16/16, `cargo test --workspace` 276/276.
+- `changes_from_tokio_request` / `changes_from_modbus_request` 多写入变体预分配 `Vec::with_capacity(2 * values.len())`,避免重复 reallocation。/ Multi-write variants of the change-extraction helpers now pre-size the result vector.
+- `start_slave_connection` 中 callback 捕获改用 `Arc<str>` 而非反复 `String::clone()`,降低每事件分配。/ Callbacks in `start_slave_connection` now capture connection ids as `Arc<str>` instead of cloning a `String` per event.
+
+---
+
 ## [0.14.1] - 2026-05-01
 
 补丁版本:把 v0.14.0 hotfix 引入的 `SlaveDevice::apply_random_mutation_thread` 在 Tauri 子站 `random_mutate_registers` 命令中真正用上,删除 75 行重复实现;新增 6 个单元测试钉住四类寄存器变异行为。无破坏性变更。

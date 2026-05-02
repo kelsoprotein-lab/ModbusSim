@@ -122,6 +122,12 @@ pub struct ConnectionStateEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LogAppendedEvent {
+    pub connection_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SlaveIdScanEvent {
     pub connection_id: String,
     pub current_id: u8,

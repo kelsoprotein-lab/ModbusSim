@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { inject, computed, ref, watch, nextTick, type Ref, type Directive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { dialogKey } from '../composables/useDialog'
-import type { showAlert as ShowAlert } from '../composables/useDialog'
-import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat, useI18n } from 'shared-frontend'
+import { swapBytes16, use16BitFormat, use32BitFormat, use64BitFormat, formatAddress, useI18n, useFcLabel, showAlert } from 'shared-frontend'
 
 const { t } = useI18n()
+const { registerTypeLabel } = useFcLabel()
 
 const vFocus: Directive<HTMLInputElement> = {
   mounted(el) {
@@ -20,7 +19,6 @@ interface SelectedReg {
   value: number
 }
 
-const { showAlert } = inject<{ showAlert: typeof ShowAlert }>(dialogKey)!
 const selectedConnectionId = inject<Ref<string | null>>('selectedConnectionId')!
 const selectedSlaveId = inject<Ref<number | null>>('selectedSlaveId')!
 const selectedRegister = inject<Ref<SelectedReg[]>>('selectedRegister')!
@@ -54,26 +52,17 @@ const editValue = ref('')
 const editReady = ref(false)
 
 function fmtAddress(addr: number): string {
-  if (addrMode.value === 'dec') return addr.toString()
-  return '0x' + addr.toString(16).toUpperCase().padStart(4, '0')
+  return formatAddress(addr, addrMode.value)
 }
 
 const panelTitle = computed(() => {
   if (!firstReg.value) return ''
-  const prefixMap: Record<string, string> = {
-    coil: '0x Coil',
-    discrete_input: '1x Discrete Input',
-    input_register: '3x Input Register',
-    holding_register: '4x Holding Register',
-  }
-  const prefix = prefixMap[firstReg.value.register_type] || firstReg.value.register_type
-  const fmtAddr = (addr: number) => addrMode.value === 'dec' ? addr.toString() : '0x' + addr.toString(16).toUpperCase().padStart(4, '0')
-
+  const prefix = registerTypeLabel(firstReg.value.register_type)
   if (selCount.value === 1) {
-    return `${prefix} @ ${fmtAddr(firstReg.value.address)}`
+    return `${prefix} @ ${fmtAddress(firstReg.value.address)}`
   }
   const last = sortedRegs.value[sortedRegs.value.length - 1]
-  return `${prefix} @ ${fmtAddr(firstReg.value.address)}~${fmtAddr(last.address)}`
+  return `${prefix} @ ${fmtAddress(firstReg.value.address)}~${fmtAddress(last.address)}`
 })
 
 // 16-bit interpretations (shared composable)

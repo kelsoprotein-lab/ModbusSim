@@ -9,8 +9,8 @@ use crate::log_entry::{Direction, FunctionCode, LogEntry};
 use crate::pdu::{
     build_exception_pdu, build_response_pdu, parse_request_pdu, ModbusRequest, ResponseData,
 };
-use crate::register::RegisterMap;
-use crate::slave::{SharedDevices, SharedLogCollector};
+use crate::register::{RegisterMap, RegisterType};
+use crate::slave::{RegisterChange, SharedChangeCallback, SharedDevices, SharedLogCollector};
 use crate::transport::{self, Parity, SerialConfig};
 
 use std::time::Duration;
@@ -30,6 +30,7 @@ pub async fn run_rtu_slave(
     config: SerialConfig,
     devices: SharedDevices,
     log_collector: SharedLogCollector,
+    change_callback: SharedChangeCallback,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     let parity = convert_parity(&config.parity);
@@ -118,7 +119,9 @@ pub async fn run_rtu_slave(
         }
 
         // Process the request against the device registry.
-        if let Some(response_pdu) = process_request(slave_id, request_pdu, &devices).await {
+        if let Some(response_pdu) =
+            process_request(slave_id, request_pdu, &devices, &change_callback).await
+        {
             // Log outbound response.
             if let Some(fc_val) = request_pdu.first() {
                 if let Some(fc) = FunctionCode::from_u8(*fc_val) {
@@ -156,6 +159,7 @@ pub(crate) async fn process_request(
     slave_id: u8,
     request_pdu: &[u8],
     devices: &SharedDevices,
+    change_callback: &SharedChangeCallback,
 ) -> Option<Vec<u8>> {
     let req = match parse_request_pdu(request_pdu) {
         Ok(r) => r,
@@ -180,7 +184,15 @@ pub(crate) async fn process_request(
         let mut devices = devices.write().await;
         let device = devices.get_mut(&slave_id)?;
         match execute_write(&mut device.register_map, &req) {
-            Ok(data) => Some(build_response_pdu(fc, &data)),
+            Ok(data) => {
+                if let Some(cb) = change_callback {
+                    let changes = changes_from_modbus_request(slave_id, &req);
+                    if !changes.is_empty() {
+                        cb(&changes);
+                    }
+                }
+                Some(build_response_pdu(fc, &data))
+            }
             Err(exception) => Some(build_exception_pdu(fc, exception)),
         }
     } else {
@@ -190,6 +202,47 @@ pub(crate) async fn process_request(
             Ok(data) => Some(build_response_pdu(fc, &data)),
             Err(exception) => Some(build_exception_pdu(fc, exception)),
         }
+    }
+}
+
+/// Build the side-effect list for a successful write `ModbusRequest`. Mirrors
+/// the writes performed inside `execute_write` (which writes both
+/// coil/discrete_input or holding/input pairs for symmetry).
+pub(crate) fn changes_from_modbus_request(slave_id: u8, req: &ModbusRequest) -> Vec<RegisterChange> {
+    match req {
+        ModbusRequest::WriteSingleCoil { address, value } => {
+            let v = if *value { 1 } else { 0 };
+            vec![
+                RegisterChange { slave_id, register_type: RegisterType::Coil, address: *address, value: v },
+                RegisterChange { slave_id, register_type: RegisterType::DiscreteInput, address: *address, value: v },
+            ]
+        }
+        ModbusRequest::WriteSingleRegister { address, value } => {
+            vec![
+                RegisterChange { slave_id, register_type: RegisterType::HoldingRegister, address: *address, value: *value },
+                RegisterChange { slave_id, register_type: RegisterType::InputRegister, address: *address, value: *value },
+            ]
+        }
+        ModbusRequest::WriteMultipleCoils { address, values } => {
+            let mut out = Vec::with_capacity(2 * values.len());
+            for (i, &v) in values.iter().enumerate() {
+                let a = address.wrapping_add(i as u16);
+                let val = if v { 1 } else { 0 };
+                out.push(RegisterChange { slave_id, register_type: RegisterType::Coil, address: a, value: val });
+                out.push(RegisterChange { slave_id, register_type: RegisterType::DiscreteInput, address: a, value: val });
+            }
+            out
+        }
+        ModbusRequest::WriteMultipleRegisters { address, values } => {
+            let mut out = Vec::with_capacity(2 * values.len());
+            for (i, &v) in values.iter().enumerate() {
+                let a = address.wrapping_add(i as u16);
+                out.push(RegisterChange { slave_id, register_type: RegisterType::HoldingRegister, address: a, value: v });
+                out.push(RegisterChange { slave_id, register_type: RegisterType::InputRegister, address: a, value: v });
+            }
+            out
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -408,7 +461,7 @@ mod tests {
         }
         // FC03 Read Holding Registers: addr=0, qty=2
         let pdu = [0x03, 0x00, 0x00, 0x00, 0x02];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         // Response: FC=0x03, byte_count=4, 0x12 0x34 0x56 0x78
         assert_eq!(resp[0], 0x03);
         assert_eq!(resp[1], 0x04); // 2 regs * 2 bytes
@@ -423,7 +476,7 @@ mod tests {
         let devices = make_devices(1);
         // FC06 Write Single Register: addr=10, value=0x00FF
         let pdu = [0x06, 0x00, 0x0A, 0x00, 0xFF];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         assert_eq!(resp, vec![0x06, 0x00, 0x0A, 0x00, 0xFF]);
 
         // Verify the value was written.
@@ -439,7 +492,7 @@ mod tests {
         let devices = make_devices(1);
         let pdu = [0x03, 0x00, 0x00, 0x00, 0x01];
         // Slave 99 does not exist.
-        let resp = process_request(99, &pdu, &devices).await;
+        let resp = process_request(99, &pdu, &devices, &None).await;
         assert!(resp.is_none());
     }
 
@@ -448,7 +501,7 @@ mod tests {
         let devices = make_devices(1);
         // Unsupported FC 0x2B.
         let pdu = [0x2B, 0x00];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         // Should get exception response: FC | 0x80, exception code 0x01.
         assert_eq!(resp[0], 0x2B | 0x80);
         assert_eq!(resp[1], 0x01);
@@ -459,7 +512,7 @@ mod tests {
         let devices = make_devices(1);
         // FC05 Write Single Coil: addr=5, value=ON (0xFF00)
         let pdu = [0x05, 0x00, 0x05, 0xFF, 0x00];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         assert_eq!(resp, vec![0x05, 0x00, 0x05, 0xFF, 0x00]);
 
         let devs = devices.read().await;
@@ -480,7 +533,7 @@ mod tests {
         }
         // FC01 Read Coils: addr=0, qty=3
         let pdu = [0x01, 0x00, 0x00, 0x00, 0x03];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         assert_eq!(resp[0], 0x01);
         assert_eq!(resp[1], 0x01); // 1 byte for 3 bits
         assert_eq!(resp[2], 0b00000101); // bits: T, F, T => 0x05
@@ -491,7 +544,7 @@ mod tests {
         let devices = make_devices(1);
         // FC10 Write Multiple Registers: addr=0, qty=2, byte_count=4, data=[0x000A, 0x000B]
         let pdu = [0x10, 0x00, 0x00, 0x00, 0x02, 0x04, 0x00, 0x0A, 0x00, 0x0B];
-        let resp = process_request(1, &pdu, &devices).await.unwrap();
+        let resp = process_request(1, &pdu, &devices, &None).await.unwrap();
         assert_eq!(resp, vec![0x10, 0x00, 0x00, 0x00, 0x02]);
 
         let devs = devices.read().await;

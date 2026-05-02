@@ -1,11 +1,17 @@
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
 import type { LogEntry } from '../types/modbus'
 
+export interface LogPanelDataSource {
+  fetchLogs: (connectionId: string) => Promise<LogEntry[]>
+  clearLogs: (connectionId: string) => Promise<void>
+  exportCsv: (connectionId: string) => Promise<string>
+}
+
 /**
- * Shared log panel logic for both slave and master frontends.
+ * Shared log panel logic. Caller injects data source so this composable
+ * does not depend on any specific Tauri command names.
  */
-export function useLogPanel() {
+export function useLogPanel(source: LogPanelDataSource) {
   const logs = ref<LogEntry[]>([])
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -14,9 +20,7 @@ export function useLogPanel() {
     if (!connectionId) return
     isLoading.value = true
     try {
-      logs.value = await invoke<LogEntry[]>('get_communication_logs', {
-        connectionId,
-      })
+      logs.value = await source.fetchLogs(connectionId)
     } catch (e) {
       error.value = String(e)
     }
@@ -26,9 +30,7 @@ export function useLogPanel() {
   async function clearLogs(connectionId: string) {
     if (!connectionId) return
     try {
-      await invoke('clear_communication_logs', {
-        connectionId,
-      })
+      await source.clearLogs(connectionId)
       logs.value = []
     } catch (e) {
       error.value = String(e)
@@ -38,9 +40,7 @@ export function useLogPanel() {
   async function exportLogsCsv(connectionId: string, filenamePrefix = 'modbus_log') {
     if (!connectionId) return
     try {
-      const csv = await invoke<string>('export_logs_csv', {
-        connectionId,
-      })
+      const csv = await source.exportCsv(connectionId)
       const blob = new Blob([csv], { type: 'text/csv' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
